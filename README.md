@@ -16,7 +16,7 @@ This project aims to investigate how **algorithmic techniques**, **machine learn
 - Python (NumPy, Pandas, Scikit-learn, TensorFlow, PyTorch)  
 - NLP libraries (NLTK, spaCy, Transformers)  
 - Financial data APIs and sources (e.g., Yahoo Finance, Alpha Vantage)  
-- Jupyter notebooks for exploration and visualization  
+- Jupyter notebooks for exploration and visualisation  
 
 ## Status  
 This is an ongoing project for learning, experimentation, and discovery. Contributions and insights are welcome.
