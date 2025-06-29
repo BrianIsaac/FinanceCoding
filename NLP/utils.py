@@ -2,7 +2,7 @@
 import requests
 from typing import Union
 
-def get_news(symbols: list[str], api_key: str) -> tuple[int, Union[dict, list]]:
+def get_marketaux_news(symbols: list[str], api_key: str) -> tuple[int, Union[dict, list]]:
     """
     Retrieve news articles for specified stock symbols using MarketAux API.
 
