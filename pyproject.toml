@@ -9,6 +9,8 @@ dependencies = []
 [dependency-groups]
 data = [
     "feedparser>=6.0.11",
+    "lxml-html-clean>=0.4.2",
+    "newspaper3k>=0.2.8",
     "requests>=2.32.4",
 ]
 dev = [

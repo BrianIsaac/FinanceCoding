@@ -195,3 +195,6 @@ cython_debug/
 
 # others
 .python-version
+
+# NLP
+NLP/financial_news.txt
