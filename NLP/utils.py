@@ -6,6 +6,8 @@ import os
 import requests
 import feedparser
 from newspaper import Article
+from playwright.async_api import async_playwright
+from bs4 import BeautifulSoup
 
 # typing imports
 from typing import Union
@@ -78,3 +80,41 @@ def get_raw_news_rss(rss: list[str], output: str, charas: int = -1) -> None:
                     print(f"Failed to process {url}. Reason: {e}")
 
     print(f"\nNews dump completed. Saved to current directory as: {output}")
+
+async def scrape_with_playwright(url: str, output_file: str) -> None:
+    """
+    Scrape and save the fully rendered article text from a Yahoo Finance page using Playwright and BeautifulSoup.
+
+    Parameters:
+    - url (str): The target URL of the web page to scrape.
+    - output_file (str): The file name for saving the extracted text in the current working directory.
+
+    Returns:
+    - None
+    """
+    # build output path
+    output_path = os.path.join(os.getcwd(), output_file)
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page()
+
+        await page.goto(url, timeout=60000)
+        # wait for the article container
+        await page.wait_for_selector('[data-testid="article-content-wrapper"]')
+
+        # grab the rendered HTML
+        html = await page.content()
+        await browser.close()
+
+    # parse it
+    soup = BeautifulSoup(html, 'html.parser')
+    # find ONLY the paragraphs in the article
+    paras = soup.find_all('p', class_='yf-1090901')
+    text = "\n\n".join(p.get_text(strip=True) for p in paras)
+
+    # write out
+    with open(output_path, "w", encoding="utf-8") as f:
+        f.write(text)
+
+    print(f"Saved {len(paras)} paragraphs from {url} to {output_file}")
