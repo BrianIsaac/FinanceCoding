@@ -1,18 +1,35 @@
-# import libaries
-# standard library imports
+# Standard library imports
 import os
 import re
+from pathlib import Path
 
-# third-party imports
-import requests
+# Third-party imports
+from bs4 import BeautifulSoup
 import feedparser
+
+import nltk
+from nltk.corpus import stopwords
+from nltk.stem import WordNetLemmatizer
+from nltk.tokenize import word_tokenize
+
 from newspaper import Article
 from playwright.async_api import async_playwright
-from tqdm import tqdm
-from bs4 import BeautifulSoup
+import requests
 
-# typing imports
-from typing import Union
+from sklearn.decomposition import LatentDirichletAllocation
+from sklearn.feature_extraction.text import CountVectorizer
+
+from tqdm import tqdm
+
+try:
+    from bertopic import BERTopic
+    _HAS_BERTOPIC = True
+except ImportError:
+    _HAS_BERTOPIC = False
+
+# Typing imports
+from typing import Dict, List, Optional, Union
+
 
 def get_marketaux_news(symbols: list[str], api_key: str) -> tuple[int, Union[dict, list]]:
     """
@@ -224,3 +241,134 @@ async def fetch_and_save_articles_tqdm(rss: list[str]) -> None:
 
                 except Exception as e:
                     tqdm.write(f"Failed to fetch {url}: {e}")
+
+class TopicModeling:
+    """
+    A class to load text data from a directory, preprocess it, build a document-term matrix,
+    train a topic model (LDA or BERTopic), and retrieve & label top keywords per topic.
+    """
+
+    def __init__(
+        self,
+        data_dir: str = "data/articles",
+        n_topics: int = 10,
+        n_top_words: int = 10,
+        model_type: str = "lda"
+    ):
+        """
+        Parameters:
+        - data_dir: str — Path to directory containing .txt articles
+        - n_topics: int — Number of topics to extract
+        - n_top_words: int — Number of top words to display per topic
+        - model_type: str — "lda" or "bertopic"
+        """
+        nltk.download('stopwords', quiet=True)
+        nltk.download('punkt', quiet=True)
+        nltk.download('wordnet', quiet=True)
+
+        self.data_dir = Path(data_dir)
+        if not self.data_dir.exists():
+            raise FileNotFoundError(f"Data directory not found: {data_dir}")
+        self.file_paths = sorted(self.data_dir.glob("*.txt"))
+        if not self.file_paths:
+            raise ValueError(f"No .txt files found in {data_dir}")
+
+        self.docs: List[str] = [fp.read_text(encoding='utf-8') for fp in self.file_paths]
+        self.filenames: List[str] = [fp.stem for fp in self.file_paths]
+
+        self.n_topics = n_topics
+        self.n_top_words = n_top_words
+        self.model_type = model_type.lower()
+
+        self.stop_words = set(stopwords.words('english'))
+        self.lemmatizer = WordNetLemmatizer()
+
+        self.cleaned_docs: List[str] = []
+        self.vectorizer: Optional[CountVectorizer] = None
+        self.dtm = None
+        self.feature_names: List[str] = []
+        self.lda_model: Optional[LatentDirichletAllocation] = None
+        self.bert_model = None
+        self.bert_topics = None
+
+    def preprocess(self) -> List[str]:
+        """
+        Tokenize, lowercase, remove non-alpha, remove stop words, and lemmatize.
+        Returns a list of cleaned document strings.
+        """
+        cleaned = []
+        for doc in self.docs:
+            tokens = word_tokenize(doc.lower())
+            tokens = [re.sub(r'[^a-z]', '', t) for t in tokens]
+            tokens = [t for t in tokens if t and t not in self.stop_words]
+            lemmas = [self.lemmatizer.lemmatize(t) for t in tokens]
+            cleaned.append(" ".join(lemmas))
+
+        self.cleaned_docs = cleaned
+        return self.cleaned_docs
+
+    def build_dtm(self, docs: Optional[List[str]] = None) -> None:
+        """
+        Builds a document-term matrix from preprocessed documents.
+        """
+        if docs is None:
+            docs = self.cleaned_docs
+        self.vectorizer = CountVectorizer(
+            max_df=0.95,
+            min_df=2,
+            stop_words='english'
+        )
+        self.dtm = self.vectorizer.fit_transform(docs)
+        self.feature_names = self.vectorizer.get_feature_names_out()
+
+    def train_lda(self) -> None:
+        """
+        Trains an LDA model on the document-term matrix.
+        """
+        if self.dtm is None:
+            raise ValueError("Document-term matrix not built yet. Call build_dtm() first.")
+        self.lda_model = LatentDirichletAllocation(
+            n_components=self.n_topics,
+            max_iter=10,
+            learning_method='online',
+            random_state=0
+        )
+        self.lda_model.fit(self.dtm)
+
+    def train_bertopic(self) -> None:
+        """
+        Trains a BERTopic model on the preprocessed documents.
+        Requires BERTopic installed.
+        """
+        if not _HAS_BERTOPIC:
+            raise ImportError("Please install BERTopic to use this method.")
+        self.bert_model = BERTopic(nr_topics=self.n_topics)
+        self.bert_topics, _ = self.bert_model.fit_transform(self.cleaned_docs)
+
+    def get_top_keywords(self) -> Dict[int, List[str]]:
+        """
+        Returns the top keywords for each topic.
+        """
+        topics = {}
+        if self.model_type == 'lda':
+            if self.lda_model is None:
+                raise ValueError("LDA model not trained yet.")
+            for idx, comp in enumerate(self.lda_model.components_):
+                top_indices = comp.argsort()[:-self.n_top_words - 1:-1]
+                topics[idx] = [self.feature_names[i] for i in top_indices]
+        elif self.model_type == 'bertopic':
+            if self.bert_model is None:
+                raise ValueError("BERTopic model not trained yet.")
+            for idx in range(self.n_topics):
+                topic_info = self.bert_model.get_topic(idx)
+                topics[idx] = [word for word, _ in topic_info]
+        else:
+            raise ValueError("Unknown model_type: choose 'lda' or 'bertopic'")
+        return topics
+
+    def label_topics(self, manual_labels: Dict[int, str]) -> Dict[int, str]:
+        """
+        Accepts a mapping from topic index to human-assigned label.
+        Returns that mapping for easier reference.
+        """
+        return manual_labels

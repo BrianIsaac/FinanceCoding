@@ -9,11 +9,13 @@ dependencies = []
 [dependency-groups]
 data = [
     "beautifulsoup4>=4.13.4",
+    "bertopic>=0.17.3",
     "feedparser>=6.0.11",
     "lxml-html-clean>=0.4.2",
     "newspaper3k>=0.2.8",
     "playwright>=1.53.0",
     "requests>=2.32.4",
+    "scikit-learn>=1.6.1",
 ]
 dev = [
     "ipykernel>=6.29.5",
