@@ -193,8 +193,8 @@ cython_debug/
 .cursorignore
 .cursorindexingignore
 
-# others
-.python-version
+# testing python notebook
+*./test.ipynb
 
 # NLP
 NLP/financial_news.txt
