@@ -198,4 +198,9 @@ cython_debug/
 
 # NLP
 NLP/financial_news.txt
-NLP/data/*
+*/data/*
+
+#GNN
+GNN/interim/
+GNN/outputs/
+GNN/processed

@@ -1,0 +1,23 @@
+data:
+  start: "1995-01-01"
+  end: "2024-12-31"
+  # Optional: universe with per-ticker start/end (see membership_csv below)
+  universe_csv: "data/raw/universe.csv"
+  tickers_inline: ["AAPL","MSFT","AMZN","GOOGL","META","NVDA","JPM","XOM","UNH","PG"]
+
+cleaning:
+  min_history_days: 252
+  max_missing_ratio: 0.05
+  calendar: "union"
+  ffill_limit: 5
+
+paths:
+  prices_cache: "interim/prices.parquet"
+  volume_cache: "interim/volume.parquet"
+  prices_processed: "processed/prices_clean.parquet"
+  returns_processed: "processed/returns_daily.parquet"
+  rebalance_csv: "processed/rebalance_dates.csv"
+  features_dir: "processed/features"
+
+rebalance:
+  freq: "Q"        # <<< quarterly, as per paper
