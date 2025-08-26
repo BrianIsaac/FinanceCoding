@@ -16,6 +16,8 @@ Outputs:
 from __future__ import annotations
 
 import os
+import sys
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 import hydra
 import pandas as pd
@@ -25,7 +27,7 @@ from omegaconf import DictConfig, OmegaConf
 from src.graph import build_quarterly_graphs
 
 
-@hydra.main(config_path="../configs", config_name="config", version_base=None)
+@hydra.main(config_path="../config", config_name="config", version_base=None)
 def main(cfg: DictConfig) -> None:
     """Hydra entrypoint that builds and saves PyG graph snapshots.
 

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+import sys
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from typing import Dict
 
 import hydra
@@ -13,7 +15,7 @@ from src.data import run_data_pipeline
 from src.features import rolling_features
 
 
-@hydra.main(config_path="../configs", config_name="config", version_base=None)
+@hydra.main(config_path="../config", config_name="config", version_base=None)
 def main(cfg: DictConfig) -> None:
     """Builds prices/returns/rebalance artefacts and per-rebalance features.
 

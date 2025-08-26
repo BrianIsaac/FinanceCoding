@@ -1,4 +1,12 @@
 defaults:
+  - _self_ # to silence self warning
   - data
   - graph
   - hydra
+
+ingest:
+  prices_path: data/merged/prices.parquet
+  volume_path: data/merged/volume.parquet
+
+membership:
+  csv: data/processed/universe_membership_wiki_sp400_seeded.csv

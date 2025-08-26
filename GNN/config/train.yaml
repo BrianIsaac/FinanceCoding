@@ -1,0 +1,59 @@
+defaults:
+  - _self_
+
+data:
+  graph_dir: processed/graphs
+  labels_dir: processed/labels
+  returns_daily: processed/returns_daily.parquet
+
+split:
+  train_start: "2015-03-31"
+  val_start:   "2021-03-31"
+  test_start:  "2022-03-31"
+
+model:
+  in_dim: 8
+  hidden_dim: 64
+  heads: 4
+  num_layers: 2
+  dropout: 0.30
+  use_gatv2: true
+  use_edge_attr: true
+
+  # Choose the head: 'direct' or 'markowitz'
+  head: markowitz
+
+  # Markowitz options (Option A defaults for PGD)
+  markowitz_backend: pgd        # pgd | cvxpy
+  markowitz_mode: diag          # diag | chol (diag is fast & DPP-safe)
+  markowitz_gamma: 5                   # risk aversion
+  weight_cap: 0.10                     # per-name cap
+  markowitz_topk: 0                    # 0 => use all names
+  markowitz_pgd_steps: 80
+  markowitz_normalize_mu: true  # scale alphas before QP
+
+  # Covariance regularization
+  cov_shrinkage_alpha: 0.10     # 0 -> raw cov, 1 -> diagonal
+  cov_ridge_eps: 1.0e-6
+
+  eval_use_cvxpy: false
+
+temporal:
+  use_memory: true
+  mem_hidden: null
+  decay: 0.95
+
+train:
+  epochs: 80
+  batch_size: 4
+  lr: 3.0e-4            # your last run setting
+  weight_decay: 0.0
+  seed: 42
+  out_dir: outputs/gat
+  ordered_when_memory: true
+
+loss:
+  objective: daily_log_utility   # daily_log_utility | sharpe_rnext
+  sharpe_eps: 1.0e-6
+  turnover_bps: 10
+  entropy_coef: 0.002            # your last run setting

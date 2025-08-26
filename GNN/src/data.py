@@ -134,7 +134,7 @@ def _basic_clean(prices: pd.DataFrame, min_history_days: int, max_missing_ratio:
 
 
 def _compute_daily_returns(prices: pd.DataFrame) -> pd.DataFrame:
-    """Computes daily log returns.
+    """Computes daily arithmetic returns.
 
     Args:
         prices: Cleaned price DataFrame.
@@ -142,7 +142,7 @@ def _compute_daily_returns(prices: pd.DataFrame) -> pd.DataFrame:
     Returns:
         Daily log returns aligned to ``prices``.
     """
-    return np.log(prices / prices.shift(1))
+    return prices.pct_change()
 
 
 def _make_rebalance_dates(prices: pd.DataFrame, freq: str = "M") -> pd.Series:

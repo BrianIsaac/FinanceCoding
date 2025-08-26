@@ -59,7 +59,12 @@ def _load_membership(membership_csv: Optional[str]) -> Optional[List[Membership]
     return recs
 
 
-def _active_tickers_at(ts: pd.Timestamp, all_tickers: Sequence[str], membership: Optional[List[Membership]]) -> List[str]:
+def _active_tickers_at(
+    ts: pd.Timestamp,
+    all_tickers: Sequence[str],
+    membership: Optional[List[Membership]],
+    present_mask: Optional[dict[str, bool]] = None,
+) -> List[str]:
     """Returns the list of active tickers at timestamp `ts`.
 
     Args:
@@ -71,7 +76,10 @@ def _active_tickers_at(ts: pd.Timestamp, all_tickers: Sequence[str], membership:
         Subset of tickers active at `ts`. If `membership` is None, all non-NaN tickers at `ts` are used.
     """
     if membership is None:
-        return [t for t in all_tickers if not pd.isna(ts) and not pd.isna(t)]
+        # fall back to "has price at ts" if provided
+        if present_mask is None:
+            return list(all_tickers)
+        return [t for t in all_tickers if present_mask.get(t, False)]
     active = []
     ms = {}
     # Build quick lookup of intervals per ticker.
@@ -169,6 +177,7 @@ def _knn_edges(sim: np.ndarray, k: int) -> List[Tuple[int, int, float]]:
         List of unique undirected edges (u, v, sim).
     """
     N = sim.shape[0]
+    k = max(1, min(k, N - 1))
     S = np.copy(sim)
     np.fill_diagonal(S, -np.inf)
     edges: set[Tuple[int, int]] = set()
@@ -288,12 +297,12 @@ def build_quarterly_graphs(
             continue
 
         # 2) Dynamic universe: which tickers are active at ts?
+        last_row = prices.loc[:ts].iloc[-1]
+        present_mask = {c: pd.notna(last_row.get(c, np.nan)) for c in all_tickers}
         if membership is not None:
-            active = _active_tickers_at(ts, all_tickers, membership)
+            active = _active_tickers_at(ts, all_tickers, membership, present_mask)
         else:
-            # Fallback: tickers with a price at ts
-            last_row = prices.loc[:ts].iloc[-1]
-            active = [c for c in all_tickers if pd.notna(last_row.get(c, np.nan))]
+            active = [c for c in all_tickers if present_mask.get(c, False)]
         if len(active) < 5:
             continue  # too few assets to form a meaningful graph
 

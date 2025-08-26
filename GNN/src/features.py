@@ -12,7 +12,7 @@ def rolling_features(px: pd.DataFrame, rets: pd.DataFrame, rebal_dates: pd.Serie
     """Computes per-asset features using information up to each rebalance date.
 
     Features (per asset, z-scored cross-sectionally at each date):
-      - r_1, r_5, r_21, r_63: cumulative log returns over 1/5/21/63 trading days.
+      - - r_1, r_5, r_21, r_63: cumulative returns over 1/5/21/63 trading days.
       - vol_21, vol_63: realised volatility over 21/63 trading days.
       - mom_252: 12-1 style momentum (252-day minus last 21-day return).
       - dd_max: maximum drawdown up to the rebalance date.

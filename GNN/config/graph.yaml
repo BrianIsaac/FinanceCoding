@@ -3,7 +3,7 @@ graph:
   vol_window_days: 30          # realised volatility window used for similarity
   similarity: "distance_corr"  # per paper; "pearson" is available for sanity checks
   filter:
-    method: "tmfg"             # "tmfg" | "mst" | "knn"
+    method: "mst"              # "tmfg" | "mst" | "knn"
     k_neighbors: 5             # used only if method == "knn"
   make_undirected: true
   save_dir: "processed/graphs"
