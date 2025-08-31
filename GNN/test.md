@@ -49,7 +49,7 @@ flowchart TD
     G[Top K sparsity and renormalise]
   end
 
-  subgraph Deployment
+  subgraph Backtest
     H[Trade at t+1 and hold to next rebalance]
   end
 
