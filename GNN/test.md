@@ -1,5 +1,5 @@
 ```mermaid
-flowchart TD
+flowchart LR
   A["Wikipedia SP400 membership (ticker; start_date; end_date)"] --> B["Dynamic universe timeline"]
   B --> C["Stooq downloader (EOD OHLCV)"]
   B --> D["Yahoo Finance (yfinance) downloader (EOD OHLCV)"]
