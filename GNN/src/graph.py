@@ -1,355 +1,447 @@
-"""Graph construction utilities for portfolio GNN experiments (paper-aligned).
-
-Implements:
-- Quarterly graph snapshots at rebalance dates.
-- Node selection via (optional) dynamic membership file.
-- Edge weights from distance correlation computed over 30-day realised volatility series.
-- Graph sparsification via TMFG (preferred), MST, or KNN.
-
-Notes:
-    * TMFG requires an external implementation. See `_tmfg_edges` docstring.
-      Until plugged in, use MST/KNN to move forward.
-"""
-
 from __future__ import annotations
-
-import os
 from dataclasses import dataclass
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
-
-import networkx as nx
+from typing import Literal, Optional, Tuple, List
+import math
 import numpy as np
 import pandas as pd
 import torch
-from torch_geometric.data import Data
 
 try:
-    import dcor  # distance correlation
-except Exception as _:
-    dcor = None  # handled gracefully below
+    # torch_geometric >= 2.6
+    from torch_geometric.data import Data  # type: ignore
+except Exception:
+    # older import path fallback
+    from torch_geometric.data.data import Data  # type: ignore
+
+from .cov import robust_covariance, to_correlation
+
+__all__ = [
+    "GraphBuildConfig",
+    "build_graph_from_returns",
+    "build_period_graph",
+    "edges_from_corr",
+    "corr_from_returns",
+]
 
 
 @dataclass
-class Membership:
-    """Represents per-ticker active intervals for a dynamic universe."""
-    ticker: str
-    start: pd.Timestamp
-    end: pd.Timestamp
+class GraphBuildConfig:
+    lookback_days: int = 252
+    cov_method: Literal["lw", "oas", "sample"] = "lw"   # Ledoit–Wolf (default)
+    shrink_to: Literal["diag", "identity"] = "diag"
+    min_var: float = 1e-10                               # variance floor
+    corr_method: Literal["from_cov"] = "from_cov"
+    filter_method: Literal["mst", "tmfg", "knn", "threshold"] = "mst"
+    knn_k: int = 8
+    threshold_abs_corr: float = 0.30                     # used for threshold mode
+    use_edge_attr: bool = True                           # include [rho, |rho|, sign] if True
 
 
-def _load_membership(membership_csv: Optional[str]) -> Optional[List[Membership]]:
-    """Loads a membership file describing active intervals for each ticker.
+# ----------------------------- helpers -----------------------------
 
-    Args:
-        membership_csv: Path to CSV with columns: ticker,start,end (YYYY-MM-DD).
+def _safe_nan_to_num(a: np.ndarray, fill: float = 0.0) -> np.ndarray:
+    out = np.array(a, dtype=float, copy=True)
+    out[~np.isfinite(out)] = fill
+    return out
 
-    Returns:
-        A list of Membership records, or None if `membership_csv` is None or not found.
+
+def _corr_to_dist(C: np.ndarray) -> np.ndarray:
     """
-    if not membership_csv or not os.path.exists(membership_csv):
-        return None
-    df = pd.read_csv(membership_csv)
-    df.columns = [c.lower() for c in df.columns]
-    if not {"ticker", "start", "end"}.issubset(df.columns):
-        raise ValueError("membership_csv must contain columns: ticker,start,end")
-    df["ticker"] = df["ticker"].str.upper().str.strip()
-    df["start"] = pd.to_datetime(df["start"])
-    df["end"] = pd.to_datetime(df["end"])
-    recs = [Membership(r.ticker, r.start, r.end) for r in df.itertuples(index=False)]
-    return recs
-
-
-def _active_tickers_at(
-    ts: pd.Timestamp,
-    all_tickers: Sequence[str],
-    membership: Optional[List[Membership]],
-    present_mask: Optional[dict[str, bool]] = None,
-) -> List[str]:
-    """Returns the list of active tickers at timestamp `ts`.
-
-    Args:
-        ts: Rebalance timestamp.
-        all_tickers: Full columns set in the price panel.
-        membership: Optional membership intervals per ticker.
-
-    Returns:
-        Subset of tickers active at `ts`. If `membership` is None, all non-NaN tickers at `ts` are used.
+    Map correlation in [-1, 1] to a distance in [0, 2] using
+      d_ij = sqrt(2 * (1 - rho_ij)).
     """
-    if membership is None:
-        # fall back to "has price at ts" if provided
-        if present_mask is None:
-            return list(all_tickers)
-        return [t for t in all_tickers if present_mask.get(t, False)]
-    active = []
-    ms = {}
-    # Build quick lookup of intervals per ticker.
-    for m in membership:
-        ms.setdefault(m.ticker, []).append((m.start, m.end))
-    for t in all_tickers:
-        ok = False
-        for s, e in ms.get(t, []):
-            if s <= ts <= e:
-                ok = True
-                break
-        if ok:
-            active.append(t)
-    return active
+    C_clip = np.clip(C, -1.0, 1.0)
+    D = np.sqrt(np.maximum(0.0, 2.0 * (1.0 - C_clip)))
+    np.fill_diagonal(D, 0.0)
+    return D
 
 
-def _realised_volatility(returns: pd.DataFrame, window: int) -> pd.DataFrame:
-    """Computes rolling realised volatility (std of daily log returns).
-
-    Args:
-        returns: Daily log returns (Date × Tickers).
-        window: Window (in trading days) for the rolling standard deviation.
-
-    Returns:
-        DataFrame of realised vol with same shape as `returns`.
+def _mst_edges_from_corr(C: np.ndarray) -> List[Tuple[int, int]]:
     """
-    return returns.rolling(window=window, min_periods=window).std()
-
-
-def _pearson_sim(X: np.ndarray) -> np.ndarray:
-    """Pearson correlation similarity (N×N).
-
-    Args:
-        X: Matrix of shape (T, N) where columns are time series.
-
-    Returns:
-        Symmetric similarity matrix in [-1, 1] with ones on the diagonal.
+    Build an MST over correlation-derived distances with a vectorised Prim's algorithm.
+    Returns an edge list of undirected pairs (i, j), i<j.
     """
-    C = np.corrcoef(X, rowvar=False)
-    np.fill_diagonal(C, 1.0)
-    return C
+    n = C.shape[0]
+    if n <= 1:
+        return []
+    D = _corr_to_dist(C)
 
+    selected = np.zeros(n, dtype=bool)
+    selected[0] = True
+    edges: List[Tuple[int, int]] = []
 
-def _distance_corr_sim(X: np.ndarray) -> np.ndarray:
-    """Distance correlation similarity (N×N).
+    best_dist = D[0].copy()
+    best_from = np.zeros(n, dtype=int)
 
-    Args:
-        X: Matrix of shape (T, N) where columns are time series.
+    for _ in range(n - 1):
+        # pick the nearest non-selected node
+        masked = np.where(selected, np.inf, best_dist)
+        j = int(np.argmin(masked))
+        i = int(best_from[j])
+        if math.isfinite(masked[j]):
+            a, b = (i, j) if i < j else (j, i)
+            edges.append((a, b))
+        selected[j] = True
 
-    Returns:
-        Symmetric matrix with diagonal = 1.0 and off-diagonals ∈ [0, 1].
+        # relax distances from the newly added node j
+        new_best = D[j]
+        update = new_best < best_dist
+        best_dist = np.where(update, new_best, best_dist)
+        best_from = np.where(update, j, best_from)
 
-    Raises:
-        RuntimeError: If `dcor` is not installed.
-    """
-    if dcor is None:
-        raise RuntimeError("dcor is not installed. `pip install dcor` or set graph.similarity=pearson.")
-    N = X.shape[1]
-    S = np.eye(N, dtype=float)
-    for i in range(N):
-        xi = X[:, i]
-        for j in range(i + 1, N):
-            xj = X[:, j]
-            dc = float(dcor.distance_correlation(xi, xj))
-            S[i, j] = S[j, i] = dc
-    return S
-
-
-def _mst_edges(sim: np.ndarray) -> List[Tuple[int, int, float]]:
-    """Minimum Spanning Tree edges built from a similarity matrix.
-
-    Args:
-        sim: Similarity matrix (N×N).
-
-    Returns:
-        List of (u, v, weight) where weight is original similarity.
-    """
-    dist = 1.0 - np.clip(sim, -1.0, 1.0)
-    G = nx.from_numpy_array(dist)
-    T = nx.minimum_spanning_tree(G, weight="weight", algorithm="kruskal")
-    edges: List[Tuple[int, int, float]] = []
-    for u, v in T.edges():
-        edges.append((u, v, float(sim[u, v])))
     return edges
 
 
-def _knn_edges(sim: np.ndarray, k: int) -> List[Tuple[int, int, float]]:
-    """KNN graph on similarities (symmetrised).
-
-    Args:
-        sim: Similarity matrix (N×N).
-        k: Number of neighbors per node.
-
-    Returns:
-        List of unique undirected edges (u, v, sim).
+def _greedy_init_k4(A: np.ndarray) -> List[int]:
     """
-    N = sim.shape[0]
-    k = max(1, min(k, N - 1))
-    S = np.copy(sim)
-    np.fill_diagonal(S, -np.inf)
+    Greedy K4 initializer for TMFG on |correlation| matrix A (diagonal should be -inf).
+    Heuristic: pick node with largest degree (row sum), then add nodes that maximize
+    cumulative connection strength to the current set.
+    """
+    n = A.shape[0]
+    if n < 4:
+        return list(range(min(n, 4)))
+
+    chosen: List[int] = []
+    remaining = set(range(n))
+
+    # 1) max row-sum
+    i0 = int(np.argmax(np.sum(A, axis=1)))
+    chosen.append(i0)
+    remaining.remove(i0)
+
+    # 2..4) greedily add the node with max sum to current chosen set
+    for _ in range(3):
+        scores = []
+        for j in remaining:
+            scores.append((float(np.sum(A[j, chosen])), j))
+        j_best = max(scores)[1]
+        chosen.append(j_best)
+        remaining.remove(j_best)
+
+    return chosen
+
+
+def _tmfg_edges_from_corr(C: np.ndarray) -> List[Tuple[int, int]]:
+    """
+    Triangulated Maximally Filtered Graph (TMFG) on |correlation|.
+    Simplified O(N^2) greedy implementation:
+
+    - Start from a K4 (greedy-selected).
+    - Maintain face list (triangles of current planar triangulation).
+    - Iteratively insert each remaining node:
+        choose the face (a,b,c) that maximizes A[r,a]+A[r,b]+A[r,c],
+        connect r to (a,b,c), split face into three.
+
+    Returns undirected edges (i<j). For N nodes, TMFG yields 3N-6 edges (N>=3).
+    """
+    n = C.shape[0]
+    if n <= 1:
+        return []
+    if n == 2:
+        return [(0, 1)]
+    if n == 3:
+        return [(0, 1), (0, 2), (1, 2)]
+
+    A = np.abs(C).copy()
+    np.fill_diagonal(A, -np.inf)
+
+    # Initial K4
+    seed = _greedy_init_k4(A)
+    if len(seed) < 4:
+        # fallback to MST if we couldn't seed K4
+        return _mst_edges_from_corr(C)
+
+    i0, i1, i2, i3 = seed
     edges: set[Tuple[int, int]] = set()
-    for i in range(N):
-        nbrs = np.argsort(-S[i])[:k]
-        for j in nbrs:
-            u, v = (i, j) if i < j else (j, i)
-            edges.add((u, v))
-    return [(u, v, float(sim[u, v])) for (u, v) in sorted(edges)]
+
+    def _add(u: int, v: int):
+        a, b = (u, v) if u < v else (v, u)
+        if a != b:
+            edges.add((a, b))
+
+    # K4 edges
+    k4 = [i0, i1, i2, i3]
+    for a in range(4):
+        for b in range(a + 1, 4):
+            _add(k4[a], k4[b])
+
+    # faces of tetrahedron (order doesn't matter for this scoring)
+    faces: List[Tuple[int, int, int]] = [
+        (i0, i1, i2),
+        (i0, i1, i3),
+        (i0, i2, i3),
+        (i1, i2, i3),
+    ]
+
+    remaining = [j for j in range(n) if j not in seed]
+
+    # Insert nodes one-by-one
+    for r in remaining:
+        best_gain = -np.inf
+        best_face_idx = -1
+        for t, (a, b, c) in enumerate(faces):
+            gain = A[r, a] + A[r, b] + A[r, c]
+            if gain > best_gain:
+                best_gain = gain
+                best_face_idx = t
+
+        if best_face_idx < 0:
+            # should not happen; fallback safe
+            continue
+
+        a, b, c = faces.pop(best_face_idx)
+        # Connect r to the face
+        _add(r, a)
+        _add(r, b)
+        _add(r, c)
+        # Split face into three new faces
+        faces.extend([(r, a, b), (r, a, c), (r, b, c)])
+
+    return sorted(list(edges))
 
 
-def _tmfg_edges(sim: np.ndarray) -> List[Tuple[int, int, float]]:
-    """Edges via Triangulated Maximally Filtered Graph (TMFG).
-
-    IMPORTANT:
-        This function expects an external TMFG implementation. Options:
-        - Install a dedicated TMFG package (if available in your environment).
-        - Call out to a command-line tool and parse the resulting edges.
-        - Replace this function once you choose a concrete TMFG implementation.
-
-    Args:
-        sim: Similarity matrix (N×N).
-
-    Returns:
-        List of (u, v, weight) edges.
-
-    Raises:
-        NotImplementedError: Always, until a TMFG implementation is wired.
+def _knn_edges_from_corr(C: np.ndarray, k: int) -> List[Tuple[int, int]]:
     """
-    raise NotImplementedError(
-        "TMFG filter not implemented. "
-        "Set graph.filter.method=mst or knn for now, or plug in a TMFG library here."
+    Symmetric k-NN graph on absolute correlation.
+    Keep the top-|rho| neighbors for each node; symmetrise.
+    """
+    n = C.shape[0]
+    if n <= 1 or k <= 0:
+        return []
+    A = np.abs(C).copy()
+    np.fill_diagonal(A, -np.inf)
+
+    nbrs: List[set] = [set() for _ in range(n)]
+    for i in range(n):
+        kk = min(k, n - 1)
+        if kk <= 0:
+            continue
+        idx = np.argpartition(-A[i], kth=kk - 1)[:kk]
+        for j in idx:
+            if i != j:
+                nbrs[i].add(int(j))
+
+    edges: set[Tuple[int, int]] = set()
+    for i in range(n):
+        for j in nbrs[i]:
+            if i in nbrs[j]:  # symmetric
+                a, b = (i, j) if i < j else (j, i)
+                edges.add((a, b))
+    return sorted(list(edges))
+
+
+def _threshold_edges_from_corr(C: np.ndarray, thr: float) -> List[Tuple[int, int]]:
+    """
+    Keep edges with |rho| >= threshold.
+    """
+    n = C.shape[0]
+    E: List[Tuple[int, int]] = []
+    for i in range(n):
+        for j in range(i + 1, n):
+            if abs(C[i, j]) >= thr:
+                E.append((i, j))
+    return E
+
+
+def _edge_attr_from_corr(C: np.ndarray, E: List[Tuple[int, int]]) -> np.ndarray:
+    """
+    Build edge attributes:
+      [rho, abs_rho, sign]
+    """
+    attrs = []
+    for i, j in E:
+        rho = float(np.clip(C[i, j], -1.0, 1.0))
+        attrs.append([rho, abs(rho), float(np.sign(rho))])
+    return np.asarray(attrs, dtype=np.float32)
+
+
+# --------------------------- main entry ----------------------------
+
+def build_graph_from_returns(
+    returns_window: pd.DataFrame,
+    features_matrix: Optional[np.ndarray],
+    tickers: List[str],
+    ts: pd.Timestamp,
+    cfg: GraphBuildConfig,
+) -> Data:
+    """
+    Parameters
+    ----------
+    returns_window : (T x N) DataFrame
+        Daily returns (aligned to `tickers`) for the lookback window (no future leakage).
+    features_matrix : Optional[np.ndarray]
+        Node features matrix X of shape (N, d). If None, we create a 1-dim dummy feature.
+    tickers : List[str]
+        Node ordering. Must match the columns of `returns_window` after reindex.
+    ts : pd.Timestamp
+        The snapshot date for this graph (rebalance date).
+    cfg : GraphBuildConfig
+        Rolling-corr & filtering options.
+
+    Returns
+    -------
+    torch_geometric.data.Data
+        Data(x, edge_index, edge_attr?, tickers=<list[str]>, ts=<timestamp>)
+    """
+    # Align and clean
+    rets = returns_window.reindex(columns=tickers, fill_value=np.nan).astype(float)
+    rets = rets.fillna(0.0)  # conservative fill
+    X = rets.values  # (T, N)
+
+    # Robust covariance -> correlation
+    S = robust_covariance(X, method=cfg.cov_method, shrink_to=cfg.shrink_to, min_var=cfg.min_var)
+    C = to_correlation(S)
+
+    # Filtering -> edge list
+    if cfg.filter_method == "mst":
+        E = _mst_edges_from_corr(C)
+    elif cfg.filter_method == "tmfg":
+        E = _tmfg_edges_from_corr(C)
+    elif cfg.filter_method == "knn":
+        E = _knn_edges_from_corr(C, k=int(cfg.knn_k))
+    elif cfg.filter_method == "threshold":
+        E = _threshold_edges_from_corr(C, thr=float(cfg.threshold_abs_corr))
+    else:
+        raise ValueError(f"Unknown filter_method={cfg.filter_method}")
+
+    # Edge index & attributes
+    if len(E) == 0:
+        edge_index = torch.zeros((2, 0), dtype=torch.long)
+        edge_attr_t = None
+    else:
+        edge_index = torch.tensor(np.array(E, dtype=np.int64).T, dtype=torch.long)
+        if cfg.use_edge_attr:
+            edge_attr = _edge_attr_from_corr(C, E)
+            edge_attr_t = torch.tensor(edge_attr, dtype=torch.float32)
+        else:
+            edge_attr_t = None
+
+    # Node features
+    N = len(tickers)
+    if features_matrix is None:
+        x_np = np.ones((N, 1), dtype=np.float32)  # trivial constant feature
+    else:
+        x_np = _safe_nan_to_num(features_matrix).astype(np.float32)
+        if x_np.shape[0] != N:
+            raise ValueError(f"features_matrix has {x_np.shape[0]} rows but N={N} tickers")
+
+    x = torch.tensor(x_np, dtype=torch.float32)
+
+    data = Data(
+        x=x,
+        edge_index=edge_index,
+        edge_attr=edge_attr_t,
     )
+    # helpful metadata for downstream code
+    data.tickers = tickers
+    data.ts = ts.to_pydatetime()
+
+    return data
 
 
-def _edge_index(
-    edges: List[Tuple[int, int, float]],
-    undirected: bool,
-) -> Tuple[torch.Tensor, torch.Tensor]:
-    """Builds PyG edge_index and edge_attr tensors.
+# ----------------------- convenience wrapper -----------------------
 
-    Args:
-        edges: List of (u, v, weight).
-        undirected: Whether to add reverse edges.
+def build_period_graph(
+    returns_daily: pd.DataFrame,
+    period_end: pd.Timestamp,
+    tickers: List[str],
+    features_matrix: Optional[np.ndarray],
+    cfg: GraphBuildConfig,
+) -> Data:
+    """
+    Pick the rolling window that ends the **day before** `period_end` (to avoid leakage),
+    then call `build_graph_from_returns`.
+    """
+    lookback = int(cfg.lookback_days)
+    # end index is the last index strictly < period_end
+    idx_end = returns_daily.index.searchsorted(period_end, side="left") - 1
+    if idx_end < 0:
+        raise ValueError("Not enough history before period_end to build a graph.")
+    start = max(0, idx_end - lookback + 1)
+    window = returns_daily.iloc[start:idx_end + 1]
+    return build_graph_from_returns(window, features_matrix, tickers, period_end, cfg)
+
+
+# --- adapter for scripts/make_graphs.py ---------------------------------------
+def edges_from_corr(
+    C: np.ndarray,
+    method: str = "tmfg",
+    undirected: bool = True,
+    include_strength: bool = True,
+    include_sign: bool = True,
+    tmfg_keep_n: int | str = "auto",
+    mst_use_abs: bool = True,
+    knn_k: int | None = None,
+    threshold_abs_corr: float | None = None,
+):
+    """
+    Adapter for scripts/make_graphs.py.
 
     Returns:
-        Tuple (edge_index [2,E], edge_attr [E,1]).
+      edge_index: np.ndarray shape (2, E)
+      edge_attr : Optional[np.ndarray] shape (E, D) with columns:
+                  [rho] (+[|rho|] if include_strength, +[sign] if include_sign)
     """
-    rows: List[int] = []
-    cols: List[int] = []
-    weights: List[float] = []
-    for u, v, w in edges:
-        rows.append(u)
-        cols.append(v)
-        weights.append(w)
+    method = (method or "tmfg").lower().strip()
+
+    # Build edge list (i<j) according to method
+    if method == "mst":
+        # Use |rho| for MST stability if requested
+        E_pairs = _mst_edges_from_corr(np.abs(C)) if mst_use_abs else _mst_edges_from_corr(C)
+    elif method == "tmfg":
+        E_pairs = _tmfg_edges_from_corr(C)
+        # NOTE: We intentionally ignore tmfg_keep_n < full TMFG to preserve planarity.
+    elif method == "knn":
+        k = int(knn_k) if knn_k is not None else 8
+        E_pairs = _knn_edges_from_corr(C, k=k)
+    elif method == "threshold":
+        thr = float(threshold_abs_corr) if threshold_abs_corr is not None else 0.30
+        E_pairs = _threshold_edges_from_corr(C, thr=thr)
+    else:
+        raise ValueError(f"Unknown method '{method}'")
+
+    # Attributes
+    if len(E_pairs) == 0:
+        edge_index = np.zeros((2, 0), dtype=np.int64)
+        edge_attr = None
+        return edge_index, edge_attr
+
+    full_attrs = _edge_attr_from_corr(C, E_pairs)  # [rho, |rho|, sign]
+    cols = [0]  # rho always
+    if include_strength:
+        cols.append(1)
+    if include_sign:
+        cols.append(2)
+    comp_attrs = full_attrs[:, cols].astype(np.float32, copy=False)
+
+    rows = []
+    attrs = []
+    for (i, j), a in zip(E_pairs, comp_attrs):
+        rows.append((i, j))
         if undirected:
-            rows.append(v)
-            cols.append(u)
-            weights.append(w)
-    edge_index = torch.tensor([rows, cols], dtype=torch.long)
-    edge_attr = torch.tensor(weights, dtype=torch.float32).unsqueeze(-1)
+            rows.append((j, i))
+        attrs.append(a)
+        if undirected:
+            attrs.append(a)
+
+    edge_index = np.asarray(rows, dtype=np.int64).T
+    edge_attr = np.asarray(attrs, dtype=np.float32) if attrs else None
     return edge_index, edge_attr
 
 
-def build_quarterly_graphs(
-    prices: pd.DataFrame,
-    returns: pd.DataFrame,
-    rebalance_dates: Iterable[pd.Timestamp],
-    lookback_days: int,
-    vol_window_days: int,
-    similarity: str,
-    filter_method: str,
-    k_neighbors: int,
-    undirected: bool,
-    features_dir: str,
-    membership_csv: Optional[str] = None,
-) -> Dict[pd.Timestamp, Data]:
-    """Builds PyG graph snapshots aligned with the paper’s methodology.
-
-    For each rebalance date t:
-      1) Select a 3-year lookback slice of daily returns up to t.
-      2) Compute 30-day realised volatility per asset within that slice.
-      3) Compute pairwise distance correlation across those volatility series.
-      4) Sparsify via TMFG (preferred) or MST/KNN.
-      5) Attach per-asset feature vectors from `features/features_t.parquet`.
-
-    Args:
-        prices: Cleaned price panel (Date × Tickers).
-        returns: Daily log returns (Date × Tickers).
-        rebalance_dates: Quarterly rebalance timestamps.
-        lookback_days: Number of daily observations for similarity (≈756).
-        vol_window_days: Window for rolling volatility (≈30).
-        similarity: "distance_corr" (preferred) or "pearson".
-        filter_method: "tmfg" | "mst" | "knn".
-        k_neighbors: K for KNN sparsification (if used).
-        undirected: Whether to add reverse edges to edge_index.
-        features_dir: Directory where per-rebalance features are stored.
-        membership_csv: Optional CSV (ticker,start,end) to enforce a dynamic universe.
-
-    Returns:
-        Mapping from rebalance timestamp to PyG Data object:
-            Data.x: [N,F] node features,
-            Data.edge_index: [2,E] edges,
-            Data.edge_attr: [E,1] weights,
-            Data.tickers: list[str] (kept as a Python attribute),
-            Data.ts: str (YYYY-MM-DD).
+def corr_from_returns(
+    returns_window: pd.DataFrame,
+    cov_method: str = "lw",
+    shrink_to: str = "diag",
+    min_var: float = 1e-10,
+) -> np.ndarray:
     """
-    membership = _load_membership(membership_csv)
-    graphs: Dict[pd.Timestamp, Data] = {}
-
-    all_tickers = list(prices.columns)
-
-    for ts in pd.to_datetime(list(rebalance_dates)):
-        # 1) Lookback window (skip early quarters)
-        hist_r = returns.loc[:ts].tail(lookback_days)
-        if hist_r.shape[0] < lookback_days:
-            continue
-
-        # 2) Dynamic universe: which tickers are active at ts?
-        last_row = prices.loc[:ts].iloc[-1]
-        present_mask = {c: pd.notna(last_row.get(c, np.nan)) for c in all_tickers}
-        if membership is not None:
-            active = _active_tickers_at(ts, all_tickers, membership, present_mask)
-        else:
-            active = [c for c in all_tickers if present_mask.get(c, False)]
-        if len(active) < 5:
-            continue  # too few assets to form a meaningful graph
-
-        # Restrict to active tickers
-        R = hist_r[active]
-
-        # 3) 30-day realised volatility series within lookback
-        vol = _realised_volatility(R, window=vol_window_days).dropna(how="any")
-        if vol.shape[0] < 20:  # sanity guard
-            continue
-
-        X = vol.to_numpy()  # (T, N)
-        if similarity.lower() == "distance_corr":
-            S = _distance_corr_sim(X)
-        elif similarity.lower() == "pearson":
-            S = _pearson_sim(X)
-        else:
-            raise ValueError(f"Unknown similarity: {similarity}")
-
-        # 4) Sparsify to obtain a thin, stable topology
-        method = filter_method.lower()
-        if method == "tmfg":
-            edges = _tmfg_edges(S)  # requires a concrete TMFG implementation
-        elif method == "mst":
-            edges = _mst_edges(S)
-        elif method == "knn":
-            edges = _knn_edges(S, k_neighbors)
-        else:
-            raise ValueError(f"Unknown filter_method: {filter_method}")
-
-        # 5) Node features at ts
-        fpath = os.path.join(features_dir, f"features_{ts.date()}.parquet")
-        if not os.path.exists(fpath):
-            # If features missing for this quarter, skip gracefully
-            continue
-        feats_df = pd.read_parquet(fpath).reindex(active).fillna(0.0)
-        X_node = torch.tensor(feats_df.to_numpy(), dtype=torch.float32)
-
-        edge_index, edge_attr = _edge_index(edges, undirected=undirected)
-
-        data_obj = Data(
-            x=X_node,
-            edge_index=edge_index,
-            edge_attr=edge_attr,
-            tickers=active,   # PyG will keep this as an attribute
-            ts=str(ts.date())
-        )
-        graphs[ts] = data_obj
-
-    return graphs
+    Convenience: robust covariance -> correlation using src.cov helpers.
+    """
+    X = returns_window.astype(float).fillna(0.0).values  # (T, N)
+    S = robust_covariance(X, method=cov_method, shrink_to=shrink_to, min_var=min_var)
+    C = to_correlation(S)
+    C = np.clip(0.5 * (C + C.T), -0.9999, 0.9999)
+    np.fill_diagonal(C, 1.0)
+    return C

@@ -75,8 +75,8 @@ def _download_yahoo(
     """Download Adjusted Close and Volume for tickers via yfinance in batches.
 
     Returns:
-        prices_y: Date × Tickers (Adj Close)
-        volume_y: Date × Tickers (Volume)
+        prices_y: Date x Tickers (Adj Close)
+        volume_y: Date x Tickers (Volume)
     """
     prices_list: List[pd.DataFrame] = []
     volume_list: List[pd.DataFrame] = []

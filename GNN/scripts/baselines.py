@@ -1,349 +1,511 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
-Quarterly portfolio baselines for the SP400 universe.
+Run baseline portfolio strategies aligned to the GAT evaluation windows.
+
+Outputs per strategy:
+  - <strat>_daily_returns.csv  (indexed by trading day)
+  - <strat>_equity_daily.csv   (cumulative equity curve)
+  - <strat>_equity.csv         (per-rebalance window log incl. turnover)
 
 Strategies:
-  • EW  : Equal-Weight with per-name cap + turnover costs
-  • MinVar : Heuristic long-only min-variance (projected GD) + cap + costs
-  • HRP : Hierarchical Risk Parity (corr-distance clustering + recursive bisection)
-  • MV  : Mean-Variance via cvxpy (long-only, sum=1, cap)
+  - EW, MV, MinVar, HRP, TopK_EW
 
-Inputs:
-  processed/returns_daily.parquet                     (Date x Tickers, arithmetic returns)
-  processed/rebalance_dates.csv                       (column: rebalance_date)
-  processed/labels/labels_YYYY-MM-DD.parquet          (column: r_next) — used to ensure tradable pool
-  data/processed/universe_membership_wiki_sp400_seeded.csv
-
-Output:
-  processed/baselines/results.csv  (equity and stats per rebalance)
-
-Run:
-  python scripts/baselines.py
+Covariance:
+  - Uses src.cov.build_cov_estimator: ledoit_wolf | oas | linear | diag
 """
-from __future__ import annotations
 
+from __future__ import annotations
+import argparse
+import math
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
+import torch
 
-# Optional libs for HRP + MV
+# Optional SciPy (HRP); falls back gracefully
 try:
-    from scipy.cluster.hierarchy import linkage, leaves_list
-    from scipy.spatial.distance import squareform
-    HAVE_SCIPY = True
+    from scipy.cluster.hierarchy import linkage, leaves_list  # type: ignore
+    from scipy.spatial.distance import squareform  # type: ignore
 except Exception:
-    HAVE_SCIPY = False
+    linkage = leaves_list = squareform = None
 
+# --- our covariance factory
 try:
-    import cvxpy as cp  # type: ignore
-    HAVE_CVXPY = True
+    from src.cov import build_cov_estimator  # Follows the earlier refactor
 except Exception:
-    HAVE_CVXPY = False
+    build_cov_estimator = None  # type: ignore
 
+# ---------------- IO + windowing ----------------
 
-# ---------- Paths ---------- #
+@dataclass
+class Sample:
+    ts: pd.Timestamp
+    graph_path: Path
+    label_path: Path
 
-PROCESSED = Path("processed")
-DATA = Path("data/processed")
-RET = PROCESSED / "returns_daily.parquet"
-REB = PROCESSED / "rebalance_dates.csv"
-LAB_DIR = PROCESSED / "labels"
-MEM = DATA / "universe_membership_wiki_sp400_seeded.csv"
-OUT = PROCESSED / "baselines"
+def _infer_ts(p: Path) -> pd.Timestamp:
+    import re
+    m = re.search(r"(\d{4}-\d{2}-\d{2})", p.name)
+    if not m:
+        raise ValueError(f"Cannot parse date from {p.name}")
+    return pd.Timestamp(m.group(1))
 
+def list_samples(graph_dir: Path, labels_dir: Path) -> List[Sample]:
+    gfiles = sorted([p for p in graph_dir.glob("graph_*.pt")], key=lambda x: _infer_ts(x))
+    out: List[Sample] = []
+    for gp in gfiles:
+        ts = _infer_ts(gp)
+        lp = labels_dir / f"labels_{ts.date()}.parquet"
+        if lp.exists():
+            out.append(Sample(ts=ts, graph_path=gp, label_path=lp))
+    return out
 
-# ---------- Hyperparameters ---------- #
+def split_samples(samples: List[Sample], train_start: str, val_start: str, test_start: str
+                  ) -> Tuple[List[Sample], List[Sample], List[Sample]]:
+    t0 = pd.Timestamp(train_start)
+    v0 = pd.Timestamp(val_start)
+    te0 = pd.Timestamp(test_start)
+    train = [s for s in samples if t0 <= s.ts < v0]
+    val   = [s for s in samples if v0 <= s.ts < te0]
+    test  = [s for s in samples if s.ts >= te0]
+    return train, val, test
 
-W_CAP: float = 0.02        # per-name cap (e.g., 2%)
-TC_BP: float = 10.0        # transaction costs (per side, in bps)
-TC: float = TC_BP / 10000.0
-COV_LOOKBACK_DAYS: int = 252
-MU_LOOKBACK_DAYS: int = 63
-RIDGE_EPS: float = 1e-6     # small PSD ridge for covariances
-MV_GAMMA: float = 5.0       # risk aversion for MV objective: mu'w - gamma w'Sw
+def load_graph(path: Path):
+    # torch geometric Data saved via torch.save
+    return torch.load(str(path), map_location="cpu", weights_only=False)
 
+# ----------------- math utils -----------------
 
-# ---------- Helpers ---------- #
+def _project_capped_simplex(v: torch.Tensor, cap: float, s: float = 1.0, iters: int = 50) -> torch.Tensor:
+    """
+    Project v onto { w: 0<=w<=cap, sum w = s } using bisection in tau:
+        w_i = clip(v_i - tau, 0, cap)
+    """
+    vmax = v.detach().max().item()
+    hi = vmax
+    lo = hi - cap
+    for _ in range(64):
+        if torch.clamp(v - lo, 0.0, cap).sum().item() >= s:
+            break
+        lo -= cap
+    for _ in range(iters):
+        mid = 0.5 * (lo + hi)
+        w = torch.clamp(v - mid, 0.0, cap)
+        if w.sum().item() > s:
+            lo = mid
+        else:
+            hi = mid
+    return torch.clamp(v - hi, 0.0, cap)
 
-def active_at(mem: pd.DataFrame, ts: pd.Timestamp) -> List[str]:
-    """Return active SP400 tickers at timestamp ts."""
-    m = mem.copy()
-    m["ticker"] = m["ticker"].astype(str).str.upper()
-    m["start"] = pd.to_datetime(m["start"], errors="coerce")
-    m["end"] = pd.to_datetime(m.get("end"), errors="coerce")
-    mask = (m["start"] <= ts) & (m["end"].isna() | (m["end"] >= ts))
-    return sorted(set(m.loc[mask, "ticker"].tolist()))
+def _auto_feasible_cap(cap: float, n_eff: int) -> float:
+    # Ensure feasibility: need n_eff * cap >= 1
+    if n_eff <= 0:
+        return cap
+    min_cap = 1.0 / n_eff + 1e-9
+    return cap if cap >= min_cap else min_cap
 
+def _baseline_weight_ew(n: int, cap: float) -> np.ndarray:
+    w0 = np.full(n, 1.0 / max(n, 1), dtype=np.float32)
+    w = _project_capped_simplex(torch.from_numpy(w0), cap=_auto_feasible_cap(cap, n), s=1.0, iters=50)
+    return w.detach().cpu().numpy()
 
-def equal_weight(tickers: List[str]) -> pd.Series:
-    """Equal-weight portfolio with cap and renorm."""
-    if not tickers:
-        return pd.Series(dtype=float)
-    w_raw = 1.0 / len(tickers)
-    w_capped = min(w_raw, W_CAP)
-    w = pd.Series(w_capped, index=tickers, dtype=float)
-    s = w.sum()
-    w = w / s if s > 0 else w
+def _ivp_weights(S: np.ndarray) -> np.ndarray:
+    v = np.clip(np.diag(S), 1e-12, None)
+    w = 1.0 / v
+    w /= w.sum()
     return w
 
+def _corr_from_cov(S: np.ndarray) -> np.ndarray:
+    d = np.sqrt(np.clip(np.diag(S), 1e-12, None))
+    invd = np.where(d > 0, 1.0 / d, 0.0)
+    return (S * invd).T * invd
 
-def realized_stats(
-    rets: pd.DataFrame,
-    cov_end_inclusive: pd.Timestamp,
-    cov_lookback: int = COV_LOOKBACK_DAYS,
-    mu_lookback: int = MU_LOOKBACK_DAYS,
-) -> Tuple[np.ndarray, np.ndarray, List[str]]:
-    """Compute trailing mean vector (mu) and covariance (S)."""
-    win_cov = rets.loc[:cov_end_inclusive].tail(cov_lookback).fillna(0.0)
-    win_mu  = rets.loc[:cov_end_inclusive].tail(mu_lookback)  # leave NaNs -> mean ignores
-    tickers = list(win_cov.columns)
+def _hrp_weights(S: np.ndarray) -> np.ndarray:
+    n = S.shape[0]
+    if linkage is None or leaves_list is None or squareform is None or n < 2:
+        return _ivp_weights(S)
 
-    # Mean of arithmetic returns (per day)
-    mu = win_mu.mean(axis=0).fillna(0.0).values
+    C = np.clip(_corr_from_cov(S), -0.9999, 0.9999)
+    D = np.sqrt(0.5 * (1.0 - C))
+    z = linkage(squareform(D, checks=False), method="single")
+    order = leaves_list(z)
+    S_ = S[np.ix_(order, order)]
 
-    # Covariance with Ledoit-Wolf shrinkage if available, else sample
-    X = win_cov.values
-    try:
-        from sklearn.covariance import LedoitWolf  # type: ignore
-        lw = LedoitWolf().fit(X)
-        S = lw.covariance_
-    except Exception:
-        S = np.cov(X, rowvar=False)
-        # force PSD
-        S = (S + S.T) / 2.0 + RIDGE_EPS * np.eye(S.shape[0], dtype=float)
-
-    # Stabilize
-    S = S + RIDGE_EPS * np.eye(S.shape[0], dtype=float)
-    return mu, S, tickers
-
-
-def min_var_cov(cov: np.ndarray, tickers: List[str], max_iters: int = 200, step: float = 0.01) -> pd.Series:
-    """Heuristic long-only MinVar with cap and renorm (projected GD)."""
-    n = len(tickers)
-    if n == 0:
-        return pd.Series(dtype=float)
-    S = cov
-    w = np.full(n, 1.0 / n, dtype=float)
-    for _ in range(max_iters):
-        grad = 2.0 * (S @ w)
-        w -= step * grad
-        w = np.clip(w, 0.0, W_CAP)
-        s = w.sum()
-        w = (w / s) if s > 0 else np.full(n, 1.0 / n, dtype=float)
-    return pd.Series(w, index=tickers, dtype=float)
-
-
-# ---------- HRP ---------- #
-
-def _cov_to_corr(cov: np.ndarray) -> np.ndarray:
-    d = np.sqrt(np.clip(np.diag(cov), RIDGE_EPS, None))
-    corr = cov / np.outer(d, d)
-    corr[np.isnan(corr)] = 0.0
-    corr = np.clip(corr, -1.0, 1.0)
-    return corr
-
-def _corr_distance(corr: np.ndarray) -> np.ndarray:
-    # López de Prado’s distance: d_ij = sqrt(0.5 * (1 - corr_ij))
-    return np.sqrt(0.5 * (1.0 - corr))
-
-def _cluster_order(corr: np.ndarray) -> np.ndarray:
-    if not HAVE_SCIPY:
-        # Fallback: identity order
-        return np.arange(corr.shape[0])
-    dist = _corr_distance(corr)
-    # Convert to condensed form for linkage
-    condensed = squareform(dist, checks=False)
-    Z = linkage(condensed, method="single")  # 'single' works well for HRP
-    order = leaves_list(Z)
-    return order
-
-def _cluster_var(cov: np.ndarray, idx: np.ndarray) -> float:
-    sub = cov[np.ix_(idx, idx)]
-    inv_diag = 1.0 / np.clip(np.diag(sub), RIDGE_EPS, None)
-    ivp = inv_diag / inv_diag.sum()
-    var = float(ivp @ sub @ ivp)
-    return var
-
-def hrp_weights(cov: np.ndarray, tickers: List[str]) -> pd.Series:
-    """Hierarchical Risk Parity weights (long-only, no explicit cap)."""
-    n = len(tickers)
-    if n == 0:
-        return pd.Series(dtype=float)
-    corr = _cov_to_corr(cov)
-    order = _cluster_order(corr)
-    cov_sorted = cov[np.ix_(order, order)]
-
-    # Recursive bisection
-    w = np.ones(n, dtype=float)
+    w = np.ones(n)
     clusters = [np.arange(n)]
     while clusters:
-        cl = clusters.pop(0)
+        cl = clusters.pop()
         if len(cl) <= 1:
             continue
-        split = len(cl) // 2
-        left, right = cl[:split], cl[split:]
-        var_l = _cluster_var(cov_sorted, left)
-        var_r = _cluster_var(cov_sorted, right)
-        alpha_l = 1.0 - var_l / (var_l + var_r)
-        alpha_r = 1.0 - alpha_l
-        w[left] *= alpha_l
-        w[right] *= alpha_r
-        clusters.extend([left, right])
+        split = int(math.ceil(len(cl) / 2))
+        c1, c2 = cl[:split], cl[split:]
 
-    # Map back to original order
-    w_full = np.zeros(n, dtype=float)
-    w_full[order] = w
-    # Apply per-name cap then renormalize
-    w_full = np.clip(w_full, 0.0, W_CAP)
-    s = w_full.sum()
-    if s > 0:
-        w_full /= s
-    else:
-        w_full[:] = 1.0 / n
-    return pd.Series(w_full, index=tickers, dtype=float)
+        def _cluster_var(idxs):
+            Sc = S_[np.ix_(idxs, idxs)]
+            wc = _ivp_weights(Sc)
+            return float(wc @ Sc @ wc)
 
+        v1, v2 = _cluster_var(c1), _cluster_var(c2)
+        a2 = v1 / (v1 + v2 + 1e-12)
+        a1 = 1.0 - a2
+        w[c1] *= a1
+        w[c2] *= a2
+        clusters.extend([c1, c2])
 
-# ---------- Mean–Variance via cvxpy ---------- #
+    w_ord = np.zeros(n)
+    w_ord[order] = w
+    s = w_ord.sum()
+    return (w_ord / s) if s > 0 else _ivp_weights(S)
 
-def mv_cvxpy_weights(mu: np.ndarray, cov: np.ndarray, tickers: List[str],
-                     gamma: float = MV_GAMMA) -> pd.Series:
-    """Mean–Variance optimizer: maximize mu'w - gamma w'Sw with caps & long-only."""
-    n = len(tickers)
-    if n == 0 or not HAVE_CVXPY:
+def _project_cap_and_sum_to_one(w_np: np.ndarray, cap: float) -> np.ndarray:
+    t = torch.from_numpy(w_np.astype(np.float32))
+    w = _project_capped_simplex(t, cap=_auto_feasible_cap(cap, len(w_np)), s=1.0, iters=50)
+    return w.detach().cpu().numpy()
+
+# --- PGD Markowitz (diag/full SPD) ---
+
+def _pgd_markowitz(mu: np.ndarray, S: np.ndarray, cap: float, gamma: float, mode: str = "diag",
+                   steps: int = 60) -> np.ndarray:
+    """
+    minimize  gamma * w' S w - mu' w
+    s.t.      0 <= w <= cap, sum w = 1
+    """
+    mu_t = torch.from_numpy(mu.astype(np.float32))
+    N = mu_t.numel()
+    cap_eff = _auto_feasible_cap(cap, int(N))
+    w = torch.full_like(mu_t, 1.0 / max(int(N), 1))
+
+    if mode == "diag":
+        sdiag = np.clip(np.diag(S), 1e-10, None)
+        S_diag = torch.from_numpy(sdiag).to(dtype=mu_t.dtype)
+        L = (2.0 * gamma * S_diag.max()).clamp_min(1e-8)
+        eta = 1.0 / float(L)
+        for _ in range(steps):
+            grad = 2.0 * gamma * (S_diag * w) - mu_t
+            w = _project_capped_simplex(w - eta * grad, cap_eff, s=1.0)
+        return w.detach().cpu().numpy()
+
+    # full SPD
+    St = torch.from_numpy(S.astype(np.float32))
+    v = torch.randn_like(mu_t)
+    for _ in range(8):
+        v = St @ v
+        v = v / (v.norm() + 1e-12)
+    L = (2.0 * gamma * (v @ (St @ v))).clamp_min(1e-8)
+    eta = 1.0 / float(L)
+    for _ in range(steps):
+        grad = 2.0 * gamma * (St @ w) - mu_t
+        w = _project_capped_simplex(w - eta * grad, cap_eff, s=1.0)
+    return w.detach().cpu().numpy()
+
+# ----------------- scoring for TopK_EW -----------------
+
+def _momentum_score(hist: pd.DataFrame, lookback: int = 126, method: str = "mean") -> pd.Series:
+    """
+    Simple price momentum on returns:
+      method="mean": average daily return over lookback
+      method="prod": cumulative (1+r).prod()-1 over lookback
+    """
+    h = hist.tail(lookback).fillna(0.0)
+    if h.empty:
         return pd.Series(dtype=float)
-    # Ensure PSD
-    S = (cov + cov.T) / 2.0 + RIDGE_EPS * np.eye(n)
-    w = cp.Variable(n)
-    objective = cp.Maximize(mu @ w - gamma * cp.quad_form(w, S))
-    constraints = [w >= 0, w <= W_CAP, cp.sum(w) == 1]
-    prob = cp.Problem(objective, constraints)
-    try:
-        prob.solve(solver=cp.ECOS, verbose=False)
-        if w.value is None:
-            # fallback solvers
-            prob.solve(solver=cp.OSQP, verbose=False)
-    except Exception:
-        pass
+    if method == "prod":
+        return (1.0 + h).prod(axis=0) - 1.0
+    return h.mean(axis=0)
 
-    if w.value is None:
-        # Fallback to MinVar heuristic if optimization failed
-        return min_var_cov(S, tickers)
+def _risk_scale(vol: pd.Series) -> pd.Series:
+    v = vol.replace(0.0, np.nan)
+    w = 1.0 / v
+    w = w.fillna(0.0)
+    s = w.sum()
+    return w / s if s > 0 else pd.Series(np.zeros_like(w), index=w.index)
 
-    ww = np.clip(np.array(w.value, dtype=float), 0.0, W_CAP)
-    s = ww.sum()
-    ww = ww / s if s > 0 else np.full(n, 1.0 / n)
-    return pd.Series(ww, index=tickers, dtype=float)
+# ----------------- per-window engine -----------------
 
+def _compute_window_weights(
+    strategy: str,
+    tickers: List[str],
+    hist: pd.DataFrame,
+    cap: float,
+    mv_gamma: float,
+    cov_method: str,
+    cov_kwargs: Dict,
+    mode: str,
+    topk: Optional[int],
+    topk_lookback: int,
+    topk_method: str,
+    topk_risk_scale: bool,
+) -> np.ndarray:
 
-# ---------- Main ---------- #
+    X = hist.reindex(columns=tickers, fill_value=0.0).values
+    n = len(tickers)
 
-def main() -> None:
-    OUT.mkdir(parents=True, exist_ok=True)
+    if strategy == "EW":
+        return _baseline_weight_ew(n, cap)
 
-    rets = pd.read_parquet(RET).sort_index()
-    mem = pd.read_csv(MEM)
-    rebal = pd.read_csv(REB, parse_dates=["rebalance_date"]).sort_values("rebalance_date")
-    dates: pd.DatetimeIndex = rets.index
+    # Covariance for MV/MinVar/HRP and for TopK_EW risk-scaling
+    if build_cov_estimator is None:
+        # fallback: simple linear shrinkage if src.cov is unavailable
+        def _linear_shrink(S, alpha=0.1, ridge=1e-6):
+            D = np.diag(np.diag(S))
+            return (1.0 - alpha) * S + alpha * D + ridge * np.eye(S.shape[0], dtype=S.dtype)
+        S = np.cov(X, rowvar=False)
+        S = _linear_shrink(S, alpha=float(cov_kwargs.get("alpha", 0.1)), ridge=float(cov_kwargs.get("ridge", 1e-6)))
+    else:
+        est = build_cov_estimator(
+            method=cov_method,
+            alpha=float(cov_kwargs.get("alpha", 0.10)),
+            ridge=float(cov_kwargs.get("ridge", 1e-6)),
+            lw_shrink=float(cov_kwargs.get("lw_shrink", 0.0)),
+        )
+        S = est.fit(X).get()
 
-    # Equity tracks
-    equity: Dict[str, float] = {"EW": 1.0, "MinVar": 1.0, "HRP": 1.0, "MV": 1.0}
-    history: List[Dict] = []
+    if strategy == "HRP":
+        w = _hrp_weights(S)
+        return _project_cap_and_sum_to_one(w, cap)
 
-    # Previous weights for turnover
-    template = pd.Series(0.0, index=rets.columns, dtype=float)
-    prev_w = {
-        "EW": template.copy(),
-        "MinVar": template.copy(),
-        "HRP": template.copy(),
-        "MV": template.copy(),
-    }
+    if strategy == "MinVar":
+        mu0 = np.zeros(n, dtype=np.float32)
+        w = _pgd_markowitz(mu0, S, cap=cap, gamma=mv_gamma, mode=mode, steps=60)
+        return w
 
-    for i, t in enumerate(rebal["rebalance_date"]):
-        # Determine forward trading window
-        if i + 1 < len(rebal):
-            next_rb = rebal["rebalance_date"].iloc[i + 1]
-            end_idx = dates.searchsorted(next_rb, side="left") - 1
-            if end_idx < 0:
-                continue
-            end_trading = dates[end_idx]
-        else:
-            end_trading = dates[-1]
+    if strategy == "MV":
+        mu = X.mean(axis=0).astype(np.float32)
+        # optional top-k on mean returns
+        if topk is not None and 0 < topk < n:
+            idx = np.argsort(mu)[-topk:]
+            S_sub = S[np.ix_(idx, idx)]
+            w_sub = _pgd_markowitz(mu[idx], S_sub, cap=_auto_feasible_cap(cap, len(idx)), gamma=mv_gamma, mode=mode, steps=60)
+            w = np.zeros(n, dtype=np.float32)
+            w[idx] = w_sub
+            return w
+        return _pgd_markowitz(mu, S, cap=cap, gamma=mv_gamma, mode=mode, steps=60)
 
-        start_idx = dates.searchsorted(t, side="right")
-        if start_idx >= len(dates):
+    if strategy == "TopK_EW":
+        scores = _momentum_score(hist, lookback=topk_lookback, method=topk_method)
+        scores = scores.reindex(tickers).fillna(-np.inf)
+        k = int(topk or max(1, n // 10))
+        idx = np.argsort(scores.values)[-k:]
+        chosen = [tickers[i] for i in idx]
+
+        if topk_risk_scale:
+            # scale by 1/vol among the selected names, then project to cap and sum=1
+            sel = hist.reindex(columns=chosen).fillna(0.0)
+            vol = sel.std(ddof=0)
+            w_series = _risk_scale(vol)
+            w = np.zeros(n, dtype=np.float32)
+            w[idx] = w_series.reindex(chosen).fillna(0.0).values.astype(np.float32)
+            return _project_cap_and_sum_to_one(w, cap)
+        # equal-weight among selected, then project
+        w = np.zeros(n, dtype=np.float32)
+        w[idx] = 1.0 / k
+        return _project_cap_and_sum_to_one(w, cap)
+
+    raise ValueError(f"Unknown strategy: {strategy}")
+
+# ----------------- backtest loop -----------------
+
+def run_baseline_for_samples(
+    strategy: str,
+    samples: List[Sample],
+    returns_daily: pd.DataFrame,
+    tc_decimal: float,
+    cap: float,
+    mv_gamma: float,
+    cov_method: str,
+    cov_kwargs: Dict,
+    mode: str,
+    topk: Optional[int],
+    topk_lookback: int,
+    topk_method: str,
+    topk_risk_scale: bool,
+    out_dir: Optional[Path] = None,
+) -> Tuple[pd.Series, Optional[pd.DataFrame]]:
+    dates: pd.DatetimeIndex = returns_daily.index
+    prev_w: Optional[pd.Series] = None
+    daily_chunks: List[pd.Series] = []
+    rows: List[dict] = []
+    equity = 1.0
+
+    for i, s in enumerate(samples):
+        # trading window: (first day > s.ts) ... (day before next snapshot, or last date)
+        end_trading = dates[-1] if i + 1 == len(samples) else dates[dates.searchsorted(samples[i + 1].ts, "left") - 1]
+        start_idx = dates.searchsorted(s.ts, "right")
+        if start_idx >= len(dates) or end_trading < dates[start_idx]:
             continue
         start_trading = dates[start_idx]
-        if end_trading < start_trading:
+
+        g = load_graph(s.graph_path)
+        tickers: List[str] = list(getattr(g, "tickers", []))
+
+        hist = returns_daily.loc[:start_trading].iloc[:-1].tail(252).fillna(0.0)
+        if hist.shape[1] < 2 or hist.shape[0] < 2:
             continue
 
-        # Universe + tradable pool
-        active = active_at(mem, t)
-        lab_path = LAB_DIR / f"labels_{t.date()}.parquet"
-        if not lab_path.exists():
-            continue
-        labels = pd.read_parquet(lab_path)["r_next"]
-        pool = sorted(set(active) & set(rets.columns) & set(labels.index))
-        if len(pool) < 50:
-            continue
+        w_np = _compute_window_weights(
+            strategy=strategy,
+            tickers=tickers,
+            hist=hist,
+            cap=cap,
+            mv_gamma=mv_gamma,
+            cov_method=cov_method,
+            cov_kwargs=cov_kwargs,
+            mode=mode,
+            topk=topk,
+            topk_lookback=topk_lookback,
+            topk_method=topk_method,
+            topk_risk_scale=topk_risk_scale,
+        )
+        curr_w = pd.Series(w_np.astype(float), index=tickers)
 
-        # Trailing stats up to the day BEFORE the forward window starts
-        cov_end = dates[start_idx - 1] if start_idx - 1 >= 0 else dates[0]
-        mu, S, _ = realized_stats(rets[pool], cov_end,
-                                  cov_lookback=COV_LOOKBACK_DAYS,
-                                  mu_lookback=MU_LOOKBACK_DAYS)
+        # turnover cost vs previous portfolio
+        if prev_w is None:
+            tc = 0.0
+        else:
+            aligned = pd.concat([prev_w.rename("prev"), curr_w.rename("curr")], axis=1).fillna(0.0)
+            tc = float((aligned["curr"] - aligned["prev"]).abs().sum()) * tc_decimal
 
-        # Build weights
-        w_EW = equal_weight(pool)
-        w_MVmin = min_var_cov(S, pool)
-        w_HRP = hrp_weights(S, pool) if HAVE_SCIPY else w_EW
-        w_MV = mv_cvxpy_weights(mu, S, pool) if HAVE_CVXPY else w_MVmin
+        win = returns_daily.loc[start_trading:end_trading]
+        valid_mask = ~win.isna().all(axis=0)
+        curr_w = curr_w[valid_mask.index[valid_mask]]
+        ssum = float(curr_w.sum())
+        if ssum > 0:
+            curr_w = curr_w / ssum
 
-        weights = {"EW": w_EW, "MinVar": w_MVmin, "HRP": w_HRP, "MV": w_MV}
+        r_p = win.reindex(columns=curr_w.index, fill_value=0.0).mul(curr_w, axis=1).sum(axis=1)
+        if len(r_p) > 0 and tc > 0:
+            r0 = r_p.iloc[0]
+            r_p.iloc[0] = (1.0 + r0) * (1.0 - tc) - 1.0
 
-        # Turnover costs at rebalance
-        tc_this: Dict[str, float] = {}
-        for name, w in weights.items():
-            w_full = w.reindex(rets.columns, fill_value=0.0)
-            tc = float((w_full - prev_w[name]).abs().sum()) * TC
-            tc_this[name] = tc
-            prev_w[name] = w_full  # persist for next period
+        daily_chunks.append(r_p)
 
-        # Realize returns over forward window
-        window = rets.loc[start_trading:end_trading].fillna(0.0)
-        for name, w in weights.items():
-            w_full = w.reindex(rets.columns, fill_value=0.0)
-            daily = (window * w_full).sum(axis=1)
-            gross = float((1.0 + daily).prod())
-            equity[name] *= (gross * (1.0 - tc_this[name]))
-
-        history.append({
-            "rebalance": t.date(),
-            "n_pool": len(pool),
+        period_gross = float((1.0 + r_p).prod())
+        equity *= period_gross
+        rows.append({
+            "rebalance": s.ts.date(),
             "start_trading": start_trading.date(),
             "end_trading": end_trading.date(),
-            "turnover_cost_EW": tc_this["EW"],
-            "turnover_cost_MinVar": tc_this["MinVar"],
-            "turnover_cost_HRP": tc_this["HRP"],
-            "turnover_cost_MV": tc_this["MV"],
-            "equity_EW": equity["EW"],
-            "equity_MinVar": equity["MinVar"],
-            "equity_HRP": equity["HRP"],
-            "equity_MV": equity["MV"],
-            "mean_label_in_pool": float(labels.loc[pool].mean()),
+            "n_nodes": len(tickers),
+            "turnover_cost": tc,
+            "period_gross": period_gross,
+            f"equity_{strategy.lower()}": equity,
         })
+        prev_w = curr_w
 
-    out = pd.DataFrame(history)
-    out.to_csv(OUT / "results.csv", index=False)
-    print(f"Saved baseline results -> {OUT / 'results.csv'}")
+    r_all = None
+    log_df = None
+    if daily_chunks:
+        r_all = pd.concat(daily_chunks).sort_index()
+        r_all = r_all[~r_all.index.duplicated(keep="first")]
+        log_df = pd.DataFrame(rows)
 
-    # Friendly hints if deps were missing
-    if not HAVE_SCIPY:
-        print("[INFO] scipy not found — HRP fell back to EW. `pip install scipy` to enable HRP.")
-    if not HAVE_CVXPY:
-        print("[INFO] cvxpy not found — MV fell back to MinVar. `pip install cvxpy` to enable MV.")
+        if out_dir is not None:
+            nm = strategy.lower()
+            r_all.rename("r").to_frame().to_csv(out_dir / f"{nm}_daily_returns.csv")
+            (1.0 + r_all).cumprod().rename("equity").to_frame().to_csv(out_dir / f"{nm}_equity_daily.csv")
+            log_df.to_csv(out_dir / f"{nm}_equity.csv", index=False)
 
+    return (r_all if r_all is not None else pd.Series(dtype=float), log_df)
+
+# ----------------- metrics -----------------
+
+def _metrics_from_returns(r: pd.Series) -> Dict[str, float]:
+    r = r.dropna()
+    if r.empty:
+        return {"CAGR": np.nan, "AnnMean": np.nan, "AnnVol": np.nan, "Sharpe": np.nan, "MDD": np.nan}
+    eq = (1.0 + r).cumprod()
+    ann = 252.0
+    n = max(int(r.shape[0]), 1)
+    cagr    = float(eq.iloc[-1] ** (ann / n) - 1.0)
+    annmean = float(r.mean() * ann)
+    annvol  = float(r.std(ddof=0) * math.sqrt(ann))
+    sharpe  = float(annmean / annvol) if annvol > 0 else float("nan")
+    dd = eq / eq.cummax() - 1.0
+    mdd = float(dd.min())
+    return {"CAGR": cagr, "AnnMean": annmean, "AnnVol": annvol, "Sharpe": sharpe, "MDD": mdd}
+
+# ----------------- CLI -----------------
+
+def main():
+    ap = argparse.ArgumentParser(description="Run baseline strategies aligned with GAT evaluation windows.")
+    ap.add_argument("--graph_dir", type=str, required=True)
+    ap.add_argument("--labels_dir", type=str, required=True)
+    ap.add_argument("--returns_daily", type=str, required=True)
+    ap.add_argument("--train_start", type=str, required=True)
+    ap.add_argument("--val_start", type=str, required=True)
+    ap.add_argument("--test_start", type=str, required=True)
+    ap.add_argument("--out", type=str, required=True)
+
+    ap.add_argument("--strategies", nargs="+", default=["EW", "MV", "HRP", "MinVar", "TopK_EW"])
+    ap.add_argument("--cap", type=float, default=0.02, help="Per-name weight cap.")
+    ap.add_argument("--gamma", type=float, default=3.0, help="Risk aversion for MV/MinVar.")
+    ap.add_argument("--mode", type=str, default="diag", choices=["diag", "chol"], help="Quadratic model type for PGD.")
+    ap.add_argument("--topk", type=int, default=0, help="Top-K selection for MV (0 = disabled).")
+
+    ap.add_argument("--turnover_bps", type=float, default=10.0)
+
+    # Covariance options (passed to src.cov)
+    ap.add_argument("--cov_method", type=str, default="ledoit_wolf",
+                    choices=["ledoit_wolf", "oas", "linear", "diag"])
+    ap.add_argument("--cov_alpha", type=float, default=0.10, help="Linear shrink alpha (if method=linear).")
+    ap.add_argument("--cov_ridge", type=float, default=1e-6, help="Ridge epsilon added to Σ.")
+    ap.add_argument("--cov_lw_shrink", type=float, default=0.0, help="Extra shrink toward diag for LW/OAS (0..1).")
+
+    # TopK_EW scoring options
+    ap.add_argument("--topk_ew_k", type=int, default=40, help="K for TopK_EW.")
+    ap.add_argument("--topk_lookback", type=int, default=126, help="Lookback days for momentum scoring.")
+    ap.add_argument("--topk_method", type=str, default="mean", choices=["mean", "prod"],
+                    help="Momentum metric: mean daily return vs cumulative product.")
+    ap.add_argument("--topk_risk_scale", action="store_true",
+                    help="If set, 1/vol scaling inside TopK_EW before projection.")
+
+    args = ap.parse_args()
+
+    graph_dir = Path(args.graph_dir)
+    labels_dir = Path(args.labels_dir)
+    rets_path = Path(args.returns_daily)
+    out_dir = Path(args.out)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # Load universe & windows
+    samples_all = list_samples(graph_dir, labels_dir)
+    _, _, test_s = split_samples(samples_all, args.train_start, args.val_start, args.test_start)
+    print(f"[Data] test windows = {len(test_s)}")
+
+    # Load daily returns
+    returns_daily = pd.read_parquet(rets_path).sort_index()
+    tc = float(args.turnover_bps) / 10000.0
+
+    cov_kwargs = {"alpha": args.cov_alpha, "ridge": args.cov_ridge, "lw_shrink": args.cov_lw_shrink}
+
+    for strat in args.strategies:
+        r, _ = run_baseline_for_samples(
+            strategy=strat,
+            samples=test_s,
+            returns_daily=returns_daily,
+            tc_decimal=tc,
+            cap=float(args.cap),
+            mv_gamma=float(args.gamma),
+            cov_method=str(args.cov_method),
+            cov_kwargs=cov_kwargs,
+            mode=str(args.mode),
+            topk=(int(args.topk) if args.topk > 0 else None) if strat == "MV" else None,
+            topk_lookback=int(args.topk_lookback),
+            topk_method=str(args.topk_method),
+            topk_risk_scale=bool(args.topk_risk_scale),
+            out_dir=out_dir,
+        )
+        if r is None or r.empty:
+            print(f"[{strat}] no returns generated.")
+            continue
+        m = _metrics_from_returns(r)
+        print(f"[{strat}] {m}")
+
+    print(f"[OK] Baseline files written to {out_dir}")
 
 if __name__ == "__main__":
     main()

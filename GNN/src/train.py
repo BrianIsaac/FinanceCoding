@@ -51,6 +51,7 @@ from src.loss import (
     entropy_penalty,
     neg_daily_log_utility,
 )
+from src.cov import ledoit_wolf_shrinkage  # NEW: robust Σ option
 
 # ---------------------- globals ----------------------
 _MARKOWITZ_BACKEND = "pgd"       # "pgd" | "cvxpy"
@@ -342,8 +343,8 @@ def load_label_vec(label_path: Path, tickers: List[str]) -> Tuple[torch.Tensor, 
 
 # ----------------- covariance helpers -----------------
 
-def _shrink_cov(S: np.ndarray, alpha: float, ridge_eps: float) -> np.ndarray:
-    """Linear shrinkage plus ridge."""
+def _shrink_cov_linear_ridge(S: np.ndarray, alpha: float, ridge_eps: float) -> np.ndarray:
+    """Linear shrinkage to diag plus optional ridge."""
     if alpha <= 0.0 and ridge_eps <= 0.0:
         return S
     D = np.diag(np.diag(S))
@@ -351,6 +352,29 @@ def _shrink_cov(S: np.ndarray, alpha: float, ridge_eps: float) -> np.ndarray:
     if ridge_eps > 0.0:
         S_shrunk = S_shrunk + ridge_eps * np.eye(S.shape[0], dtype=S.dtype)
     return S_shrunk
+
+def _cov_from_hist(X: np.ndarray, method: str, alpha: float, ridge_eps: float) -> np.ndarray:
+    """
+    Return a PSD covariance matrix using the requested method.
+    method in {"lw","ledoit_wolf"} -> Ledoit-Wolf shrinkage (from src.cov)
+    else -> linear shrinkage to diag (+ridge)
+    """
+    if X.shape[0] < 2:
+        v = np.var(X, axis=0, ddof=1) if X.shape[0] >= 2 else np.ones(X.shape[1], dtype=np.float64)
+        return np.diag(np.clip(v, 1e-8, None))
+
+    if method.lower() in {"lw", "ledoit_wolf", "ledoitwolf"}:
+        res = ledoit_wolf_shrinkage(X)
+        # accept ndarray or tuple of length 2/3
+        if isinstance(res, tuple):
+            S_hat = res[0]
+        else:
+            S_hat = res
+        return S_hat
+
+    # else: linear shrinkage + optional ridge
+    S = np.cov(X, rowvar=False)
+    return _shrink_cov_linear_ridge(S, alpha=alpha, ridge_eps=ridge_eps)
 
 # ----------------- baseline helpers -----------------
 
@@ -415,11 +439,7 @@ def _project_cap_and_sum_to_one(w_np: np.ndarray, cap: float) -> np.ndarray:
     return w.detach().cpu().numpy()
 
 def _baseline_weight_ew(n: int, cap: float) -> np.ndarray:
-    """
-    Equal-weight baseline that respects the per-name cap.
-    We project 1/n onto { w: 0<=w<=cap, sum w = 1 } using the same
-    capped-simplex projector (with auto-feasible cap) used elsewhere.
-    """
+    """Equal-weight with per-name cap via capped-simplex projection."""
     w0 = np.full(n, 1.0 / n, dtype=np.float32)
     w  = _project_capped_simplex(
         torch.from_numpy(w0),
@@ -449,7 +469,9 @@ def _baseline_weight_hrp(S: np.ndarray, cap: float) -> np.ndarray:
     return _project_cap_and_sum_to_one(w, cap)
 
 def _compute_metrics_from_returns(r: pd.Series) -> Dict[str, float]:
-    r = r.copy()
+    r = r.copy().dropna()
+    if r.empty:
+        return {"CAGR": np.nan, "AnnMean": np.nan, "AnnVol": np.nan, "Sharpe": np.nan, "MDD": np.nan}
     eq = (1.0 + r).cumprod()
     ann = 252.0
     n = int(r.shape[0])
@@ -472,6 +494,7 @@ def _backtest_baseline(
     cov_ridge: float,
     mode: str,
     topk: Optional[int],
+    cov_method: str,
     out_dir: Optional[Path] = None,
 ) -> Tuple[pd.Series, Optional[pd.DataFrame]]:
     """
@@ -496,11 +519,10 @@ def _backtest_baseline(
         tickers: list[str] = list(getattr(g, "tickers", []))
 
         hist = returns_daily.loc[:start_trading].iloc[:-1].tail(252).fillna(0.0)
-        X = hist.reindex(columns=tickers, fill_value=0.0).values
-        if X.shape[0] < 2 or X.shape[1] < 2:
+        X = hist.reindex(columns=tickers, fill_value=0.0).values.astype(np.float64, copy=False)
+        if X.shape[1] < 2:
             continue
-        S = np.cov(X, rowvar=False)
-        S = _shrink_cov(S, alpha=cov_alpha, ridge_eps=cov_ridge)
+        S = _cov_from_hist(X, method=cov_method, alpha=cov_alpha, ridge_eps=cov_ridge)
 
         if strategy == "EW":
             w_np = _baseline_weight_ew(len(tickers), cap)
@@ -565,25 +587,31 @@ def _backtest_baseline(
 
 # ----------------- evaluation -----------------
 
-def evaluate_daily_compound(
+def _annualized_sharpe_from_series(r: pd.Series) -> float:
+    r = r.dropna()
+    if r.empty:
+        return float("nan")
+    annmean = float(r.mean() * 252.0)
+    annvol  = float(r.std(ddof=0) * np.sqrt(252.0))
+    return float(annmean / annvol) if annvol > 0 else float("nan")
+
+def _eval_periods_daily_returns(
     model: nn.Module,
     device: torch.device,
     samples: List[Sample],
     returns_daily: pd.DataFrame,
     tc_decimal: float,
-    out_dir: Path | None = None,
-    head: str = "direct",
-    markowitz_args: Optional[dict] = None,
-) -> Dict[str, float]:
-    model.eval()
+    head: str,
+    markowitz_args: Optional[dict],
+) -> pd.Series:
+    """Return a single concatenated daily return series across the provided samples."""
     dates: pd.DatetimeIndex = returns_daily.index
-
-    equity = 1.0
     prev_w: Optional[pd.Series] = None
-    rows: list[dict] = []
+    daily_chunks: list[pd.Series] = []
 
     with torch.no_grad():
         for i, s in enumerate(samples):
+            # end of trading window: day before next rebal date (or last day)
             end_trading = dates[-1] if i + 1 == len(samples) else dates[dates.searchsorted(samples[i+1].ts, "left") - 1]
             start_idx = dates.searchsorted(s.ts, "right")
             if start_idx >= len(dates) or end_trading < dates[start_idx]:
@@ -604,12 +632,18 @@ def evaluate_daily_compound(
             if head == "direct":
                 w_t = out.detach().cpu()
             else:
+                # Σ from rolling window up to start_trading (exclude day 0)
                 hist = returns_daily.loc[:start_trading].iloc[:-1].tail(252).fillna(0.0)
-                S = np.cov(hist.reindex(columns=tickers, fill_value=0.0).values, rowvar=False)
-                args = markowitz_args or {}
-                alpha = float(args.get("cov_shrinkage_alpha", 0.10))
-                ridge = float(args.get("cov_ridge_eps", 1.0e-6))
-                S = _shrink_cov(S, alpha=alpha, ridge_eps=ridge)
+                X = hist.reindex(columns=tickers, fill_value=0.0).values.astype(np.float64, copy=False)
+                if X.shape[1] < 2:
+                    continue
+                method = str(markowitz_args.get("cov_method", "lw") if markowitz_args else "lw")
+                S = _cov_from_hist(
+                    X,
+                    method=method,
+                    alpha=float(markowitz_args.get("cov_shrinkage_alpha", 0.10)) if markowitz_args else 0.10,
+                    ridge_eps=float(markowitz_args.get("cov_ridge_eps", 1e-6)) if markowitz_args else 1e-6,
+                )
 
                 mu_in = out
                 if globals().get("_MARKOWITZ_NORM_MU", True):
@@ -618,15 +652,16 @@ def evaluate_daily_compound(
 
                 w_m = markowitz_layer_torch(
                     mu_in, S,
-                    cap=float(args.get("weight_cap", 0.02)),
-                    gamma=float(args.get("gamma", 5.0)),
-                    mode=str(args.get("mode", "diag")),
-                    topk=(int(args["topk"]) if args.get("topk", 0) else None),
+                    cap=float(markowitz_args.get("weight_cap", 0.02)) if markowitz_args else 0.02,
+                    gamma=float(markowitz_args.get("gamma", 5.0)) if markowitz_args else 5.0,
+                    mode=str(markowitz_args.get("mode", "diag")) if markowitz_args else "diag",
+                    topk=(int(markowitz_args["topk"]) if (markowitz_args and markowitz_args.get("topk", 0)) else None),
                 )
                 w_t = w_m.detach().cpu()
 
             curr_w = pd.Series(w_t.numpy(), index=tickers, dtype=float)
 
+            # TC on transition
             if prev_w is None:
                 tc = 0.0
             else:
@@ -641,29 +676,46 @@ def evaluate_daily_compound(
                 curr_w = curr_w / w_sum
 
             daily = window.reindex(columns=curr_w.index, fill_value=0.0).mul(curr_w, axis=1).sum(axis=1)
-            gross = float((1.0 + daily).prod())
-            equity *= gross * (1.0 - tc)
+            if len(daily) > 0 and tc > 0:
+                r0 = daily.iloc[0]
+                daily.iloc[0] = (1.0 + r0) * (1.0 - tc) - 1.0
 
-            rows.append({
-                "rebalance": s.ts.date(),
-                "start_trading": start_trading.date(),
-                "end_trading": end_trading.date(),
-                "n_nodes": len(tickers),
-                "turnover_cost": tc,
-                "period_gross": gross,
-                "equity_gat": equity,
-            })
-
-            if out_dir is not None:
-                wdir = out_dir / "weights"
-                wdir.mkdir(parents=True, exist_ok=True)
-                curr_w.rename("weight").to_frame().to_parquet(wdir / f"weights_{s.ts.date()}.parquet")
-
+            daily_chunks.append(daily)
             prev_w = curr_w
 
-    if out_dir is not None and rows:
-        pd.DataFrame(rows).to_csv(out_dir / "gat_equity.csv", index=False)
+    if not daily_chunks:
+        return pd.Series(dtype=float)
+    r_all = pd.concat(daily_chunks).sort_index()
+    r_all = r_all[~r_all.index.duplicated(keep="first")]
+    return r_all
 
+def evaluate_daily_compound(
+    model: nn.Module,
+    device: torch.device,
+    samples: List[Sample],
+    returns_daily: pd.DataFrame,
+    tc_decimal: float,
+    out_dir: Path | None = None,
+    head: str = "direct",
+    markowitz_args: Optional[dict] = None,
+) -> Dict[str, float]:
+    r = _eval_periods_daily_returns(
+        model=model,
+        device=device,
+        samples=samples,
+        returns_daily=returns_daily,
+        tc_decimal=tc_decimal,
+        head=head,
+        markowitz_args=markowitz_args,
+    )
+    equity = float((1.0 + r).prod()) if not r.empty else 1.0
+
+    # write per-window equity & weights already handled inside train loop; here we keep API stable
+    if out_dir is not None:
+        # store stitched daily returns/equity for GAT
+        if not r.empty:
+            r.rename("r").to_frame().to_csv(out_dir / "gat_daily_returns.csv")
+            (1.0 + r).cumprod().rename("equity").to_frame().to_csv(out_dir / "gat_equity_daily.csv")
     return {"final_equity": equity}
 
 # ----------------- training -----------------
@@ -688,8 +740,9 @@ def train_gat(cfg: DictConfig) -> None:
     globals()["_MARKOWITZ_PGD_STEPS"] = int(getattr(cfg.model, "markowitz_pgd_steps", 80))
     globals()["_MARKOWITZ_NORM_MU"]   = bool(getattr(cfg.model, "markowitz_normalize_mu", True))
 
-    cov_alpha = float(getattr(cfg.model, "cov_shrinkage_alpha", 0.10))
-    cov_ridge = float(getattr(cfg.model, "cov_ridge_eps", 1.0e-6))
+    cov_alpha  = float(getattr(cfg.model, "cov_shrinkage_alpha", 0.10))
+    cov_ridge  = float(getattr(cfg.model, "cov_ridge_eps", 1.0e-6))
+    cov_method = str(getattr(cfg.model, "cov_method", "lw")).lower()  # NEW: "lw" | "linear"
 
     samples_all = list_samples(graph_dir, labels_dir)
     train_s, val_s, test_s = split_samples(samples_all, cfg.split.train_start, cfg.split.val_start, cfg.split.test_start)
@@ -697,14 +750,9 @@ def train_gat(cfg: DictConfig) -> None:
     print(f"[Data] train={len(train_s)}  val={len(val_s)}  test={len(test_s)}", flush=True)
     print(f"[Info] backend={backend} epochs={cfg.train.epochs}", flush=True)
 
-    returns_daily: Optional[pd.DataFrame] = None
-    dates: Optional[pd.DatetimeIndex] = None
-    need_daily = (cfg.loss.objective == "daily_log_utility") or (
-        cfg.loss.objective == "sharpe_rnext" and cfg.model.head == "markowitz"
-    )
-    if need_daily:
-        returns_daily = pd.read_parquet(rets_path).sort_index()
-        dates = returns_daily.index  # type: ignore[assignment]
+    # We now ALWAYS load daily returns (needed for validation Sharpe)
+    returns_daily: pd.DataFrame = pd.read_parquet(rets_path).sort_index()
+    dates: pd.DatetimeIndex = returns_daily.index  # type: ignore[assignment]
 
     model = GATPortfolio(
         in_dim=cfg.model.in_dim,
@@ -726,11 +774,15 @@ def train_gat(cfg: DictConfig) -> None:
     def reset_memory() -> dict[str, torch.Tensor]:
         return {}
 
-    best_val = -1e9
+    # --- training control / early stopping on VALIDATION SHARPE ---
+    patience = int(getattr(cfg.train, "patience", 12))
+    best_val_sharpe = -1e9
     best_path = out_dir / "gat_best.pt"
+    epochs_no_improve = 0
+
     log_path = out_dir / "train_log.csv"
     if not log_path.exists():
-        pd.DataFrame([{"epoch": 0, "train_loss": np.nan, "val_mean": np.nan, "best_val": np.nan}]).iloc[0:0] \
+        pd.DataFrame([{"epoch": 0, "train_loss": np.nan, "val_sharpe": np.nan, "best_val_sharpe": np.nan}]).iloc[0:0] \
           .to_csv(log_path, index=False)
 
     # ---------- warmup / announcement ----------
@@ -752,6 +804,7 @@ def train_gat(cfg: DictConfig) -> None:
             else:
                 print(f"[Warmup] Using PGD backend (mode={mode}) for n={n_eff} — no CVXPY compile.", flush=True)
 
+    # ------------ training loop ------------
     for epoch in range(cfg.train.epochs):
         model.train()
         mem_store: dict[str, torch.Tensor] = reset_memory()
@@ -800,8 +853,8 @@ def train_gat(cfg: DictConfig) -> None:
             if cfg.temporal.use_memory:
                 write_new_mem(tickers, new_mem, mem_store)
 
+            # ----------- three training objectives -----------
             if cfg.loss.objective == "daily_log_utility":
-                assert returns_daily is not None and dates is not None
                 all_ts = [ss.ts for ss in train_seq]
                 try:
                     idx = all_ts.index(s.ts)
@@ -820,11 +873,11 @@ def train_gat(cfg: DictConfig) -> None:
 
                 if cfg.model.head == "direct":
                     w_for_turn = w
-                    loss =  neg_daily_log_utility(R, w_for_turn)
+                    loss = neg_daily_log_utility(R, w_for_turn)
                 else:
                     hist = returns_daily.loc[:start_trading].iloc[:-1].tail(252).fillna(0.0)
-                    S = np.cov(hist.reindex(columns=tickers, fill_value=0.0).values, rowvar=False)
-                    S = _shrink_cov(S, alpha=cov_alpha, ridge_eps=cov_ridge)
+                    X = hist.reindex(columns=tickers, fill_value=0.0).values.astype(np.float64, copy=False)
+                    S = _cov_from_hist(X, method=cov_method, alpha=cov_alpha, ridge_eps=cov_ridge)
 
                     mu_in = mu_hat
                     if _MARKOWITZ_NORM_MU:
@@ -839,14 +892,18 @@ def train_gat(cfg: DictConfig) -> None:
                         topk=(cfg.model.markowitz_topk if cfg.model.markowitz_topk else None),
                     )
                     w_for_turn = w_m
-                    loss =  neg_daily_log_utility(R, w_for_turn)
+                    loss = neg_daily_log_utility(R, w_for_turn)
 
+                # regularizers
                 if last_w_detached is not None and last_tickers is not None:
                     loss = loss + turnover_penalty_indexed(
                         [last_w_detached, w_for_turn], [last_tickers, tickers],
                         tc_decimal=cfg.loss.turnover_bps / 10000.0,
                     )
                 loss = loss + entropy_penalty([w_for_turn], coef=cfg.loss.entropy_coef)
+                l1c = float(getattr(cfg.loss, "l1_coef", 0.0))
+                if l1c > 0:
+                    loss = loss + l1c * w_for_turn.abs().mean()
 
                 opt.zero_grad()
                 loss.backward()
@@ -863,10 +920,9 @@ def train_gat(cfg: DictConfig) -> None:
                     w_for_turn = w
                     r_p = (w_for_turn * y.to(device)).sum()
                 else:
-                    assert returns_daily is not None
                     cov_win = returns_daily.loc[:s.ts].tail(252).fillna(0.0)
-                    S = np.cov(cov_win.reindex(columns=tickers, fill_value=0.0).values, rowvar=False)
-                    S = _shrink_cov(S, alpha=cov_alpha, ridge_eps=cov_ridge)
+                    X = cov_win.reindex(columns=tickers, fill_value=0.0).values.astype(np.float64, copy=False)
+                    S = _cov_from_hist(X, method=cov_method, alpha=cov_alpha, ridge_eps=cov_ridge)
 
                     mu_in = mu_hat
                     if _MARKOWITZ_NORM_MU:
@@ -893,6 +949,9 @@ def train_gat(cfg: DictConfig) -> None:
                         sharpe_ws, sharpe_tickers, tc_decimal=cfg.loss.turnover_bps / 10000.0,
                     )
                     loss = loss + entropy_penalty(sharpe_ws, coef=cfg.loss.entropy_coef)
+                    l1c = float(getattr(cfg.loss, "l1_coef", 0.0))
+                    if l1c > 0:
+                        loss = loss + l1c * torch.stack([w.abs().mean() for w in sharpe_ws]).mean()
 
                     opt.zero_grad()
                     loss.backward()
@@ -906,6 +965,7 @@ def train_gat(cfg: DictConfig) -> None:
                     sharpe_tickers.clear()
 
             else:
+                # simple next-step return objective
                 if cfg.model.head == "direct":
                     w_for_turn = w
                     loss = -(w_for_turn * y.to(device)).sum()
@@ -919,6 +979,9 @@ def train_gat(cfg: DictConfig) -> None:
                         tc_decimal=cfg.loss.turnover_bps / 10000.0,
                     )
                     loss = loss + entropy_penalty([w_for_turn], coef=cfg.loss.entropy_coef)
+                    l1c = float(getattr(cfg.loss, "l1_coef", 0.0))
+                    if l1c > 0:
+                        loss = loss + l1c * w_for_turn.abs().mean()
 
                 opt.zero_grad()
                 loss.backward()
@@ -937,11 +1000,11 @@ def train_gat(cfg: DictConfig) -> None:
                 last_heartbeat = time.time()
 
             # sanity print every 10 epochs at first step
-            if (i == 0) and (epoch % 10 == 0) and cfg.model.head == "markowitz":
+            if (i == 0) and (epoch % 10 == 0) and cfg.model.head == "markowitz" and last_w_detached is not None:
                 with torch.no_grad():
-                    s1 = w_for_turn.detach().sum().item()
-                    vmax = w_for_turn.detach().max().item()
-                    vmin = w_for_turn.detach().min().item()
+                    s1 = last_w_detached.sum().item()
+                    vmax = last_w_detached.max().item()
+                    vmin = last_w_detached.min().item()
                 print(f"[Chk e{epoch+1:03d}] sum={s1:.6f} min={vmin:.6f} max={vmax:.6f} cap={cfg.model.weight_cap}", flush=True)
 
         # flush partial Sharpe minibatch
@@ -951,6 +1014,9 @@ def train_gat(cfg: DictConfig) -> None:
                 sharpe_ws, sharpe_tickers, tc_decimal=cfg.loss.turnover_bps / 10000.0,
             )
             loss = loss + entropy_penalty(sharpe_ws, coef=cfg.loss.entropy_coef)
+            l1c = float(getattr(cfg.loss, "l1_coef", 0.0))
+            if l1c > 0:
+                loss = loss + l1c * torch.stack([w.abs().mean() for w in sharpe_ws]).mean()
 
             opt.zero_grad()
             loss.backward()
@@ -959,49 +1025,53 @@ def train_gat(cfg: DictConfig) -> None:
             train_loss_sum += float(loss.detach().item())
             train_updates  += 1
 
-        # ---------- Validation ----------
+        # ---------- Validation: DAILY SHARPE ----------
         model.eval()
-        val_score = float("nan")
         with torch.no_grad():
-            mem_val: dict[str, torch.Tensor] = reset_memory()
-            vals = []
-            for s in sorted(val_s, key=lambda ss: ss.ts):
-                g = load_graph(s.graph_path)
-                tickers = list(getattr(g, "tickers", []))
-                y, mask = load_label_vec(s.label_path, tickers)
-                if mask.sum().item() < 10:
-                    continue
-                x, eidx = g.x.to(device), g.edge_index.to(device)
-                eattr = getattr(g, "edge_attr", None)
-                eattr = eattr.to(device).to(x.dtype) if (eattr is not None and cfg.model.use_edge_attr) else None
-                mvalid = mask.to(device)
-                prev_mem = build_prev_mem(tickers, mem_val, model.mem_dim, device, cfg.temporal.decay) if cfg.temporal.use_memory else None
-                if cfg.model.head == "direct":
-                    w, new_mem = model(x, eidx, mvalid, eattr, prev_mem)
-                    vals.append((w.cpu() * y).sum().item())
-                else:
-                    mu_hat, new_mem = model(x, eidx, mvalid, eattr, prev_mem)
-                    vals.append((mu_hat.cpu() * y).sum().item())
-                if cfg.temporal.use_memory:
-                    write_new_mem(tickers, new_mem, mem_val)
-            if vals:
-                val_score = float(np.mean(vals))
+            marko_args = dict(
+                gamma=float(cfg.model.markowitz_gamma),
+                weight_cap=float(cfg.model.weight_cap),
+                mode=str(getattr(cfg.model, "markowitz_mode", "diag")),
+                topk=int(getattr(cfg.model, "markowitz_topk", 0) or 0),
+                cov_shrinkage_alpha=cov_alpha,
+                cov_ridge_eps=cov_ridge,
+                cov_method=cov_method,
+            ) if cfg.model.head == "markowitz" else None
+
+            val_r = _eval_periods_daily_returns(
+                model=model,
+                device=device,
+                samples=sorted(val_s, key=lambda ss: ss.ts),
+                returns_daily=returns_daily,
+                tc_decimal=cfg.loss.turnover_bps / 10000.0,
+                head=cfg.model.head,
+                markowitz_args=marko_args,
+            )
+            val_sharpe = _annualized_sharpe_from_series(val_r)
 
         train_loss_avg = float(train_loss_sum / max(train_updates, 1))
         print(f"[Epoch {epoch+1:03d}] steps={len(train_seq)}  updates={train_updates}  "
-              f"train_loss={train_loss_avg:.6f}  val_mean={val_score:.6f}", flush=True)
+              f"train_loss={train_loss_avg:.6f}  val_sharpe={val_sharpe:.6f}", flush=True)
 
-        if not np.isnan(val_score) and val_score > best_val:
-            best_val = val_score
+        improved = (not np.isnan(val_sharpe)) and (val_sharpe > best_val_sharpe + 1e-8)
+        if improved:
+            best_val_sharpe = val_sharpe
+            epochs_no_improve = 0
             payload = {"state_dict": model.state_dict(), "cfg": OmegaConf.to_container(cfg, resolve=True)}
             torch.save(payload, best_path)
+            print(f"[EarlyStop] ↑ new best val Sharpe {best_val_sharpe:.4f}; saved -> {best_path}", flush=True)
+        else:
+            epochs_no_improve += 1
+            if epochs_no_improve >= patience:
+                print(f"[EarlyStop] patience reached ({patience}); stopping at epoch {epoch+1}.", flush=True)
+                break
 
         # append to CSV log each epoch
         pd.DataFrame([{
             "epoch": epoch + 1,
             "train_loss": train_loss_avg,
-            "val_mean": float(val_score),
-            "best_val": float(best_val),
+            "val_sharpe": float(val_sharpe),
+            "best_val_sharpe": float(best_val_sharpe),
         }]).to_csv(log_path, mode="a", header=False, index=False)
 
     print(f"Saved best model -> {best_path}")
@@ -1014,93 +1084,46 @@ def train_gat(cfg: DictConfig) -> None:
     ckpt = _load_ckpt(best_path, device)
     model.load_state_dict(ckpt["state_dict"])
 
-    returns_daily_test = pd.read_parquet(rets_path).sort_index()
+    returns_daily_test = returns_daily  # already loaded/sorted
 
     marko_args = dict(
         gamma=float(cfg.model.markowitz_gamma),
         weight_cap=float(cfg.model.weight_cap),
         mode=str(getattr(cfg.model, "markowitz_mode", "diag")),
         topk=int(getattr(cfg.model, "markowitz_topk", 0) or 0),
-        cov_shrinkage_alpha=float(getattr(cfg.model, "cov_shrinkage_alpha", 0.10)),
-        cov_ridge_eps=float(getattr(cfg.model, "cov_ridge_eps", 1.0e-6)),
-    )
+        cov_shrinkage_alpha=cov_alpha,
+        cov_ridge_eps=cov_ridge,
+        cov_method=cov_method,
+    ) if cfg.model.head == "markowitz" else None
 
     test_stats = evaluate_daily_compound(
         model=model,
         device=device,
-        samples=test_s,
+        samples=sorted(test_s, key=lambda s: s.ts),
         returns_daily=returns_daily_test,
         tc_decimal=cfg.loss.turnover_bps / 10000.0,
         out_dir=out_dir,
         head=cfg.model.head,
-        markowitz_args=marko_args if cfg.model.head == "markowitz" else None,
+        markowitz_args=marko_args,
     )
     pd.DataFrame([test_stats]).to_csv(out_dir / "gat_test_stats.csv", index=False)
     print(f"Test stats: {test_stats}  -> {out_dir/'gat_test_stats.csv'}")
-    print(f"Saved GAT equity curve -> {out_dir/'gat_equity.csv'} and weights/ per period.")
+    print(f"Saved GAT equity daily -> {out_dir/'gat_equity_daily.csv'} and returns -> gat_daily_returns.csv")
 
     # === Full metrics (CAGR / AnnMean / AnnVol / Sharpe / MDD) ===
     metrics_row: Optional[Dict[str, float]] = None
     try:
-        eq_path = out_dir / "gat_equity.csv"
-        w_dir   = out_dir / "weights"
-        if not eq_path.exists() or not w_dir.exists():
-            print("[Metrics] Missing equity/weights outputs; skipping metrics.", flush=True)
+        # read stitched daily returns we just wrote
+        p = out_dir / "gat_daily_returns.csv"
+        if not p.exists():
+            print("[Metrics] Missing gat_daily_returns.csv; skipping metrics.", flush=True)
         else:
-            # 1) Read per-rebalance windows
-            eq_df = pd.read_csv(
-                eq_path,
-                parse_dates=["rebalance", "start_trading", "end_trading"]
-            )
-
-            # 2) Stitch the daily portfolio returns across all windows
-            daily_chunks = []
-            for _, row in eq_df.iterrows():
-                rb_date = pd.Timestamp(row["rebalance"]).date()
-                w_path = w_dir / f"weights_{rb_date}.parquet"
-                if not w_path.exists():
-                    continue
-                w = pd.read_parquet(w_path)["weight"]
-                win = returns_daily_test.loc[row["start_trading"]:row["end_trading"]]
-                win = win.reindex(columns=w.index, fill_value=0.0)
-                r_p = (win * w.values).sum(axis=1)
-                # Apply turnover cost on the first trading day of this window
-                tc = float(row.get("turnover_cost", 0.0))
-                if len(r_p) > 0 and tc > 0:
-                    r0 = r_p.iloc[0]
-                    r_p.iloc[0] = (1.0 + r0) * (1.0 - tc) - 1.0
-                daily_chunks.append(r_p)
-
-            if daily_chunks:
-                r = pd.concat(daily_chunks).sort_index()
-                r = r[~r.index.duplicated(keep="first")]  # guard boundary duplicates
-                equity_curve = (1.0 + r).cumprod()
-
-                ann = 252.0
-                n = int(r.shape[0])
-                cagr    = float(equity_curve.iloc[-1] ** (ann / max(n, 1)) - 1.0)
-                annmean = float(r.mean() * ann)
-                annvol  = float(r.std(ddof=0) * np.sqrt(ann))
-                sharpe  = float(annmean / annvol) if annvol > 0 else float("nan")
-
-                roll_max = equity_curve.cummax()
-                dd = equity_curve / roll_max - 1.0
-                mdd = float(dd.min())
-
-                metrics_row = {
-                    "strategy": "GAT",
-                    "CAGR": cagr,
-                    "AnnMean": annmean,
-                    "AnnVol": annvol,
-                    "Sharpe": sharpe,
-                    "MDD": mdd,
-                }
-                pd.DataFrame([metrics_row]).to_csv(out_dir / "strategy_metrics.csv", index=False)
-                r.rename("r").to_frame().to_csv(out_dir / "gat_daily_returns.csv")
-                equity_curve.rename("equity").to_frame().to_csv(out_dir / "gat_equity_daily.csv")
-                print(f"Metrics: {metrics_row}  -> {out_dir/'strategy_metrics.csv'}", flush=True)
-            else:
-                print("[Metrics] No daily return chunks assembled; check weights files.", flush=True)
+            r = pd.read_csv(p, parse_dates=[0], index_col=0).iloc[:, 0]
+            r.index = pd.to_datetime(r.index)
+            m = _compute_metrics_from_returns(r)
+            metrics_row = {"strategy": "GAT", **m}
+            pd.DataFrame([metrics_row]).to_csv(out_dir / "strategy_metrics.csv", index=False)
+            print(f"Metrics: {metrics_row}  -> {out_dir/'strategy_metrics.csv'}", flush=True)
     except Exception as e:
         print(f"[Metrics] failed: {e}", flush=True)
     # === end metrics ===
@@ -1109,21 +1132,17 @@ def train_gat(cfg: DictConfig) -> None:
     try:
         strategies = ["EW", "MV", "HRP", "MinVar"]
 
-        # pull identical hyper-params used by GAT eval
         cap   = float(cfg.model.weight_cap)
         gamma = float(cfg.model.markowitz_gamma)
         mode  = str(getattr(cfg.model, "markowitz_mode", "diag"))
         topk  = int(getattr(cfg.model, "markowitz_topk", 0) or 0)
         tc    = cfg.loss.turnover_bps / 10000.0
-        cov_alpha = float(getattr(cfg.model, "cov_shrinkage_alpha", 0.10))
-        cov_ridge = float(getattr(cfg.model, "cov_ridge_eps", 1.0e-6))
 
-        # build daily returns and metrics per baseline
         baseline_metrics: List[Dict[str, float]] = []
         for strat in strategies:
             r_s, _ = _backtest_baseline(
                 strategy=strat,
-                samples=test_s,
+                samples=sorted(test_s, key=lambda s: s.ts),
                 returns_daily=returns_daily_test,
                 tc_decimal=tc,
                 cap=cap,
@@ -1132,6 +1151,7 @@ def train_gat(cfg: DictConfig) -> None:
                 cov_ridge=cov_ridge,
                 mode=mode,
                 topk=(topk if topk > 0 else None),
+                cov_method=cov_method,
                 out_dir=out_dir,  # writes *_daily.csv alongside GAT files
             )
             if r_s.empty:
@@ -1142,7 +1162,7 @@ def train_gat(cfg: DictConfig) -> None:
             baseline_metrics.append(payload)
             print(f"Metrics: {payload}", flush=True)
 
-        # (optional) write a single summary CSV next to strategy_metrics.csv
+        # summary CSV
         try:
             summary_rows = []
             if metrics_row is not None:
@@ -1156,7 +1176,7 @@ def train_gat(cfg: DictConfig) -> None:
             if summary_rows:
                 pd.DataFrame(summary_rows).to_csv(out_dir / "compare_gat_vs_baselines.csv", index=False)
                 print(f"Saved summary -> {out_dir/'compare_gat_vs_baselines.csv'}", flush=True)
-        except Exception as _:
+        except Exception:
             pass
 
     except Exception as e:

@@ -1,34 +1,139 @@
 #!/usr/bin/env python3
+"""
+GAT-based portfolio model.
+
+Key features added/kept vs. your previous version:
+- Clean GAT/GATv2 backbone with residual connections, dropout, and LayerNorm.
+- Optional use of edge attributes (expects 1-d edge weight; otherwise we average to 1-d).
+- Lightweight temporal memory via a GRU cell (node-wise), controlled from cfg.temporal.*
+- Two heads:
+    * "direct": produces a valid weight vector via masked softmax/sparsemax (sum=1, nonnegative).
+    * "markowitz": produces per-asset expected-return scores µ̂; allocation done by Markowitz layer outside.
+- Mask-aware activations so invalid nodes never receive weight/score.
+"""
 from __future__ import annotations
+
+from dataclasses import dataclass
 from typing import Optional, Tuple
+
 import torch
 from torch import nn
-import torch.nn.functional as F
-from torch_geometric.nn import GATConv, GATv2Conv
+from torch.nn import functional as F
 
-def masked_softmax(logits: torch.Tensor, mask: torch.Tensor, eps: float = 1e-9) -> torch.Tensor:
-    """Softmax over valid entries only."""
-    m = mask.to(dtype=logits.dtype)
-    z = logits + (m - 1.0) * 1e9
-    w = torch.softmax(z, dim=-1)
-    s = (w * m).sum().clamp_min(eps)
-    return (w * m) / s
+try:
+    from torch_geometric.nn import GATConv, GATv2Conv  # type: ignore
+except Exception:  # pragma: no cover
+    GATConv = GATv2Conv = None  # type: ignore
+
+
+# ---------------------------- utils ----------------------------
+
+def masked_softmax(logits: torch.Tensor, mask: torch.Tensor, dim: int = -1) -> torch.Tensor:
+    """
+    Softmax over only True entries of mask (boolean). Zeros elsewhere.
+    """
+    very_neg = torch.finfo(logits.dtype).min / 4.0
+    z = torch.where(mask, logits, torch.full_like(logits, very_neg))
+    p = F.softmax(z, dim=dim)
+    p = torch.where(mask, p, torch.zeros_like(p))
+    s = p.sum(dim=dim, keepdim=True).clamp_min(1e-12)
+    return p / s
+
+
+def sparsemax(input: torch.Tensor, dim: int = -1) -> torch.Tensor:
+    # after
+    input = input.transpose(dim, -1)
+    input_flat = input.reshape(-1, input.size(-1))
+    zs = torch.sort(input_flat, descending=True, dim=-1).values
+    range_ = torch.arange(1, zs.size(-1) + 1, device=input.device, dtype=input.dtype).view(1, -1)
+    cssv = zs.cumsum(dim=-1) - 1
+    cond = zs - cssv / range_ > 0
+    k = cond.sum(dim=-1).clamp(min=1)
+    tau = cssv.gather(1, (k - 1).unsqueeze(1)).squeeze(1) / k
+    output_flat = torch.clamp(input_flat - tau.unsqueeze(1), min=0.0)
+    output = output_flat.view_as(input)
+    output = output.transpose(dim, -1)
+    s = output.sum(dim=dim, keepdim=True).clamp_min(1e-12)
+    return output / s
+
+
+def masked_sparsemax(logits: torch.Tensor, mask: torch.Tensor, dim: int = -1) -> torch.Tensor:
+    very_neg = torch.finfo(logits.dtype).min / 4.0
+    z = torch.where(mask, logits, torch.full_like(logits, very_neg))
+    p = sparsemax(z, dim=dim)
+    return torch.where(mask, p, torch.zeros_like(p))
+
+
+# ---------------------------- blocks ----------------------------
+
+class GATBlock(nn.Module):
+    def __init__(
+        self,
+        in_dim: int,
+        out_dim: int,
+        heads: int = 4,
+        dropout: float = 0.2,
+        use_gatv2: bool = True,
+        use_edge_attr: bool = True,
+        edge_dim: int = 1,
+        residual: bool = True,
+    ) -> None:
+        super().__init__()
+        Conv = GATv2Conv if (use_gatv2 and GATv2Conv is not None) else GATConv
+        if Conv is None:
+            raise RuntimeError("torch_geometric is required for GAT/GATv2.")
+        self.use_edge_attr = use_edge_attr
+        self.edge_dim = edge_dim if use_edge_attr else None  # type: ignore
+
+        self.conv = Conv(
+            in_dim,
+            out_dim,
+            heads=heads,
+            dropout=dropout,
+            add_self_loops=True,
+            edge_dim=(edge_dim if use_edge_attr else None),
+            concat=True,
+            bias=True,
+        )
+        self.proj = nn.Linear(out_dim * heads, out_dim, bias=True)
+        self.ln = nn.LayerNorm(out_dim)
+        self.dropout = nn.Dropout(dropout)
+        self.residual = residual and (in_dim == out_dim)
+
+    def forward(self, x: torch.Tensor, edge_index: torch.Tensor, edge_attr: Optional[torch.Tensor]) -> torch.Tensor:
+        if self.use_edge_attr and edge_attr is not None:
+            # Be robust: if edge_attr has more than 1 feature, compress to 1 via mean.
+            if edge_attr.dim() == 1:
+                ea = edge_attr.view(-1, 1)
+            elif edge_attr.size(-1) != 1:
+                ea = edge_attr.mean(dim=-1, keepdim=True)
+            else:
+                ea = edge_attr
+            h = self.conv(x, edge_index, ea)
+        else:
+            h = self.conv(x, edge_index)
+        h = self.proj(h)
+        if self.residual:
+            h = h + x
+        h = F.elu(h)
+        h = self.ln(h)
+        h = self.dropout(h)
+        return h
+
+
+# ---------------------------- model ----------------------------
+
+@dataclass
+class HeadCfg:
+    mode: str = "markowitz"          # "markowitz" | "direct"
+    activation: str = "sparsemax"    # used only if mode == "direct": "softmax" | "sparsemax"
+
 
 class GATPortfolio(nn.Module):
-    """GAT encoder with optional temporal GRU memory and two output modes.
-
-    Modes:
-      - 'direct'    : score -> masked softmax weights (long-only, sum=1)
-      - 'markowitz' : score -> μ̂ (per-asset expected return), weights decided outside
-                      by a differentiable Markowitz layer.
-
-    Edge weights:
-      If use_edge_attr=True and edge_attr is provided with shape (E, edge_dim),
-      they are fed to the attention via 'edge_dim' projections.
-
-    Temporal memory:
-      If prev_mem (N, Dm) is provided, a GRUCell updates per-node state and the
-      head reads from the new memory.
+    """
+    Returns:
+        if head == "direct":  (weights[N], new_mem[N, mem_dim])
+        if head == "markowitz": (mu_hat[N], new_mem[N, mem_dim])
     """
     def __init__(
         self,
@@ -40,101 +145,107 @@ class GATPortfolio(nn.Module):
         residual: bool = True,
         use_gatv2: bool = True,
         use_edge_attr: bool = True,
-        head: str = "direct",            # 'direct' | 'markowitz'
-        mem_hidden: Optional[int] = None # None => equals last GAT dim
+        head: str = "markowitz",
+        activation: str = "sparsemax",
+        mem_hidden: Optional[int] = None,
     ) -> None:
         super().__init__()
-        assert num_layers >= 1
-        self.dropout = dropout
-        self.residual = residual
         self.use_edge_attr = use_edge_attr
         self.head_mode = head
+        self.head_activation = activation if head == "direct" else "none"
 
-        Conv = GATv2Conv if use_gatv2 else GATConv
-        edge_dim = 1 if use_edge_attr else None
-
+        # Backbone
         layers = []
-        last_dim = in_dim
-        for _ in range(num_layers):
-            conv = Conv(
-                in_channels=last_dim,
-                out_channels=hidden_dim,
+        d_in = in_dim
+        for li in range(num_layers):
+            block = GATBlock(
+                in_dim=d_in,
+                out_dim=hidden_dim,
                 heads=heads,
-                concat=True,
                 dropout=dropout,
-                add_self_loops=True,
-                edge_dim=edge_dim,   # <— include edge attributes in attention
+                use_gatv2=use_gatv2,
+                use_edge_attr=use_edge_attr,
+                edge_dim=1,   # we standardize to 1-d edge weight
+                residual=residual,
             )
-            layers.append(conv)
-            last_dim = hidden_dim * heads
-        self.convs = nn.ModuleList(layers)
+            layers.append(block)
+            d_in = hidden_dim
+        self.gnn = nn.ModuleList(layers)
 
-        # Temporal memory (optional): size = last_dim by default
-        self.mem_dim = mem_hidden or last_dim
-        self.use_memory = True
-        if self.mem_dim != last_dim:
-            self.to_mem = nn.Linear(last_dim, self.mem_dim)
+        self.head_in_dim = hidden_dim
+        self.heads = heads
+
+        # Readout: simple MLP on top of the last block output
+        self.readout = nn.Sequential(
+            nn.Linear(self.head_in_dim, self.head_in_dim),
+            nn.ReLU(inplace=True),
+            nn.Dropout(dropout),
+            nn.Linear(self.head_in_dim, 1),
+        )
+
+        # Node-wise temporal memory (if enabled)
+        self._mem_dim = int(mem_hidden) if mem_hidden is not None else 0
+        if self._mem_dim > 0:
+            self.mem_gru = nn.GRUCell(self.head_in_dim, self._mem_dim)
+            # fuse memory back into features before head
+            self.mem_fuse = nn.Linear(self.head_in_dim + self._mem_dim, self.head_in_dim)
         else:
-            self.to_mem = nn.Identity()
-        self.gru = nn.GRUCell(self.mem_dim, self.mem_dim)
+            self.mem_gru = None
+            self.mem_fuse = None
 
-        # Heads
-        if self.head_mode == "direct":
-            self.scorer = nn.Linear(self.mem_dim, 1)         # scores -> masked softmax
-        elif self.head_mode == "markowitz":
-            self.mu_head = nn.Linear(self.mem_dim, 1)        # μ̂ per node
-        else:
-            raise ValueError("head must be 'direct' or 'markowitz'")
+        self.reset_parameters()
 
-    def encode(
-        self,
-        x: torch.Tensor,
-        edge_index: torch.Tensor,
-        edge_attr: Optional[torch.Tensor] = None,
-    ) -> torch.Tensor:
-        """Encode node features through GAT stack (consuming edge_attr if present)."""
-        h = x
-        for conv in self.convs:
-            if self.use_edge_attr and edge_attr is not None:
-                h_new = conv(h, edge_index, edge_attr)
-            else:
-                h_new = conv(h, edge_index)
-            h_new = F.elu(h_new)
-            h_new = F.dropout(h_new, p=self.dropout, training=self.training)
-            if self.residual and h_new.shape == h.shape:
-                h = h + h_new
-            else:
-                h = h_new
-        return h
+    # ----------------- properties -----------------
+    @property
+    def mem_dim(self) -> int:
+        return self._mem_dim
+
+    # ----------------- nn API -----------------
+    def reset_parameters(self) -> None:
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.xavier_uniform_(m.weight)
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
 
     def forward(
         self,
-        x: torch.Tensor,
-        edge_index: torch.Tensor,
-        mask_valid: torch.Tensor,
-        edge_attr: Optional[torch.Tensor] = None,
-        prev_mem: Optional[torch.Tensor] = None,   # (N, mem_dim)
+        x: torch.Tensor,                     # [N, F]
+        edge_index: torch.Tensor,            # [2, E]
+        mask_valid: torch.Tensor,            # [N] bool
+        edge_attr: Optional[torch.Tensor] = None,   # [E, d_e] optional
+        prev_mem: Optional[torch.Tensor] = None,    # [N, mem_dim] optional
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        """Forward pass.
+        # Backbone
+        h = x
+        for block in self.gnn:
+            h = block(h, edge_index, edge_attr if self.use_edge_attr else None)
 
-        Returns:
-            (out, new_mem)
-            - if head='direct'   : out = weights (N,)
-            - if head='markowitz': out = mu_hat (N,)
-        """
-        h = self.encode(x, edge_index, edge_attr)
-        h = self.to_mem(h)
-        if prev_mem is not None:
-            new_mem = self.gru(h, prev_mem)    # temporal update
+        # Memory update (node-wise)
+        if self._mem_dim > 0 and self.mem_gru is not None:
+            if prev_mem is None:
+                prev_mem = torch.zeros(h.size(0), self._mem_dim, device=h.device, dtype=h.dtype)
+            m_new = self.mem_gru(h, prev_mem)
+            h = torch.cat([h, m_new], dim=-1)
+            h = F.relu(self.mem_fuse(h))
         else:
-            new_mem = h
+            m_new = torch.zeros(h.size(0), 0, device=h.device, dtype=h.dtype)
+
+        # Head
+        scores = self.readout(h).squeeze(-1)  # [N]
 
         if self.head_mode == "direct":
-            scores = self.scorer(new_mem).squeeze(-1)
-            w = masked_softmax(scores, mask_valid)
-            return w, new_mem
-        else:
-            mu_hat = self.mu_head(new_mem).squeeze(-1)
-            # mask invalids to zero μ̂ (won't receive weight downstream anyway)
-            mu_hat = mu_hat * mask_valid.to(mu_hat.dtype)
-            return mu_hat, new_mem
+            # Nonnegative weights that sum to 1 over valid nodes
+            if self.head_activation.lower() == "softmax":
+                w = masked_softmax(scores, mask_valid.bool(), dim=-1)
+            else:
+                w = masked_sparsemax(scores, mask_valid.bool(), dim=-1)
+            return w, m_new
+
+        # markowitz head: return µ̂ (scores). Invalid nodes -> 0
+        mu_hat = torch.where(mask_valid.bool(), scores, torch.zeros_like(scores))
+        return mu_hat, m_new
+
+
+def count_parameters(model: nn.Module) -> int:
+    return sum(p.numel() for p in model.parameters() if p.requires_grad)

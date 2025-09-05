@@ -99,44 +99,102 @@ flowchart TD
 
 ```mermaid
 flowchart TB
-  A["Snapshot - month end t"] --> B["Universe and hygiene - liquidity filters"]
-  B --> C["Prepare returns window - 36 months daily"]
-  C --> D["Covariance estimation - shrinkage (Ledoit-Wolf)"]
-  C --> E["Expected returns - hist mean (0 for MinVar)"]
+  A["Snapshot -<br/> month end t"] --> B["Universe and hygiene -<br/> liquidity filters"]
+  B --> C["Prepare returns window<br/> - 36 months daily"]
+  C --> D["Covariance estimation -<br/> shrinkage (Ledoit-Wolf)"]
+  C --> E["Expected returns -<br/> hist mean (0 for MinVar)"]
 
   %% EW path
   B --> EW1["Select top-K by liquidity"]
   EW1 --> EW2["Equal weights = 1/K"]
-  EW2 --> W_EW["EW weights (long-only, sum=1)"]
+  EW2 --> W_EW["EW weights <br/>(long-only, sum=1)"]
 
   %% MV / MinVar path
-  D --> MV1["Solve MV or MinVar - with weight caps, sum=1"]
+  D --> MV1["Solve MV or MinVar -<br/> with weight caps, sum=1"]
   E --> MV1
-  MV1 --> MV2["Top-K prune tiny weights and renormalise"]
-  MV2 --> W_MV["MV/MinVar weights (long-only, sum=1)"]
+  MV1 --> MV2["Top-K prune tiny<br/> weights and renormalise"]
+  MV2 --> W_MV["MV/MinVar weights <br/>(long-only, sum=1)"]
 ```
 
 ```mermaid
 flowchart TB
-  A1["Snapshot - month end t"] --> B1["Prepare returns window - 36 months daily"]
+  A1["Snapshot - month end t"] --> B1["Prepare returns window -<br/> 36 months daily"]
   B1 --> C1["Correlation matrix (rho)"]
-  C1 --> D1["Distance matrix d(i,j)=sqrt(0.5*(1-rho(i,j)))"]
-  D1 --> E1["Hierarchical clustering - linkage on distance"]
-  E1 --> F1["Quasi-diagonalise Sigma - reorder by dendrogram"]
-  F1 --> G1["Recursive bisection - cluster risk parity"]
-  G1 --> H1["Raw HRP weights - long-only, sum=1"]
-  H1 --> I1["Top-K prune tiny weights and renormalise"]
-  I1 --> W_HRP["HRP weights (long-only, sum=1)"]
+  C1 --> D1["Distance matrix"]
+  D1 --> E1["Hierarchical clustering -<br/> linkage on distance"]
+  E1 --> F1["Quasi-diagonalise Sigma - <br/>reorder by dendrogram"]
+  F1 --> G1["Recursive bisection - <br/>cluster risk parity"]
+  G1 --> H1["Raw HRP weights -<br/> long-only, sum=1"]
+  H1 --> I1["Top-K prune tiny<br/> weights and renormalise"]
+  I1 --> W_HRP["HRP weights<br/> (long-only, sum=1)"]
 ```
 
 ```mermaid
 flowchart TB
-  A2["Snapshot - month end t"] --> B2["Build sequences per asset - lookback L (e.g., 60 days)"]
-  B2 --> C2["Feature scaling and options - returns, volatility, sector, liquidity"]
-  C2 --> D2["Train LSTM on train window - rolling, no look-ahead"]
-  D2 --> E2["Select checkpoint - best validation Sharpe"]
-  E2 --> P2["At each rebalance - predict next-period returns"]
-  P2 --> R2["Rank predictions and select top-K (long-only)"]
-  R2 --> W2["Weighting rule - softmax or proportional to positive forecast"]
-  W2 --> W_LSTM["LSTM weights (long-only, sum=1)"]
+  A2["Snapshot - month end t"] --> B2["Build sequences per asset -<br/> lookback L (e.g., 60 days)"]
+  B2 --> C2["Feature scaling and options"]
+  C2 --> D2["Train LSTM on train window"]
+  D2 --> E2["Select checkpoint - <br/>best validation Sharpe"]
+  E2 --> P2["At each rebalance -<br/> predict next-period returns"]
+  P2 --> R2["Rank predictions<br/> and select top-K (long-only)"]
+  R2 --> W2["Weighting rule - <br/>softmax or proportional to positive forecast"]
+  W2 --> W_LSTM["LSTM weights <br/>(long-only, sum=1)"]
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+```mermaid
+gantt
+    title ANL488 — Project Timeline (Sep–Nov 2025)
+    dateFormat  YYYY-MM-DD
+    axisFormat  %b %d
+    excludes    weekends
+
+    section Milestones
+    Submit Proposal           :milestone, m_proposal, 2025-09-05, 1d
+    Draft Presentation Deck   :milestone, m_deck,     2025-09-24, 1d
+    Submit Report             :milestone, m_report,   2025-11-03, 1d
+
+    section Setup & Baselines
+    Unified harness + EW/MV/HRP           :a1, 2025-09-08, 2025-09-11
+
+    section Data & Graph Prep
+    Graph builders + HRP clustering; LSTM sequences  :a2, after a1, 2025-09-12, 2025-09-14
+
+    section First Model Pass
+    Single-window training — LSTM and GAT            :a3, after a2, 2025-09-15, 2025-09-17
+
+    section Rolling Runs & Initial Compare
+    Rolling 36/12/12 for HRP, LSTM, GAT; first tables :a4, after a3, 2025-09-18, 2025-09-21
+
+    section Robustness
+    Sensitivity & robustness (Top-K, costs, linkages) :a5, after a4, 2025-09-22, 2025-09-23
+
+    section Communication
+    Deck drafting (framing, results, explainability)  :a6, after a5, 2025-09-24, 2025-10-06
+
+    section Analysis & Write-up
+    Ablations write-up; figure pack locked            :a7, after a6, 2025-10-07, 2025-10-14
+    Recommendations                                   :a8, after a7, 2025-10-15, 2025-10-21
+    Limitations & future direction                    :a9, after a8, 2025-10-22, 2025-11-02
 ```

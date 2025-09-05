@@ -1,66 +1,412 @@
-"""Builds quarterly graph snapshots from 30-day volatility using distance correlation.
-
-This script:
-- Loads processed prices/returns and quarterly rebalance dates (from make_dataset.py).
-- For each rebalance date t:
-  - Uses a 3-year lookback (configurable) of daily returns up to t.
-  - Computes 30-day realised volatility per asset within that window.
-  - Computes pairwise distance correlation across those volatility series.
-  - Sparsifies to a planar-like or thin graph (TMFG preferred; MST/KNN as fallback).
-  - Packs node features (from features/features_YYYY-MM-DD.parquet) and edges into a PyG Data object.
-
-Outputs:
-  processed/graphs/graph_YYYY-MM-DD.pt for each rebalance date.
-"""
+#!/usr/bin/env python3
+# scripts/make_graphs.py — build monthly graph snapshots
 
 from __future__ import annotations
 
-import os
+# --- ensure repo root on sys.path so `from src import graph` resolves correctly ---
 import sys
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+from pathlib import Path
 
+import warnings
+from dataclasses import dataclass
+from typing import List, Optional, Tuple, Sequence, Dict
+
+import importlib
 import hydra
+import numpy as np
 import pandas as pd
 import torch
 from omegaconf import DictConfig, OmegaConf
 
-from src.graph import build_quarterly_graphs
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
+try:
+    from torch_geometric.data import Data  # type: ignore
+except Exception as e:
+    raise RuntimeError("torch_geometric is required to build graph snapshots") from e
+
+# Do NOT use networkx (slow for our dense MST). We'll provide a fast Prim MST below.
+nx = None  # sentinel to avoid accidental use
+
+# Prefer your central implementations if available
+try:
+    from src import graph as graph_lib  # type: ignore
+    # reload to avoid stale bytecode if the user just edited src/graph.py
+    graph_lib = importlib.reload(graph_lib)
+except Exception:
+    graph_lib = None  # type: ignore
+
+try:
+    from src import features as feat_lib  # type: ignore
+except Exception:
+    feat_lib = None  # type: ignore
+
+
+# -----------------------------------------------------------------------------
+# Config model
+# -----------------------------------------------------------------------------
+
+@dataclass
+class GraphBuildCfg:
+    window_days: int
+    expanding: bool
+    min_overlap: int
+    rebalance: str
+    calendar: str
+    method: str
+    graph_filter: str
+    tmfg_keep: str | int
+    mst_abs: bool
+    edge_attr: Sequence[str]
+    dtype: str
+
+
+def _resolve_cfg(cfg: DictConfig) -> GraphBuildCfg:
+    g = cfg.graph
+    tmfg_keep = "auto"
+    if "tmfg" in g and "keep_n_edges" in g.tmfg:
+        k = g.tmfg.keep_n_edges
+        tmfg_keep = int(k) if (isinstance(k, (int, float)) and int(k) > 0) else "auto"
+    mst_abs = bool(getattr(getattr(g, "mst", {}), "use_absolute_corr", True))
+    edge_attr = list(getattr(g, "edge_attr", ["corr", "strength", "sign"]))
+    return GraphBuildCfg(
+        window_days=int(getattr(g, "window_days", 252)),
+        expanding=bool(getattr(g, "expanding", False)),
+        min_overlap=int(getattr(g, "min_overlap", 126)),
+        rebalance=str(getattr(g, "rebalance", "monthly")).lower(),
+        calendar=str(getattr(g, "calendar", "month_end")).lower(),
+        method=str(getattr(g, "method", "correlation")).lower(),
+        graph_filter=str(getattr(g, "graph_filter", "tmfg")).lower(),
+        tmfg_keep=tmfg_keep,
+        mst_abs=mst_abs,
+        edge_attr=edge_attr,
+        dtype=str(getattr(g, "dtype", "float32")),
+    )
+
+
+# -----------------------------------------------------------------------------
+# IO helpers
+# -----------------------------------------------------------------------------
+
+def _ensure_dir(p: Path) -> None:
+    p.mkdir(parents=True, exist_ok=True)
+
+
+def _find_returns_path(cfg: DictConfig) -> Path:
+    if "data" in cfg and "returns_daily" in cfg.data:
+        p = Path(cfg.data.returns_daily)
+        if p.exists():
+            return p
+    if "paths" in cfg and "returns_processed" in cfg.paths:
+        p = Path(cfg.paths.returns_processed)
+        if p.exists():
+            return p
+    return Path("processed/returns_daily.parquet")
+
+
+def _find_graph_dir(cfg: DictConfig) -> Path:
+    if "paths" in cfg and "graph_dir" in cfg.paths:
+        return Path(cfg.paths.graph_dir)
+    return Path("processed/graphs")
+
+
+def _load_returns(path: Path) -> pd.DataFrame:
+    df = pd.read_parquet(path).sort_index()
+    df.columns = [str(c) for c in df.columns]
+    return df.astype(float)
+
+
+def _rebalance_dates(returns: pd.DataFrame, freq: str, calendar: str) -> List[pd.Timestamp]:
+    idx = returns.index.to_series()
+    if freq in ("monthly", "m"):
+        dates = idx.groupby(idx.index.to_period("M")).tail(1).index
+    elif freq in ("quarterly", "q"):
+        dates = idx.groupby(idx.index.to_period("Q")).tail(1).index
+    else:
+        dates = returns.index[::21]  # ~monthly fallback
+    return [pd.Timestamp(d) for d in dates]
+
+
+# -----------------------------------------------------------------------------
+# Core calculations
+# -----------------------------------------------------------------------------
+
+def _window(
+    returns: pd.DataFrame,
+    end_date: pd.Timestamp,
+    lookback_days: int,
+    start_anchor: Optional[pd.Timestamp],
+    expanding: bool,
+) -> pd.DataFrame:
+    right = returns.loc[:end_date].iloc[:-1]  # exclude end_date to avoid leakage
+    if expanding and start_anchor is not None:
+        left = right.loc[start_anchor:]
+    else:
+        left = right.tail(int(lookback_days))
+    return left
+
+
+def _prune_min_overlap(win: pd.DataFrame, min_overlap: int) -> pd.DataFrame:
+    if min_overlap <= 0:
+        return win
+    mask = (win.notna().sum(axis=0) >= int(min_overlap))
+    return win.loc[:, mask]
+
+
+def _corr_from_window(win: pd.DataFrame, use_abs: bool) -> np.ndarray:
+    X = win.fillna(0.0).values
+    C = np.corrcoef(X, rowvar=False)
+    C = np.clip(C, -0.9999, 0.9999)
+    C = 0.5 * (C + C.T)
+    np.fill_diagonal(C, 1.0)
+    return np.abs(C) if use_abs else C
+
+
+def _mst_edges_from_corr(C: np.ndarray) -> List[Tuple[int, int, float]]:
+    """Fast vectorized Prim’s MST on correlation-derived distances."""
+    n = C.shape[0]
+    if n <= 1:
+        return []
+    D = np.sqrt(np.maximum(0.0, 2.0 * (1.0 - C)))  # Mantegna distance
+
+    selected = np.zeros(n, dtype=bool)
+    selected[0] = True
+    best_dist = D[0].copy()
+    best_from = np.zeros(n, dtype=int)
+
+    edges: List[Tuple[int, int, float]] = []
+    for _ in range(n - 1):
+        masked = np.where(selected, np.inf, best_dist)
+        j = int(np.argmin(masked))
+        i = int(best_from[j])
+        if np.isfinite(masked[j]):
+            u, v = (i, j) if i < j else (j, i)
+            edges.append((u, v, float(C[u, v])))
+        selected[j] = True
+
+        new_best = D[j]
+        update = new_best < best_dist
+        best_from = np.where(update, j, best_from)
+        best_dist = np.where(update, new_best, best_dist)
+
+    return edges
+
+
+def _tmfg_keep_edges(n: int, cfg_keep: str | int) -> int:
+    if isinstance(cfg_keep, int) and cfg_keep > 0:
+        return int(cfg_keep)
+    return max(0, 3 * (n - 2))  # TMFG triangulation
+
+
+def _edges_from_corr(C: np.ndarray, gcfg: GraphBuildCfg) -> Tuple[np.ndarray, Optional[np.ndarray]]:
+    n = C.shape[0]
+
+    # Prefer central implementation (uses TMFG/MST/kNN/threshold and builds attrs)
+    if graph_lib is not None and hasattr(graph_lib, "edges_from_corr"):
+        try:
+            ei_np, eattr_np = graph_lib.edges_from_corr(  # type: ignore
+                C,
+                method=gcfg.graph_filter,
+                undirected=True,
+                include_strength=("strength" in gcfg.edge_attr),
+                include_sign=("sign" in gcfg.edge_attr),
+                tmfg_keep_n=_tmfg_keep_edges(n, gcfg.tmfg_keep),
+                mst_use_abs=gcfg.mst_abs,
+            )
+            return ei_np, eattr_np
+        except Exception as err:
+            if gcfg.graph_filter == "tmfg":
+                raise RuntimeError(f"src.graph.edges_from_corr failed for TMFG: {err}")
+            warnings.warn(f"[graph_lib] edges_from_corr failed; local fallback in use: {err}")
+
+    # If TMFG was requested but central impl not available, fail loudly
+    if gcfg.graph_filter == "tmfg":
+        raise RuntimeError(
+            "graph_filter=tmfg requested but src.graph.edges_from_corr() is not available/importable. "
+            f"graph_lib={graph_lib!r}"
+        )
+
+    # Local MST fallback (fast Prim)
+    if gcfg.graph_filter == "mst":
+        edges = _mst_edges_from_corr(C)
+    else:
+        raise ValueError(f"Unknown graph_filter='{gcfg.graph_filter}'")
+
+    # Build edge_index and edge_attr
+    rows: List[Tuple[int, int]] = []
+    attrs: List[List[float]] = []
+    include_corr = ("corr" in gcfg.edge_attr)
+    include_strength = ("strength" in gcfg.edge_attr)
+    include_sign = ("sign" in gcfg.edge_attr)
+
+    for i, j, c in edges:
+        rows.append((i, j))
+        rows.append((j, i))  # undirected as bidirectional edges
+        a: List[float] = []
+        if include_corr:
+            a.append(float(c))
+        if include_strength:
+            a.append(float(abs(c)))
+        if include_sign:
+            a.append(1.0 if c >= 0.0 else -1.0)
+        if a:
+            attrs.append(a)
+            attrs.append(a)
+
+    edge_index = np.asarray(rows, dtype=np.int64).T if rows else np.zeros((2, 0), dtype=np.int64)
+    edge_attr = np.asarray(attrs, dtype=np.float32) if attrs else None
+    return edge_index, edge_attr
+
+
+def _default_features(win: pd.DataFrame) -> pd.DataFrame:
+    R = win.fillna(0.0)
+    out = pd.DataFrame(index=R.columns)
+    out["ret_1m"] = (1.0 + R.tail(21)).prod() - 1.0
+    out["ret_3m"] = (1.0 + R.tail(63)).prod() - 1.0
+    out["ret_6m"] = (1.0 + R.tail(126)).prod() - 1.0
+    out["vol_3m"] = R.tail(63).std(ddof=0)
+    out["vol_6m"] = R.tail(126).std(ddof=0)
+    out["mom_12m"] = (1.0 + R.tail(252)).prod() - 1.0
+    out["turnover_3m"] = 0.0
+    out["size"] = 0.0
+    return out.fillna(0.0)
+
+
+def _winsorize_df(df: pd.DataFrame, method: str, c: float, q_low: float, q_high: float) -> pd.DataFrame:
+    X = df.copy()
+    m = (method or "mad").lower()
+    if m == "mad":
+        med = X.median(axis=0)
+        mad = (X - med).abs().median(axis=0).replace(0, 1e-9)
+        lo = med - c * 1.4826 * mad
+        hi = med + c * 1.4826 * mad
+        return X.clip(lower=lo, upper=hi, axis=1)
+    elif m in ("quantile", "quantiles", "quant"):
+        lo = X.quantile(q_low)
+        hi = X.quantile(q_high)
+        return X.clip(lower=lo, upper=hi, axis=1)
+    return X
+
+
+def _zscore_df(df: pd.DataFrame) -> pd.DataFrame:
+    mu = df.mean(axis=0)
+    sd = df.std(ddof=0, axis=0).replace(0, 1e-9)
+    return (df - mu) / sd
+
+
+def _build_features(cfg: DictConfig, asof: pd.Timestamp, win: pd.DataFrame) -> pd.DataFrame:
+    try:
+        if feat_lib is not None and hasattr(feat_lib, "compute_features_from_window"):
+            feats = feat_lib.compute_features_from_window(win)  # type: ignore
+        else:
+            feats = _default_features(win)
+    except Exception as err:
+        warnings.warn(f"[features] compute_features_from_window failed; using defaults: {err}")
+        feats = _default_features(win)
+
+    gf = getattr(cfg.graph, "features", None)
+    if gf is not None:
+        wz = getattr(gf, "winsorize", None)
+        if wz is not None:
+            feats = _winsorize_df(
+                feats,
+                method=str(getattr(wz, "method", "mad")),
+                c=float(getattr(wz, "c", 3.5)),
+                q_low=float(getattr(wz, "q_low", 0.01)),
+                q_high=float(getattr(wz, "q_high", 0.99)),
+            )
+        impute = str(getattr(gf, "impute", "median"))
+        if impute == "median":
+            feats = feats.fillna(feats.median())
+        elif impute == "mean":
+            feats = feats.fillna(feats.mean())
+        else:
+            feats = feats.fillna(0.0)
+
+        stdz = str(getattr(gf, "standardize", "zscore"))
+        if stdz.lower() == "zscore":
+            feats = _zscore_df(feats)
+    else:
+        feats = feats.fillna(0.0)
+
+    return feats
+
+
+def _save_snapshot(out_dir: Path, asof: pd.Timestamp, x: torch.Tensor,
+                   edge_index: torch.Tensor, edge_attr: Optional[torch.Tensor],
+                   tickers: List[str]) -> None:
+    payload: Dict[str, object] = {
+        "x": x.contiguous(),
+        "edge_index": edge_index.contiguous(),
+        "tickers": tickers,
+    }
+    if edge_attr is not None:
+        payload["edge_attr"] = edge_attr.contiguous()
+    data_obj = Data(**payload)
+    target = out_dir / f"graph_{asof.date()}.pt"
+    torch.save(data_obj, target)
+    print(f"[OK] {target}  (n={len(tickers)}, E={edge_index.shape[1]})")
+
+
+# -----------------------------------------------------------------------------
+# Entry
+# -----------------------------------------------------------------------------
 
 @hydra.main(config_path="../config", config_name="config", version_base=None)
 def main(cfg: DictConfig) -> None:
-    """Hydra entrypoint that builds and saves PyG graph snapshots.
-
-    Args:
-        cfg: Hydra DictConfig composed from configs/config.yaml (includes data, graph).
-    """
     print(OmegaConf.to_yaml(cfg))
 
-    prices = pd.read_parquet(cfg.paths.prices_processed)
-    returns = pd.read_parquet(cfg.paths.returns_processed)
-    rb_dates = pd.read_csv(cfg.paths.rebalance_csv)["rebalance_date"].astype("datetime64[ns]")
+    gcfg = _resolve_cfg(cfg)
+    returns_path = _find_returns_path(cfg)
+    out_dir = _find_graph_dir(cfg)
+    _ensure_dir(out_dir)
 
-    os.makedirs(cfg.graph.save_dir, exist_ok=True)
+    returns = _load_returns(returns_path)
+    dates = _rebalance_dates(returns, gcfg.rebalance, gcfg.calendar)
+    if not dates:
+        raise RuntimeError("No rebalance dates found from returns index.")
 
-    graphs = build_quarterly_graphs(
-        prices=prices,
-        returns=returns,
-        rebalance_dates=rb_dates,
-        lookback_days=int(cfg.graph.lookback_days),
-        vol_window_days=int(cfg.graph.vol_window_days),
-        similarity=str(cfg.graph.similarity),
-        filter_method=str(cfg.graph.filter.method),
-        k_neighbors=int(cfg.graph.filter.k_neighbors),
-        undirected=bool(cfg.graph.make_undirected),
-        features_dir=str(cfg.paths.features_dir),
-        membership_csv=str(cfg.membership.csv) if "membership" in cfg and cfg.membership.csv else None,
-    )
+    dtype = torch.float32 if gcfg.dtype == "float32" else torch.float64
 
-    for ts, data_obj in graphs.items():
-        out_path = os.path.join(cfg.graph.save_dir, f"graph_{ts.date()}.pt")
-        torch.save(data_obj, out_path)
+    start_anchor: Optional[pd.Timestamp] = None
 
-    print(f"Saved {len(graphs)} graphs to: {os.path.abspath(cfg.graph.save_dir)}")
+    for asof in dates:
+        win = _window(returns, asof, gcfg.window_days, start_anchor, gcfg.expanding)
+        if start_anchor is None:
+            start_anchor = win.index.min() if len(win) else None
+
+        win = _prune_min_overlap(win, gcfg.min_overlap)
+        win = win.loc[:, ~(win.isna().all(axis=0))]
+
+        tickers = [str(c) for c in win.columns]
+        if len(tickers) < 2 or len(win) < 2:
+            print(f"[skip] {asof.date()} insufficient data (n={len(tickers)}, T={len(win)})")
+            continue
+
+        # Prefer robust shrinkage corr from src.graph if available
+        use_abs = gcfg.mst_abs if gcfg.graph_filter == "mst" else False
+        if graph_lib is not None and hasattr(graph_lib, "corr_from_returns"):
+            C = graph_lib.corr_from_returns(win)  # type: ignore
+            if use_abs:
+                C = np.abs(C)
+        else:
+            C = _corr_from_window(win, use_abs=use_abs)
+
+        # Build edges (TMFG via src.graph when requested; else fast MST fallback)
+        ei_np, eattr_np = _edges_from_corr(C, gcfg)
+
+        feats = _build_features(cfg, asof, win).reindex(tickers).fillna(0.0)
+        x_np = feats.values.astype(np.float32, copy=False)
+
+        x = torch.from_numpy(x_np).to(dtype=dtype)
+        edge_index = torch.from_numpy(ei_np).long()
+        edge_attr = torch.from_numpy(eattr_np).to(dtype=dtype) if eattr_np is not None else None
+
+        _save_snapshot(out_dir, asof, x, edge_index, edge_attr, tickers)
+
+    print(f"[done] graphs written to: {out_dir.resolve()}")
 
 
 if __name__ == "__main__":

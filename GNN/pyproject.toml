@@ -12,6 +12,7 @@ data = [
     "cvxpylayers>=0.1.6",
     "dcor>=0.6",
     "diffcp>=1.0.23",
+    "matplotlib>=3.9.4",
     "numpy>=2.0.2",
     "pandas>=2.3.1",
     "python-dotenv>=1.1.1",
