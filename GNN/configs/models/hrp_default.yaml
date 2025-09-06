@@ -1,0 +1,51 @@
+# Hierarchical Risk Parity (HRP) model configuration
+
+model_type: hrp
+
+# Base model parameters
+learning_rate: 0.001      # Not used for HRP but kept for interface consistency
+batch_size: 32           # Portfolio batch size for evaluation
+max_epochs: 1            # Single calculation per rebalance
+early_stopping_patience: 1
+validation_split: 0.0    # No training/validation split needed
+
+# HRP-specific parameters
+clustering:
+  linkage_method: ward         # Clustering linkage method
+  distance_metric: euclidean   # Distance metric for clustering
+  min_clusters: 2             # Minimum number of clusters
+  max_clusters: null          # Auto-determine based on data
+
+# Portfolio constraints
+constraints:
+  min_weight: 0.01       # 1% minimum position
+  max_weight: 0.1        # 10% maximum position  
+  max_leverage: 1.0      # Long-only portfolio
+  turnover_limit: 0.5    # Maximum 50% turnover per rebalance
+
+# Risk management
+risk:
+  target_volatility: 0.12     # 12% annual volatility target
+  risk_budget_method: equal    # Equal risk contribution
+  correlation_threshold: 0.8   # Threshold for highly correlated assets
+  volatility_lookback: 252     # 1 year volatility estimation
+
+# Rebalancing
+rebalancing:
+  frequency: 21              # Monthly rebalancing (21 trading days)
+  min_rebalance_threshold: 0.05  # 5% drift threshold
+  transaction_costs: 0.001   # 10 bps transaction cost assumption
+
+# Performance attribution
+attribution:
+  benchmark: "SPY"           # S&P 500 benchmark
+  risk_free_rate: 0.02      # 2% risk-free rate assumption
+  calculate_alpha: true
+  calculate_information_ratio: true
+
+# Optimization settings
+optimization:
+  method: analytical         # Analytical HRP solution (no numerical optimization)
+  tolerance: 1e-6           # Convergence tolerance
+  max_iterations: 100       # Maximum iterations (fallback)
+  regularization: 1e-8      # Covariance matrix regularization

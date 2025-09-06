@@ -1,0 +1,94 @@
+# Graph Attention Network (GAT) model configuration
+
+model_type: gat
+
+# Base training parameters
+learning_rate: 0.001
+batch_size: 32
+max_epochs: 100
+early_stopping_patience: 10  
+validation_split: 0.2
+
+# GAT architecture
+architecture:
+  hidden_dim: 64           # Hidden layer dimension
+  num_heads: 8            # Number of attention heads
+  num_layers: 3           # Number of GAT layers
+  dropout: 0.1            # Node dropout rate
+  attention_dropout: 0.1   # Attention dropout rate
+  edge_dim: 32            # Edge feature dimension
+  
+# Graph construction
+graph:
+  node_features:
+    - returns
+    - volatility
+    - volume
+    - market_cap
+    - momentum
+    
+  edge_features:
+    - correlation
+    - covariance
+    - sector_similarity
+    
+  # Graph connectivity
+  connection_method: correlation  # How to connect nodes
+  correlation_threshold: 0.3     # Minimum correlation for edge
+  max_connections_per_node: 20   # Limit connections to avoid dense graphs
+  
+  # Dynamic graph updates
+  graph_update_frequency: 21     # Update graph every 21 days
+  lookback_window: 252          # Use 1 year of data for graph construction
+
+# Attention mechanism
+attention:
+  aggregation: mean        # Aggregation method ('mean', 'sum', 'max')
+  attention_type: additive # Attention mechanism type
+  normalize_attention: true
+  use_bias: true
+  
+# Training configuration
+training:
+  optimizer: adam
+  weight_decay: 1e-5
+  gradient_clipping: 1.0
+  scheduler: cosine        # Learning rate scheduler
+  warmup_epochs: 10       # Number of warmup epochs
+  min_lr: 1e-6            # Minimum learning rate
+  
+# Regularization
+regularization:
+  l1_lambda: 0.0          # L1 regularization
+  l2_lambda: 1e-5         # L2 regularization
+  edge_dropout: 0.1       # Edge dropout rate
+  node_dropout: 0.1       # Node dropout rate
+  
+# Loss function
+loss:
+  type: mse               # Mean squared error
+  alpha: 1.0              # Primary loss weight
+  auxiliary_losses:       # Additional loss terms
+    graph_regularization: 0.01   # Graph structure regularization
+    attention_entropy: 0.001     # Attention entropy regularization
+    
+# Portfolio integration
+portfolio:
+  prediction_type: returns       # Predict asset returns
+  rebalancing_frequency: 21      # Monthly rebalancing
+  attention_weights_as_confidence: true  # Use attention as confidence scores
+  
+# Graph visualization and analysis
+analysis:
+  save_attention_weights: true   # Save attention patterns for analysis
+  visualize_graph: false        # Generate graph visualizations
+  attention_analysis_frequency: 63  # Analyze attention every quarter
+  
+# Evaluation metrics
+metrics:
+  - mse
+  - mae  
+  - sharpe_ratio
+  - information_ratio
+  - max_drawdown
+  - attention_consistency    # Custom metric for attention stability
