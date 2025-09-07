@@ -16,7 +16,7 @@ class TestGPUConfig:
     def test_default_config(self):
         """Test default GPU configuration values."""
         config = GPUConfig()
-        
+
         assert config.max_memory_gb == 11.0
         assert config.enable_mixed_precision is True
         assert config.gradient_checkpointing is False
@@ -28,9 +28,9 @@ class TestGPUConfig:
             max_memory_gb=8.0,
             enable_mixed_precision=False,
             gradient_checkpointing=True,
-            batch_size_auto_scale=False
+            batch_size_auto_scale=False,
         )
-        
+
         assert config.max_memory_gb == 8.0
         assert config.enable_mixed_precision is False
         assert config.gradient_checkpointing is True
@@ -44,7 +44,7 @@ class TestGPUMemoryManager:
         """Test GPU manager initialization in CPU mode."""
         config = GPUConfig()
         manager = GPUMemoryManager(config)
-        
+
         assert manager.config == config
         # Device should be cuda if available, cpu otherwise
         expected_device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -54,7 +54,7 @@ class TestGPUMemoryManager:
         """Test GPU availability detection."""
         config = GPUConfig()
         manager = GPUMemoryManager(config)
-        
+
         # Should match torch.cuda.is_available()
         assert manager.is_gpu_available() == torch.cuda.is_available()
 
@@ -62,13 +62,13 @@ class TestGPUMemoryManager:
         """Test optimal batch size determination."""
         config = GPUConfig()
         manager = GPUMemoryManager(config)
-        
+
         # Mock model and input shape
         model = torch.nn.Linear(10, 1)
         input_shape = (10,)
-        
+
         batch_size = manager.get_optimal_batch_size(model, input_shape)
-        
+
         # Should return conservative default for now
         assert batch_size == 32
         assert isinstance(batch_size, int)
@@ -78,10 +78,10 @@ class TestGPUMemoryManager:
         """Test mixed precision setup on GPU."""
         if not gpu_available:
             pytest.skip("GPU not available")
-        
+
         config = GPUConfig(enable_mixed_precision=True)
         manager = GPUMemoryManager(config)
-        
+
         scaler = manager.setup_mixed_precision()
         assert scaler is not None
         assert isinstance(scaler, torch.amp.GradScaler)
@@ -90,10 +90,10 @@ class TestGPUMemoryManager:
         """Test mixed precision setup on CPU (should return None)."""
         config = GPUConfig(enable_mixed_precision=True)
         manager = GPUMemoryManager(config)
-        
+
         # Force CPU mode for this test
         manager.device = torch.device("cpu")
-        
+
         scaler = manager.setup_mixed_precision()
         assert scaler is None
 
@@ -102,17 +102,17 @@ class TestGPUMemoryManager:
         """Test GPU memory statistics retrieval."""
         if not gpu_available:
             pytest.skip("GPU not available")
-        
+
         config = GPUConfig()
         manager = GPUMemoryManager(config)
-        
+
         stats = manager.get_memory_stats()
-        
+
         # Check required keys exist
         required_keys = ["allocated_gb", "cached_gb", "free_gb", "total_gb", "utilization_pct"]
         for key in required_keys:
             assert key in stats
-        
+
         # Check reasonable values
         assert stats["total_gb"] > 0
         assert 0 <= stats["utilization_pct"] <= 100
@@ -122,10 +122,10 @@ class TestGPUMemoryManager:
         """Test memory statistics on CPU."""
         config = GPUConfig()
         manager = GPUMemoryManager(config)
-        
+
         # Force CPU mode
         manager.device = torch.device("cpu")
-        
+
         stats = manager.get_memory_stats()
         assert "status" in stats
         assert stats["status"] == "CPU mode - no GPU stats available"
@@ -135,10 +135,10 @@ class TestGPUMemoryManager:
         """Test GPU cache clearing."""
         if not gpu_available:
             pytest.skip("GPU not available")
-        
+
         config = GPUConfig()
         manager = GPUMemoryManager(config)
-        
+
         # This should not raise an exception
         manager.clear_cache()
 
@@ -146,10 +146,10 @@ class TestGPUMemoryManager:
         """Test cache clearing on CPU (should be no-op)."""
         config = GPUConfig()
         manager = GPUMemoryManager(config)
-        
+
         # Force CPU mode
         manager.device = torch.device("cpu")
-        
+
         # This should not raise an exception
         manager.clear_cache()
 
@@ -158,9 +158,9 @@ class TestGPUMemoryManager:
         """Test GPU memory limit configuration."""
         if not gpu_available:
             pytest.skip("GPU not available")
-        
+
         config = GPUConfig(max_memory_gb=8.0)
         manager = GPUMemoryManager(config)
-        
+
         # This should not raise an exception
         manager.configure_memory_limit()

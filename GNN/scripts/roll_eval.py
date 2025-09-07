@@ -15,22 +15,23 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
 from omegaconf import OmegaConf
 
-from src.train import train_gat, list_samples  # type: ignore
-
+from src.train import list_samples, train_gat  # type: ignore
 
 # ----------------------- time helpers -----------------------
+
 
 def _to_ts(d: str | pd.Timestamp) -> pd.Timestamp:
     return pd.Timestamp(d).normalize()
 
+
 def _add_months(ts: pd.Timestamp, months: int) -> pd.Timestamp:
     return (ts + pd.DateOffset(months=months)).normalize()
+
 
 def _clamp_right(ts: pd.Timestamp, max_ts: pd.Timestamp) -> pd.Timestamp:
     return min(ts, max_ts)
@@ -38,24 +39,32 @@ def _clamp_right(ts: pd.Timestamp, max_ts: pd.Timestamp) -> pd.Timestamp:
 
 # ----------------------- metrics -----------------------
 
-def _metrics_from_daily_returns(r: pd.Series) -> Dict[str, float]:
+
+def _metrics_from_daily_returns(r: pd.Series) -> dict[str, float]:
     """Compute CAGR/AnnMean/AnnVol/Sharpe/MDD from DAILY returns series."""
     r = r.dropna()
     if r.empty:
-        return {"CAGR": np.nan, "AnnMean": np.nan, "AnnVol": np.nan, "Sharpe": np.nan, "MDD": np.nan}
+        return {
+            "CAGR": np.nan,
+            "AnnMean": np.nan,
+            "AnnVol": np.nan,
+            "Sharpe": np.nan,
+            "MDD": np.nan,
+        }
     eq = (1.0 + r).cumprod()
     ann = 252.0
     n = int(r.shape[0])
-    cagr    = float(eq.iloc[-1] ** (ann / max(n, 1)) - 1.0)
+    cagr = float(eq.iloc[-1] ** (ann / max(n, 1)) - 1.0)
     annmean = float(r.mean() * ann)
-    annvol  = float(r.std(ddof=0) * np.sqrt(ann))
-    sharpe  = float(annmean / annvol) if annvol > 0 else np.nan
+    annvol = float(r.std(ddof=0) * np.sqrt(ann))
+    sharpe = float(annmean / annvol) if annvol > 0 else np.nan
     dd = eq / eq.cummax() - 1.0
     mdd = float(dd.min())
     return {"CAGR": cagr, "AnnMean": annmean, "AnnVol": annvol, "Sharpe": sharpe, "MDD": mdd}
 
 
 # ----------------------- roll plan -----------------------
+
 
 @dataclass
 class RollWindow:
@@ -65,12 +74,14 @@ class RollWindow:
     test_start: pd.Timestamp
     test_end: pd.Timestamp
 
-def _infer_available_range(graph_dir: Path, labels_dir: Path) -> Tuple[pd.Timestamp, pd.Timestamp]:
+
+def _infer_available_range(graph_dir: Path, labels_dir: Path) -> tuple[pd.Timestamp, pd.Timestamp]:
     samples = list_samples(graph_dir, labels_dir)
     if not samples:
         raise RuntimeError(f"No samples found under {graph_dir} / {labels_dir}")
     dates = sorted(s.ts for s in samples)
     return dates[0], dates[-1]
+
 
 def _build_rolls(
     graph_dir: Path,
@@ -80,51 +91,60 @@ def _build_rolls(
     test_months: int,
     step_months: int,
     min_buffer_days: int = 0,
-    explicit_start: Optional[pd.Timestamp] = None,
-    explicit_end: Optional[pd.Timestamp] = None,
-) -> List[RollWindow]:
+    explicit_start: pd.Timestamp | None = None,
+    explicit_end: pd.Timestamp | None = None,
+) -> list[RollWindow]:
     start_all, end_all = _infer_available_range(graph_dir, labels_dir)
     if explicit_start is not None:
         start_all = max(start_all, explicit_start)
     if explicit_end is not None:
         end_all = min(end_all, explicit_end)
 
-    rolls: List[RollWindow] = []
+    rolls: list[RollWindow] = []
     t0 = start_all
     idx = 0
     while True:
         tr_start = t0
         val_start = _add_months(tr_start, train_months)
-        te_start  = _add_months(val_start, val_months)
-        te_end    = _add_months(te_start, test_months) - pd.Timedelta(days=1)
+        te_start = _add_months(val_start, val_months)
+        te_end = _add_months(te_start, test_months) - pd.Timedelta(days=1)
 
         if te_start > end_all:
             break
         te_end = _clamp_right(te_end, end_all)
 
-        if (val_start - tr_start).days <= min_buffer_days or (te_start - val_start).days <= min_buffer_days:
+        if (val_start - tr_start).days <= min_buffer_days or (
+            te_start - val_start
+        ).days <= min_buffer_days:
             break
 
-        rolls.append(RollWindow(
-            idx=idx,
-            train_start=tr_start,
-            val_start=val_start,
-            test_start=te_start,
-            test_end=te_end,
-        ))
+        rolls.append(
+            RollWindow(
+                idx=idx,
+                train_start=tr_start,
+                val_start=val_start,
+                test_start=te_start,
+                test_end=te_end,
+            )
+        )
 
         t0 = _add_months(tr_start, step_months)
         idx += 1
 
-        if _add_months(t0, train_months + val_months + test_months) > end_all + pd.DateOffset(days=1):
+        if _add_months(t0, train_months + val_months + test_months) > end_all + pd.DateOffset(
+            days=1
+        ):
             break
 
     if not rolls:
-        raise RuntimeError("No valid rolling windows constructed — check your months/step and data coverage.")
+        raise RuntimeError(
+            "No valid rolling windows constructed — check your months/step and data coverage."
+        )
     return rolls
 
 
 # ----------------------- main runner -----------------------
+
 
 def run_rolls(
     base_cfg_path: Path,
@@ -133,8 +153,8 @@ def run_rolls(
     val_months: int = 12,
     test_months: int = 12,
     step_months: int = 12,
-    start: Optional[str] = None,
-    end: Optional[str] = None,
+    start: str | None = None,
+    end: str | None = None,
 ):
     cfg = OmegaConf.load(str(base_cfg_path))
 
@@ -153,20 +173,17 @@ def run_rolls(
     )
 
     out_root.mkdir(parents=True, exist_ok=True)
-    all_rows: List[Dict] = []
+    all_rows: list[dict] = []
 
     for r in rolls:
         roll_tag = f"roll_{r.idx:02d}_{r.test_start.date()}_{r.test_end.date()}"
         roll_out = out_root / roll_tag
-        print(f"[Roll {r.idx}] train:{r.train_start.date()}–{r.val_start.date()-pd.Timedelta(days=1)}  "
-              f"val:{r.val_start.date()}–{r.test_start.date()-pd.Timedelta(days=1)}  "
-              f"test:{r.test_start.date()}–{r.test_end.date()}  -> {roll_out}")
 
         cfg_roll = OmegaConf.create(OmegaConf.to_container(cfg, resolve=True))
         cfg_roll.split.train_start = str(r.train_start.date())
-        cfg_roll.split.val_start   = str(r.val_start.date())
-        cfg_roll.split.test_start  = str(r.test_start.date())
-        cfg_roll.train.out_dir     = str(roll_out)
+        cfg_roll.split.val_start = str(r.val_start.date())
+        cfg_roll.split.test_start = str(r.test_start.date())
+        cfg_roll.train.out_dir = str(roll_out)
 
         roll_out.mkdir(parents=True, exist_ok=True)
 
@@ -174,7 +191,7 @@ def run_rolls(
         train_gat(cfg_roll)
 
         # ---- collect and TRIM to test window ----
-        def _read_daily(path: Path) -> Optional[pd.Series]:
+        def _read_daily(path: Path) -> pd.Series | None:
             if not path.exists():
                 return None
             s = pd.read_csv(path, parse_dates=[0], index_col=0).iloc[:, 0]
@@ -200,35 +217,46 @@ def run_rolls(
     per_roll_df = pd.DataFrame(all_rows)
     per_roll_csv = out_root / "per_roll_metrics.csv"
     per_roll_df.to_csv(per_roll_csv, index=False)
-    print(f"[OK] wrote per-roll metrics -> {per_roll_csv}")
 
     def _agg(df: pd.DataFrame) -> pd.DataFrame:
         cols = ["CAGR", "AnnMean", "AnnVol", "Sharpe", "MDD"]
         g = df.groupby("strategy")[cols]
         mean = g.mean().add_suffix("_mean")
-        std  = g.std(ddof=0).add_suffix("_std")
-        n    = g.count().iloc[:, :1].rename(columns={g.count().columns[0]: "N"})
+        std = g.std(ddof=0).add_suffix("_std")
+        n = g.count().iloc[:, :1].rename(columns={g.count().columns[0]: "N"})
         return pd.concat([n, mean, std], axis=1).reset_index()
 
     summary = _agg(per_roll_df)
     summary_csv = out_root / "summary_across_rolls.csv"
     summary.to_csv(summary_csv, index=False)
-    print(f"[OK] wrote summary across rolls -> {summary_csv}")
 
 
 # ----------------------- CLI -----------------------
 
+
 def parse_args():
     p = argparse.ArgumentParser(description="Rolling window GAT evaluation")
     p.add_argument("--config", required=True, type=Path, help="Path to base config.yaml")
-    p.add_argument("--out_root", type=Path, default=Path("outputs/rolls"), help="Root folder to store roll outputs")
+    p.add_argument(
+        "--out_root",
+        type=Path,
+        default=Path("outputs/rolls"),
+        help="Root folder to store roll outputs",
+    )
     p.add_argument("--train_months", type=int, default=36)
     p.add_argument("--val_months", type=int, default=12)
     p.add_argument("--test_months", type=int, default=12)
-    p.add_argument("--step_months", type=int, default=12, help="Slide length between successive rolls")
-    p.add_argument("--start", type=str, default=None, help="Optional YYYY-MM-DD to clamp earliest roll start")
-    p.add_argument("--end", type=str, default=None, help="Optional YYYY-MM-DD to clamp latest roll end")
+    p.add_argument(
+        "--step_months", type=int, default=12, help="Slide length between successive rolls"
+    )
+    p.add_argument(
+        "--start", type=str, default=None, help="Optional YYYY-MM-DD to clamp earliest roll start"
+    )
+    p.add_argument(
+        "--end", type=str, default=None, help="Optional YYYY-MM-DD to clamp latest roll end"
+    )
     return p.parse_args()
+
 
 def main():
     args = parse_args()
@@ -242,6 +270,7 @@ def main():
         start=args.start,
         end=args.end,
     )
+
 
 if __name__ == "__main__":
     main()

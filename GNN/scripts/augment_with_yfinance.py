@@ -32,14 +32,14 @@ from __future__ import annotations
 
 import argparse
 import math
-from typing import Iterable, List, Optional, Tuple
+from collections.abc import Iterable
 
 import numpy as np
 import pandas as pd
 import yfinance as yf
 
 
-def _load_membership(path: str) -> List[str]:
+def _load_membership(path: str) -> list[str]:
     """Load and normalize tickers from the membership CSV."""
     df = pd.read_csv(path)
     if "ticker" not in df.columns:
@@ -47,7 +47,7 @@ def _load_membership(path: str) -> List[str]:
     return sorted(set(df["ticker"].astype(str).str.upper().tolist()))
 
 
-def _load_stooq(prices_path: str, volume_path: str) -> Tuple[pd.DataFrame, pd.DataFrame]:
+def _load_stooq(prices_path: str, volume_path: str) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Load Stooq wide parquets; ensure Date index and aligned rows."""
     px = pd.read_parquet(prices_path)
     vol = pd.read_parquet(volume_path)
@@ -67,19 +67,19 @@ def _yahoo_symbol_map(ticker: str) -> str:
 
 
 def _download_yahoo(
-    tickers: List[str],
-    start: Optional[str],
-    end: Optional[str],
+    tickers: list[str],
+    start: str | None,
+    end: str | None,
     batch_size: int = 80,
-) -> Tuple[pd.DataFrame, pd.DataFrame]:
+) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Download Adjusted Close and Volume for tickers via yfinance in batches.
 
     Returns:
         prices_y: Date x Tickers (Adj Close)
         volume_y: Date x Tickers (Volume)
     """
-    prices_list: List[pd.DataFrame] = []
-    volume_list: List[pd.DataFrame] = []
+    prices_list: list[pd.DataFrame] = []
+    volume_list: list[pd.DataFrame] = []
 
     # yfinance works well with multi-ticker batches; we’ll do ~80 at a time.
     for i in range(0, len(tickers), batch_size):
@@ -87,7 +87,13 @@ def _download_yahoo(
         syms = [_yahoo_symbol_map(t) for t in batch]
 
         data = yf.download(
-            syms, start=start, end=end, auto_adjust=True, progress=False, group_by="ticker", threads=True
+            syms,
+            start=start,
+            end=end,
+            auto_adjust=True,
+            progress=False,
+            group_by="ticker",
+            threads=True,
         )
 
         # Normalize to wide frames Date × Ticker
@@ -154,10 +160,10 @@ def _splice_fill(primary: pd.Series, donor: pd.Series) -> pd.Series:
     return s
 
 
-def _needs_yahoo(px: pd.DataFrame, universe: Iterable[str], min_non_na: int) -> List[str]:
+def _needs_yahoo(px: pd.DataFrame, universe: Iterable[str], min_non_na: int) -> list[str]:
     """Return tickers missing or too sparse in the Stooq panel."""
     px_cols = set(map(str, px.columns.tolist()))
-    need: List[str] = []
+    need: list[str] = []
 
     for t in universe:
         if t not in px_cols:
@@ -174,7 +180,7 @@ def _merge_panels(
     vol_stooq: pd.DataFrame,
     px_yahoo: pd.DataFrame,
     vol_yahoo: pd.DataFrame,
-) -> Tuple[pd.DataFrame, pd.DataFrame]:
+) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Splice-fill Stooq with Yahoo on a per-ticker basis and return merged panels."""
     # Union index & columns
     idx = px_stooq.index.union(px_yahoo.index)
@@ -206,14 +212,31 @@ def _merge_panels(
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Augment Stooq panel with Yahoo Finance to improve coverage.")
+    ap = argparse.ArgumentParser(
+        description="Augment Stooq panel with Yahoo Finance to improve coverage."
+    )
     ap.add_argument("--membership", required=True, help="membership CSV (from Wikipedia scraper)")
-    ap.add_argument("--stooq-prices", required=True, help="Stooq prices parquet (Date × Tickers, Close)")
-    ap.add_argument("--stooq-volume", required=True, help="Stooq volume parquet (Date × Tickers, Volume)")
-    ap.add_argument("--out-dir", required=True, help="Directory to write merged prices/volume parquets")
-    ap.add_argument("--start", default=None, help="Optional ISO start date for Yahoo fetch (YYYY-MM-DD)")
-    ap.add_argument("--end", default=None, help="Optional ISO end date for Yahoo fetch (YYYY-MM-DD)")
-    ap.add_argument("--min-non-na", type=int, default=60, help="Tickers with < this many data points will be fetched from Yahoo")
+    ap.add_argument(
+        "--stooq-prices", required=True, help="Stooq prices parquet (Date × Tickers, Close)"
+    )
+    ap.add_argument(
+        "--stooq-volume", required=True, help="Stooq volume parquet (Date × Tickers, Volume)"
+    )
+    ap.add_argument(
+        "--out-dir", required=True, help="Directory to write merged prices/volume parquets"
+    )
+    ap.add_argument(
+        "--start", default=None, help="Optional ISO start date for Yahoo fetch (YYYY-MM-DD)"
+    )
+    ap.add_argument(
+        "--end", default=None, help="Optional ISO end date for Yahoo fetch (YYYY-MM-DD)"
+    )
+    ap.add_argument(
+        "--min-non-na",
+        type=int,
+        default=60,
+        help="Tickers with < this many data points will be fetched from Yahoo",
+    )
     ap.add_argument("--batch-size", type=int, default=80, help="yfinance multi-ticker batch size")
     args = ap.parse_args()
 
@@ -221,14 +244,12 @@ def main() -> None:
     px_s, vol_s = _load_stooq(args.stooq_prices, args.stooq_volume)
 
     need = _needs_yahoo(px_s, universe, args.min_non_na)
-    print(f"Tickers in membership: {len(universe)}")
-    print(f"Tickers already decent in Stooq: {len(set(universe) - set(need))}")
-    print(f"Tickers to fetch from Yahoo: {len(need)}")
 
     if need:
-        px_y, vol_y = _download_yahoo(need, start=args.start, end=args.end, batch_size=args.batch_size)
+        px_y, vol_y = _download_yahoo(
+            need, start=args.start, end=args.end, batch_size=args.batch_size
+        )
         if px_y.empty:
-            print("No Yahoo data retrieved; writing out original Stooq panels.")
             px_out, vol_out = px_s, vol_s
         else:
             # Ensure columns use membership tickers (not Yahoo symbol variants)
@@ -238,6 +259,7 @@ def main() -> None:
         px_out, vol_out = px_s, vol_s
 
     import os
+
     os.makedirs(args.out_dir, exist_ok=True)
     prices_path = f"{args.out_dir}/prices.parquet"
     volume_path = f"{args.out_dir}/volume.parquet"
@@ -245,13 +267,9 @@ def main() -> None:
     vol_out.to_parquet(volume_path)
 
     # Simple stats
-    stooq_cov = int(px_s.notna().sum().sum())
-    merged_cov = int(px_out.notna().sum().sum())
-    print(f"Saved merged prices  -> {prices_path}  shape={px_out.shape}")
-    print(f"Saved merged volume  -> {volume_path}  shape={vol_out.shape}")
-    print(f"Filled {merged_cov - stooq_cov:,} additional price cells using Yahoo.")
-    print("Done.")
-    
+    int(px_s.notna().sum().sum())
+    int(px_out.notna().sum().sum())
+
 
 if __name__ == "__main__":
     main()

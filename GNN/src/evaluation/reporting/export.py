@@ -53,9 +53,7 @@ class PortfolioExporter:
         self.output_path.mkdir(parents=True, exist_ok=True)
 
     def export_portfolio_weights(
-        self,
-        weights_history: list[dict[str, Any]],
-        filename: str = "portfolio_weights"
+        self, weights_history: list[dict[str, Any]], filename: str = "portfolio_weights"
     ) -> dict[str, str]:
         """
         Export portfolio weights history to configured formats.
@@ -77,8 +75,8 @@ class PortfolioExporter:
                 filepath = self.output_path / f"{filename}.parquet"
                 weights_df.to_parquet(
                     filepath,
-                    compression='snappy' if self.config.compress_output else None,
-                    index=True
+                    compression="snappy" if self.config.compress_output else None,
+                    index=True,
                 )
                 exported_files["parquet"] = str(filepath)
 
@@ -91,16 +89,14 @@ class PortfolioExporter:
                 filepath = self.output_path / f"{filename}.json"
                 # Convert to JSON-serializable format
                 json_data = self._dataframe_to_json(weights_df)
-                with open(filepath, 'w') as f:
+                with open(filepath, "w") as f:
                     json.dump(json_data, f, indent=2, default=str)
                 exported_files["json"] = str(filepath)
 
         return exported_files
 
     def export_rebalancing_schedule(
-        self,
-        rebalancing_history: list[dict[str, Any]],
-        filename: str = "rebalancing_schedule"
+        self, rebalancing_history: list[dict[str, Any]], filename: str = "rebalancing_schedule"
     ) -> dict[str, str]:
         """
         Export rebalancing schedule and statistics.
@@ -115,9 +111,9 @@ class PortfolioExporter:
         # Convert to DataFrame
         rebalancing_df = pd.DataFrame(rebalancing_history)
 
-        if 'date' in rebalancing_df.columns:
-            rebalancing_df['date'] = pd.to_datetime(rebalancing_df['date'])
-            rebalancing_df.set_index('date', inplace=True)
+        if "date" in rebalancing_df.columns:
+            rebalancing_df["date"] = pd.to_datetime(rebalancing_df["date"])
+            rebalancing_df.set_index("date", inplace=True)
 
         exported_files = {}
 
@@ -126,8 +122,8 @@ class PortfolioExporter:
                 filepath = self.output_path / f"{filename}.parquet"
                 rebalancing_df.to_parquet(
                     filepath,
-                    compression='snappy' if self.config.compress_output else None,
-                    index=True
+                    compression="snappy" if self.config.compress_output else None,
+                    index=True,
                 )
                 exported_files["parquet"] = str(filepath)
 
@@ -144,7 +140,7 @@ class PortfolioExporter:
                     key = str(idx)  # Convert timestamp index to string
                     json_data[key] = row.to_dict()
 
-                with open(filepath, 'w') as f:
+                with open(filepath, "w") as f:
                     json.dump(json_data, f, indent=2, default=str)
                 exported_files["json"] = str(filepath)
 
@@ -155,7 +151,7 @@ class PortfolioExporter:
         weights_history: list[dict[str, Any]],
         returns_history: pd.Series | None = None,
         rebalancing_history: list[dict[str, Any]] | None = None,
-        model_info: dict[str, Any] | None = None
+        model_info: dict[str, Any] | None = None,
     ) -> str:
         """
         Create comprehensive portfolio analytics dashboard.
@@ -190,7 +186,7 @@ class PortfolioExporter:
             },
             "average_positions": (weights_df > 0).sum(axis=1).mean(),
             "max_positions": (weights_df > 0).sum(axis=1).max(),
-            "weight_concentration": (weights_df ** 2).sum(axis=1).mean(),  # Herfindahl index
+            "weight_concentration": (weights_df**2).sum(axis=1).mean(),  # Herfindahl index
         }
 
         # Performance analysis (if returns provided)
@@ -206,15 +202,13 @@ class PortfolioExporter:
 
         # Export dashboard
         dashboard_file = self.output_path / "portfolio_analytics_dashboard.json"
-        with open(dashboard_file, 'w') as f:
+        with open(dashboard_file, "w") as f:
             json.dump(dashboard_data, f, indent=2, default=str)
 
         return str(dashboard_file)
 
     def export_position_analysis(
-        self,
-        weights_history: list[dict[str, Any]],
-        filename: str = "position_analysis"
+        self, weights_history: list[dict[str, Any]], filename: str = "position_analysis"
     ) -> str:
         """
         Export detailed position-level analysis.
@@ -242,13 +236,15 @@ class PortfolioExporter:
                     "average_weight": active_periods.mean(),
                     "max_weight": active_periods.max(),
                     "weight_volatility": active_periods.std(),
-                    "first_appearance": active_periods.index.min().strftime(self.config.date_format),
+                    "first_appearance": active_periods.index.min().strftime(
+                        self.config.date_format
+                    ),
                     "last_appearance": active_periods.index.max().strftime(self.config.date_format),
                 }
 
         # Export position analysis
         analysis_file = self.output_path / f"{filename}.json"
-        with open(analysis_file, 'w') as f:
+        with open(analysis_file, "w") as f:
             json.dump(position_analysis, f, indent=2, default=str)
 
         return str(analysis_file)
@@ -277,7 +273,9 @@ class PortfolioExporter:
             "data": df.values.tolist(),
         }
 
-    def _analyze_rebalancing_history(self, rebalancing_history: list[dict[str, Any]]) -> dict[str, Any]:
+    def _analyze_rebalancing_history(
+        self, rebalancing_history: list[dict[str, Any]]
+    ) -> dict[str, Any]:
         """Analyze rebalancing history for dashboard."""
         if not rebalancing_history:
             return {}
@@ -285,14 +283,14 @@ class PortfolioExporter:
         executed_rebalances = [r for r in rebalancing_history if r.get("rebalanced", False)]
 
         total_costs = sum(
-            r.get("transaction_costs", {}).get("total_cost", 0.0)
-            for r in executed_rebalances
+            r.get("transaction_costs", {}).get("total_cost", 0.0) for r in executed_rebalances
         )
 
         average_turnover = (
             sum(r.get("transaction_costs", {}).get("turnover", 0.0) for r in executed_rebalances)
             / len(executed_rebalances)
-            if executed_rebalances else 0.0
+            if executed_rebalances
+            else 0.0
         )
 
         return {
@@ -301,5 +299,7 @@ class PortfolioExporter:
             "rebalancing_rate": len(executed_rebalances) / len(rebalancing_history),
             "total_transaction_costs": total_costs,
             "average_turnover": average_turnover,
-            "cost_per_rebalance": total_costs / len(executed_rebalances) if executed_rebalances else 0.0,
+            "cost_per_rebalance": (
+                total_costs / len(executed_rebalances) if executed_rebalances else 0.0
+            ),
         }

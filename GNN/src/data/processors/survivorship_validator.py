@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import pandas as pd
 
@@ -33,7 +33,7 @@ class SurvivorshipValidator:
         """
         self.universe_config = universe_config
 
-    def validate_membership_intervals(self, membership_df: pd.DataFrame) -> Dict[str, Any]:
+    def validate_membership_intervals(self, membership_df: pd.DataFrame) -> dict[str, Any]:
         """Validate membership intervals for survivorship bias issues.
 
         Args:
@@ -56,12 +56,14 @@ class SurvivorshipValidator:
             )
 
             # Count active vs historical intervals
-            active_intervals = membership_df["end"].isna().sum()
-            historical_intervals = membership_df["end"].notna().sum()
+            active_intervals = int(membership_df["end"].isna().sum())
+            historical_intervals = int(membership_df["end"].notna().sum())
 
             validation_results["active_intervals"] = active_intervals
             validation_results["historical_intervals"] = historical_intervals
-            validation_results["historical_ratio"] = historical_intervals / len(membership_df)
+            validation_results["historical_ratio"] = float(historical_intervals) / len(
+                membership_df
+            )
 
             # Survivorship bias indicators
             validation_results["delisted_tickers"] = self._identify_delisted_tickers(membership_df)
@@ -77,7 +79,7 @@ class SurvivorshipValidator:
 
         return validation_results
 
-    def _identify_delisted_tickers(self, membership_df: pd.DataFrame) -> Dict[str, Any]:
+    def _identify_delisted_tickers(self, membership_df: pd.DataFrame) -> dict[str, Any]:
         """Identify tickers that were delisted (have end dates).
 
         Args:
@@ -117,7 +119,7 @@ class SurvivorshipValidator:
 
         return delisted_analysis
 
-    def _analyze_survivor_only_bias(self, membership_df: pd.DataFrame) -> Dict[str, Any]:
+    def _analyze_survivor_only_bias(self, membership_df: pd.DataFrame) -> dict[str, Any]:
         """Analyze potential survivor-only bias in the dataset.
 
         Args:
@@ -167,7 +169,7 @@ class SurvivorshipValidator:
 
         return survivor_analysis
 
-    def validate_universe_calendar(self, universe_calendar: pd.DataFrame) -> Dict[str, Any]:
+    def validate_universe_calendar(self, universe_calendar: pd.DataFrame) -> dict[str, Any]:
         """Validate universe calendar for survivorship bias.
 
         Args:
@@ -225,7 +227,7 @@ class SurvivorshipValidator:
 
         return calendar_validation
 
-    def _analyze_ticker_turnover(self, universe_calendar: pd.DataFrame) -> Dict[str, Any]:
+    def _analyze_ticker_turnover(self, universe_calendar: pd.DataFrame) -> dict[str, Any]:
         """Analyze ticker turnover patterns in universe calendar.
 
         Args:
@@ -265,8 +267,8 @@ class SurvivorshipValidator:
                     "date": current_date,
                     "added_count": len(added),
                     "removed_count": len(removed),
-                    "added_tickers": sorted(list(added)),
-                    "removed_tickers": sorted(list(removed)),
+                    "added_tickers": sorted(added),
+                    "removed_tickers": sorted(removed),
                     "net_change": len(added) - len(removed),
                 }
             )
@@ -297,8 +299,8 @@ class SurvivorshipValidator:
         self,
         membership_df: pd.DataFrame,
         universe_calendar: pd.DataFrame,
-        output_path: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        output_path: str | None = None,
+    ) -> dict[str, Any]:
         """Generate comprehensive survivorship bias validation report.
 
         Args:
@@ -334,7 +336,7 @@ class SurvivorshipValidator:
 
         return report
 
-    def _generate_overall_assessment(self, report: Dict[str, Any]) -> Dict[str, Any]:
+    def _generate_overall_assessment(self, report: dict[str, Any]) -> dict[str, Any]:
         """Generate overall survivorship bias assessment.
 
         Args:
@@ -397,7 +399,7 @@ class SurvivorshipValidator:
         else:
             return "F"
 
-    def _generate_recommendations(self, report: Dict[str, Any]) -> List[str]:
+    def _generate_recommendations(self, report: dict[str, Any]) -> list[str]:
         """Generate recommendations based on validation results.
 
         Args:
@@ -451,7 +453,7 @@ class SurvivorshipValidator:
 
         return recommendations
 
-    def _save_detailed_report(self, report: Dict[str, Any], output_path: str) -> None:
+    def _save_detailed_report(self, report: dict[str, Any], output_path: str) -> None:
         """Save detailed survivorship report to file.
 
         Args:
@@ -465,5 +467,3 @@ class SurvivorshipValidator:
 
         with open(output_file, "w") as f:
             json.dump(report, f, indent=2, default=str)
-
-        print(f"Detailed survivorship report saved to {output_path}")

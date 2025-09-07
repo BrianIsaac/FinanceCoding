@@ -8,7 +8,7 @@ Integrates with the refactored data collection and universe construction pipelin
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import pandas as pd
 
@@ -26,7 +26,7 @@ class PortfolioDataLoader:
     """
 
     def __init__(
-        self, data_path: Optional[Path] = None, universe_config: Optional[UniverseConfig] = None
+        self, data_path: Path | None = None, universe_config: UniverseConfig | None = None
     ):
         """
         Initialize portfolio data loader.
@@ -62,7 +62,6 @@ class PortfolioDataLoader:
                 df.index = pd.to_datetime(df.index)
             return df.sort_index()
         else:
-            print(f"Price file not found: {price_file}")
             return pd.DataFrame()
 
     def load_volumes(self, source: str = "merged") -> pd.DataFrame:
@@ -84,7 +83,6 @@ class PortfolioDataLoader:
                 df.index = pd.to_datetime(df.index)
             return df.sort_index()
         else:
-            print(f"Volume file not found: {volume_file}")
             return pd.DataFrame()
 
     def load_membership_intervals(self, universe: str = "sp400") -> pd.DataFrame:
@@ -102,7 +100,6 @@ class PortfolioDataLoader:
         if membership_file.exists():
             return pd.read_parquet(membership_file)
         else:
-            print(f"Membership intervals file not found: {membership_file}")
             return pd.DataFrame(columns=["ticker", "start", "end", "index_name"])
 
     def load_universe_calendar(self, universe: str = "sp400") -> pd.DataFrame:
@@ -124,12 +121,11 @@ class PortfolioDataLoader:
                 df["date"] = pd.to_datetime(df["date"])
             return df.sort_values(["date", "ticker"]).reset_index(drop=True)
         else:
-            print(f"Universe calendar file not found: {calendar_file}")
             return pd.DataFrame(columns=["date", "ticker", "index_name"])
 
     def load_market_data(
         self, source: str = "merged"
-    ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
         """
         Load complete market dataset for portfolio optimization.
 
@@ -145,7 +141,7 @@ class PortfolioDataLoader:
 
         return prices, volumes, universe_calendar
 
-    def get_universe_at_date(self, date: str) -> List[str]:
+    def get_universe_at_date(self, date: str) -> list[str]:
         """
         Get universe members at a specific date.
 
@@ -175,7 +171,7 @@ class PortfolioDataLoader:
 
     def validate_data_alignment(
         self, prices: pd.DataFrame, volumes: pd.DataFrame, universe_calendar: pd.DataFrame
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Validate alignment between different data sources.
 
@@ -221,7 +217,7 @@ class PortfolioDataLoader:
                     if universe_tickers
                     else 0.0
                 )
-                validation["missing_from_prices"] = sorted(list(universe_tickers - price_tickers))
+                validation["missing_from_prices"] = sorted(universe_tickers - price_tickers)
 
         return validation
 
@@ -243,7 +239,6 @@ class PortfolioDataLoader:
         )
 
         if not calendar_file.exists():
-            print(f"Universe calendar not found, building from Wikipedia...")
             return self.universe_builder.build_and_save_universe(start_date, end_date)
         else:
             return calendar_file

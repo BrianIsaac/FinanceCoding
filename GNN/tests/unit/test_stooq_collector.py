@@ -1,10 +1,12 @@
 """Unit tests for Stooq collector functionality."""
 
-import pytest
-import pandas as pd
 from unittest.mock import Mock, patch
-from src.data.collectors.stooq import StooqCollector
+
+import pandas as pd
+import pytest
+
 from src.config.data import CollectorConfig
+from src.data.collectors.stooq import StooqCollector
 
 
 @pytest.fixture

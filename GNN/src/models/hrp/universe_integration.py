@@ -7,8 +7,6 @@ for handling time-varying asset membership in portfolio construction.
 
 from __future__ import annotations
 
-from typing import List, Optional, Tuple
-
 import pandas as pd
 
 from src.data.processors.universe_builder import UniverseBuilder
@@ -18,7 +16,7 @@ from src.models.hrp.clustering import ClusteringConfig, HRPClustering
 class HRPUniverseIntegration:
     """
     Integration layer for HRP clustering with dynamic universe management.
-    
+
     Handles time-varying asset membership by combining HRP clustering
     with UniverseBuilder for dynamic S&P index constituents.
     """
@@ -26,11 +24,11 @@ class HRPUniverseIntegration:
     def __init__(
         self,
         universe_builder: UniverseBuilder,
-        clustering_config: Optional[ClusteringConfig] = None
+        clustering_config: ClusteringConfig | None = None,
     ):
         """
         Initialize HRP universe integration.
-        
+
         Args:
             universe_builder: UniverseBuilder instance for dynamic membership
             clustering_config: Configuration for HRP clustering
@@ -40,20 +38,18 @@ class HRPUniverseIntegration:
         self.hrp_clustering = HRPClustering(self.clustering_config)
 
         # Cache for universe snapshots
-        self._universe_cache: Optional[pd.DataFrame] = None
+        self._universe_cache: pd.DataFrame | None = None
 
     def get_universe_assets_for_date(
-        self,
-        date: pd.Timestamp,
-        universe_calendar: Optional[pd.DataFrame] = None
-    ) -> List[str]:
+        self, date: pd.Timestamp, universe_calendar: pd.DataFrame | None = None
+    ) -> list[str]:
         """
         Get active universe assets for a specific date.
-        
+
         Args:
             date: Date for which to retrieve universe assets
             universe_calendar: Optional preloaded universe calendar
-            
+
         Returns:
             List of asset tickers active on the specified date
         """
@@ -63,13 +59,15 @@ class HRPUniverseIntegration:
             raise ValueError("No universe calendar provided or cached")
 
         # Filter universe calendar for the specific date
-        date_mask = universe_calendar['date'] <= date
+        date_mask = universe_calendar["date"] <= date
         if date_mask.any():
             # Get the latest universe snapshot on or before the target date
-            latest_date = universe_calendar[date_mask]['date'].max()
-            assets = universe_calendar[
-                universe_calendar['date'] == latest_date
-            ]['ticker'].unique().tolist()
+            latest_date = universe_calendar[date_mask]["date"].max()
+            assets = (
+                universe_calendar[universe_calendar["date"] == latest_date]["ticker"]
+                .unique()
+                .tolist()
+            )
             return sorted(assets)
         else:
             return []
@@ -78,18 +76,18 @@ class HRPUniverseIntegration:
         self,
         returns: pd.DataFrame,
         date: pd.Timestamp,
-        universe_calendar: Optional[pd.DataFrame] = None,
-        lookback_days: int = 756
+        universe_calendar: pd.DataFrame | None = None,
+        lookback_days: int = 756,
     ) -> pd.DataFrame:
         """
         Align returns data with universe membership for clustering.
-        
+
         Args:
             returns: Historical returns DataFrame
             date: Target date for universe membership
             universe_calendar: Optional preloaded universe calendar
             lookback_days: Number of lookback days for clustering
-            
+
         Returns:
             Returns DataFrame aligned with universe membership and sufficient history
         """
@@ -119,52 +117,56 @@ class HRPUniverseIntegration:
         self,
         returns: pd.DataFrame,
         date: pd.Timestamp,
-        universe_calendar: Optional[pd.DataFrame] = None,
-        min_assets_for_clustering: int = 10
-    ) -> Tuple[bool, str, dict]:
+        universe_calendar: pd.DataFrame | None = None,
+        min_assets_for_clustering: int = 10,
+    ) -> tuple[bool, str, dict]:
         """
         Validate whether clustering is feasible for given universe and date.
-        
+
         Args:
             returns: Historical returns DataFrame
             date: Target date for clustering
             universe_calendar: Optional preloaded universe calendar
             min_assets_for_clustering: Minimum number of assets required
-            
+
         Returns:
             Tuple of (is_feasible, error_message, validation_metrics)
         """
         try:
             # Get aligned returns
-            aligned_returns = self.align_returns_with_universe(
-                returns, date, universe_calendar
-            )
+            aligned_returns = self.align_returns_with_universe(returns, date, universe_calendar)
 
             n_assets = len(aligned_returns.columns)
             n_observations = len(aligned_returns)
 
             # Check minimum asset count
             if n_assets < min_assets_for_clustering:
-                return False, f"Insufficient assets: {n_assets} < {min_assets_for_clustering}", {
-                    "n_assets": n_assets,
-                    "n_observations": n_observations
-                }
+                return (
+                    False,
+                    f"Insufficient assets: {n_assets} < {min_assets_for_clustering}",
+                    {"n_assets": n_assets, "n_observations": n_observations},
+                )
 
             # Check minimum observations
             if n_observations < self.clustering_config.min_observations:
-                return False, f"Insufficient observations: {n_observations} < {self.clustering_config.min_observations}", {
-                    "n_assets": n_assets,
-                    "n_observations": n_observations
-                }
+                return (
+                    False,
+                    f"Insufficient observations: {n_observations} < {self.clustering_config.min_observations}",
+                    {"n_assets": n_assets, "n_observations": n_observations},
+                )
 
             # Check for excessive missing data
             missing_ratio = aligned_returns.isna().sum().sum() / aligned_returns.size
             if missing_ratio > 0.3:
-                return False, f"Too much missing data: {missing_ratio:.2%}", {
-                    "n_assets": n_assets,
-                    "n_observations": n_observations,
-                    "missing_ratio": missing_ratio
-                }
+                return (
+                    False,
+                    f"Too much missing data: {missing_ratio:.2%}",
+                    {
+                        "n_assets": n_assets,
+                        "n_observations": n_observations,
+                        "missing_ratio": missing_ratio,
+                    },
+                )
 
             # Calculate additional metrics
             metrics = {
@@ -172,7 +174,14 @@ class HRPUniverseIntegration:
                 "n_observations": n_observations,
                 "missing_ratio": missing_ratio,
                 "lookback_days": (aligned_returns.index.max() - aligned_returns.index.min()).days,
-                "universe_coverage": len([a for a in self.get_universe_assets_for_date(date, universe_calendar) if a in returns.columns]) / len(self.get_universe_assets_for_date(date, universe_calendar))
+                "universe_coverage": len(
+                    [
+                        a
+                        for a in self.get_universe_assets_for_date(date, universe_calendar)
+                        if a in returns.columns
+                    ]
+                )
+                / len(self.get_universe_assets_for_date(date, universe_calendar)),
             }
 
             return True, "Clustering feasible", metrics
@@ -184,19 +193,19 @@ class HRPUniverseIntegration:
         self,
         returns: pd.DataFrame,
         date: pd.Timestamp,
-        universe_calendar: Optional[pd.DataFrame] = None
+        universe_calendar: pd.DataFrame | None = None,
     ) -> dict:
         """
         Build HRP clusters considering universe membership constraints.
-        
+
         Args:
             returns: Historical returns DataFrame
             date: Target date for clustering
             universe_calendar: Optional preloaded universe calendar
-            
+
         Returns:
             Dictionary containing cluster tree and metadata
-            
+
         Raises:
             ValueError: If clustering is not feasible
         """
@@ -209,9 +218,7 @@ class HRPUniverseIntegration:
             raise ValueError(f"Clustering not feasible: {error_msg}")
 
         # Get aligned returns
-        aligned_returns = self.align_returns_with_universe(
-            returns, date, universe_calendar
-        )
+        aligned_returns = self.align_returns_with_universe(returns, date, universe_calendar)
 
         # Build correlation distance matrix
         distance_matrix = self.hrp_clustering.build_correlation_distance(aligned_returns)
@@ -230,7 +237,7 @@ class HRPUniverseIntegration:
             "asset_names": asset_names,
             "clustering_date": date,
             "validation_metrics": metrics,
-            "config": self.clustering_config
+            "config": self.clustering_config,
         }
 
     def cache_universe_calendar(self, universe_calendar: pd.DataFrame) -> None:

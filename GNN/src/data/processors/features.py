@@ -18,8 +18,8 @@ only used if you prefer to recompute returns.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Dict, Iterable, Optional
 
 import numpy as np
 import pandas as pd
@@ -36,7 +36,7 @@ class FeatureConfig:
     require_min_days: int = 60  # minimum history to compute a feature; otherwise NaN
 
 
-def _ensure_returns(px: Optional[pd.DataFrame], rets: Optional[pd.DataFrame]) -> pd.DataFrame:
+def _ensure_returns(px: pd.DataFrame | None, rets: pd.DataFrame | None) -> pd.DataFrame:
     """Return a daily returns DataFrame with DatetimeIndex and aligned columns."""
     if rets is None:
         if px is None:
@@ -174,11 +174,11 @@ def compute_features_at_date(
 
 
 def rolling_features(
-    px: Optional[pd.DataFrame],
-    rets: Optional[pd.DataFrame],
+    px: pd.DataFrame | None,
+    rets: pd.DataFrame | None,
     rebal_dates: Iterable[pd.Timestamp],
-    cfg: Optional[FeatureConfig] = None,
-) -> Dict[pd.Timestamp, pd.DataFrame]:
+    cfg: FeatureConfig | None = None,
+) -> dict[pd.Timestamp, pd.DataFrame]:
     """Compute features for all rebalancing dates.
 
     Parameters
@@ -201,7 +201,7 @@ def rolling_features(
     cfg = cfg or FeatureConfig()
     rets = _ensure_returns(px, rets)
 
-    feats_by_t: Dict[pd.Timestamp, pd.DataFrame] = {}
+    feats_by_t: dict[pd.Timestamp, pd.DataFrame] = {}
     for t in rebal_dates:
         t = pd.Timestamp(t)
         feats_by_t[t] = compute_features_at_date(rets, t, cfg)

@@ -22,6 +22,7 @@ class DataPipelineConfig(DataConfig):
         parallel_processing: Enable parallel data processing
         num_workers: Number of worker processes for parallel processing
     """
+
     processing_frequency: str = "daily"
     cache_enabled: bool = True
     cache_dir: str = "data/cache"
@@ -40,6 +41,7 @@ class CollectorConfig:
         retry_attempts: Number of retry attempts for failed requests
         retry_delay: Delay between retry attempts in seconds
     """
+
     source_name: str
     rate_limit: float = 1.0
     timeout: int = 30
@@ -59,12 +61,13 @@ class FeatureConfig:
         correlation_window: Window size for correlation calculations
         outlier_threshold: Z-score threshold for outlier detection
     """
+
     return_periods: list[int] = field(default_factory=lambda: [1, 5, 21, 63])
     volatility_window: int = 21
     momentum_periods: list[int] = field(default_factory=lambda: [21, 63, 252])
-    technical_indicators: list[str] = field(default_factory=lambda: [
-        "rsi", "macd", "bollinger_bands", "moving_average"
-    ])
+    technical_indicators: list[str] = field(
+        default_factory=lambda: ["rsi", "macd", "bollinger_bands", "moving_average"]
+    )
     correlation_window: int = 252
     outlier_threshold: float = 3.0
 
@@ -81,6 +84,7 @@ class UniverseConfig:
         exclude_sectors: List of sectors to exclude
         rebalance_frequency: How often to rebalance universe membership
     """
+
     universe_type: str = "midcap400"
     custom_symbols: Optional[list[str]] = None
     min_market_cap: Optional[float] = None
@@ -91,7 +95,7 @@ class UniverseConfig:
 
 @dataclass
 class ValidationConfig:
-    """Data validation configuration.
+    """Extended data validation configuration for comprehensive quality checks.
 
     Attributes:
         missing_data_threshold: Maximum allowed percentage of missing data
@@ -99,12 +103,41 @@ class ValidationConfig:
         volume_threshold: Minimum volume threshold
         validate_business_days: Whether to validate business day alignment
         fill_method: Method for filling missing data ('forward', 'backward', 'interpolate')
+        min_data_points: Minimum number of data points required per ticker
+        max_gap_days: Maximum gap size in days before flagging
+        outlier_detection_method: Method for outlier detection ('iqr', 'zscore', 'isolation_forest')
+        outlier_threshold: Threshold for outlier detection (z-score or IQR multiplier)
+        correlation_threshold: Minimum correlation threshold for validation
+        price_range_validation: Whether to validate reasonable price ranges
+        min_price: Minimum allowed price value
+        max_price: Maximum allowed price value
+        volume_consistency_check: Whether to check volume consistency with price moves
+        temporal_consistency_check: Whether to check temporal data consistency
+        quality_score_threshold: Minimum quality score threshold (0-1)
+        auto_fix_enabled: Whether to automatically fix certain data issues
+        generate_reports: Whether to generate detailed validation reports
+        report_output_dir: Directory for validation reports
     """
+
     missing_data_threshold: float = 0.1  # 10%
-    price_change_threshold: float = 0.5   # 50%
+    price_change_threshold: float = 0.5  # 50%
     volume_threshold: int = 1000
     validate_business_days: bool = True
     fill_method: str = "forward"
+    min_data_points: int = 100
+    max_gap_days: int = 7
+    outlier_detection_method: str = "iqr"
+    outlier_threshold: float = 3.0
+    correlation_threshold: float = 0.1
+    price_range_validation: bool = True
+    min_price: float = 0.01
+    max_price: float = 10000.0
+    volume_consistency_check: bool = True
+    temporal_consistency_check: bool = True
+    quality_score_threshold: float = 0.7
+    auto_fix_enabled: bool = False
+    generate_reports: bool = True
+    report_output_dir: str = "data/validation_reports"
 
 
 def create_collector_config(source: str, **kwargs: Any) -> CollectorConfig:
@@ -124,17 +157,23 @@ def create_collector_config(source: str, **kwargs: Any) -> CollectorConfig:
     """
     # Default configurations for different sources
     source_defaults = {
-        'yfinance': {'rate_limit': 5.0, 'timeout': 10},
-        'stooq': {'rate_limit': 10.0, 'timeout': 15},
-        'wikipedia': {'rate_limit': 1.0, 'timeout': 30}
+        "yfinance": {"rate_limit": 5.0, "timeout": 10},
+        "stooq": {"rate_limit": 10.0, "timeout": 15},
+        "wikipedia": {"rate_limit": 1.0, "timeout": 30},
     }
 
     # Merge defaults with provided kwargs
-    config_params = source_defaults.get(source, {})
-    config_params.update(kwargs)
-    config_params['source_name'] = source
+    defaults = source_defaults.get(source, {}).copy()
+    defaults.update(kwargs)
 
-    return CollectorConfig(**config_params)
+    # Ensure source_name is set correctly
+    return CollectorConfig(
+        source_name=source,
+        rate_limit=defaults.get("rate_limit", 1.0),
+        timeout=int(defaults.get("timeout", 30)),
+        retry_attempts=int(defaults.get("retry_attempts", 3)),
+        retry_delay=defaults.get("retry_delay", 1.0),
+    )
 
 
 def validate_date_range(start_date: str, end_date: str) -> bool:

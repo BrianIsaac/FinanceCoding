@@ -8,7 +8,7 @@ allocation, and constraint enforcement for portfolio construction.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import pandas as pd
 
@@ -22,19 +22,18 @@ from src.models.hrp.universe_integration import HRPUniverseIntegration
 class HRPConfig:
     """Complete HRP model configuration."""
 
-    lookback_days: int = 756                    # 3 years of daily data
+    lookback_days: int = 756  # 3 years of daily data
     clustering_config: ClusteringConfig = None
     allocation_config: AllocationConfig = None
-    min_observations: int = 252                 # Minimum data overlap
-    correlation_method: str = "pearson"         # Correlation calculation method
-    rebalance_frequency: str = "monthly"        # Rebalancing frequency
+    min_observations: int = 252  # Minimum data overlap
+    correlation_method: str = "pearson"  # Correlation calculation method
+    rebalance_frequency: str = "monthly"  # Rebalancing frequency
 
     def __post_init__(self):
         """Initialize sub-configurations if not provided."""
         if self.clustering_config is None:
             self.clustering_config = ClusteringConfig(
-                min_observations=self.min_observations,
-                correlation_method=self.correlation_method
+                min_observations=self.min_observations, correlation_method=self.correlation_method
             )
         if self.allocation_config is None:
             self.allocation_config = AllocationConfig()
@@ -43,7 +42,7 @@ class HRPConfig:
 class HRPModel(PortfolioModel):
     """
     Hierarchical Risk Parity portfolio model.
-    
+
     Implements HRP allocation using correlation distance clustering and
     recursive bisection with integrated constraint enforcement.
     """
@@ -51,12 +50,12 @@ class HRPModel(PortfolioModel):
     def __init__(
         self,
         constraints: PortfolioConstraints,
-        hrp_config: Optional[HRPConfig] = None,
-        universe_integration: Optional[HRPUniverseIntegration] = None
+        hrp_config: HRPConfig | None = None,
+        universe_integration: HRPUniverseIntegration | None = None,
     ):
         """
         Initialize HRP portfolio model.
-        
+
         Args:
             constraints: Portfolio constraints configuration
             hrp_config: HRP-specific configuration parameters
@@ -70,25 +69,25 @@ class HRPModel(PortfolioModel):
         self.universe_integration = universe_integration
 
         # Model state
-        self._fitted_covariance: Optional[pd.DataFrame] = None
-        self._fitted_returns: Optional[pd.DataFrame] = None
-        self._fitted_universe: Optional[List[str]] = None
-        self._fit_period: Optional[Tuple[pd.Timestamp, pd.Timestamp]] = None
+        self._fitted_covariance: pd.DataFrame | None = None
+        self._fitted_returns: pd.DataFrame | None = None
+        self._fitted_universe: list[str] | None = None
+        self._fit_period: tuple[pd.Timestamp, pd.Timestamp] | None = None
 
     def fit(
         self,
         returns: pd.DataFrame,
-        universe: List[str],
-        fit_period: Tuple[pd.Timestamp, pd.Timestamp],
+        universe: list[str],
+        fit_period: tuple[pd.Timestamp, pd.Timestamp],
     ) -> None:
         """
         Train HRP model on historical correlation patterns.
-        
+
         Args:
             returns: Historical returns DataFrame with datetime index and asset columns
             universe: List of asset tickers to include in optimization
             fit_period: (start_date, end_date) tuple defining training period
-            
+
         Raises:
             ValueError: If returns data is insufficient or invalid
         """
@@ -145,22 +144,18 @@ class HRPModel(PortfolioModel):
         self._fit_period = fit_period
         self.is_fitted = True
 
-    def predict_weights(
-        self,
-        date: pd.Timestamp,
-        universe: List[str]
-    ) -> pd.Series:
+    def predict_weights(self, date: pd.Timestamp, universe: list[str]) -> pd.Series:
         """
         Generate HRP portfolio weights for rebalancing date.
-        
+
         Args:
             date: Rebalancing date for which to generate weights
             universe: List of asset tickers (must be subset of fitted universe)
-            
+
         Returns:
             Portfolio weights as pandas Series with asset tickers as index.
             Weights sum to 1.0 and satisfy all portfolio constraints.
-            
+
         Raises:
             ValueError: If model is not fitted or universe is invalid
         """
@@ -203,9 +198,8 @@ class HRPModel(PortfolioModel):
         start_date = date - pd.Timedelta(days=self.hrp_config.lookback_days)
 
         # Filter fitted returns for lookback period
-        lookback_mask = (
-            (self._fitted_returns.index >= start_date) &
-            (self._fitted_returns.index < end_date)
+        lookback_mask = (self._fitted_returns.index >= start_date) & (
+            self._fitted_returns.index < end_date
         )
         lookback_returns = self._fitted_returns[lookback_mask]
 
@@ -219,9 +213,7 @@ class HRPModel(PortfolioModel):
 
         # Build correlation distance matrix
         try:
-            distance_matrix = self.clustering_engine.build_correlation_distance(
-                prediction_returns
-            )
+            distance_matrix = self.clustering_engine.build_correlation_distance(prediction_returns)
         except ValueError:
             # Fallback to equal weights if clustering fails
             return pd.Series(1.0 / len(prediction_assets), index=prediction_assets)
@@ -252,7 +244,10 @@ class HRPModel(PortfolioModel):
         constrained_weights = self.validate_weights(raw_weights)
 
         # Ensure minimum weight threshold is applied
-        if hasattr(self.constraints, 'min_weight_threshold') and self.constraints.min_weight_threshold > 0:
+        if (
+            hasattr(self.constraints, "min_weight_threshold")
+            and self.constraints.min_weight_threshold > 0
+        ):
             constrained_weights = constrained_weights.where(
                 constrained_weights >= self.constraints.min_weight_threshold, 0.0
             )
@@ -263,10 +258,10 @@ class HRPModel(PortfolioModel):
 
         return constrained_weights
 
-    def get_model_info(self) -> Dict[str, Any]:
+    def get_model_info(self) -> dict[str, Any]:
         """
         Return HRP model metadata for analysis and reproducibility.
-        
+
         Returns:
             Dictionary containing model type, hyperparameters, constraints,
             and other relevant metadata for performance analysis.
@@ -280,27 +275,33 @@ class HRPModel(PortfolioModel):
         }
 
         if self.is_fitted:
-            info.update({
-                "fitted_universe_size": len(self._fitted_universe) if self._fitted_universe else 0,
-                "fit_period_start": self._fit_period[0].strftime("%Y-%m-%d") if self._fit_period else None,
-                "fit_period_end": self._fit_period[1].strftime("%Y-%m-%d") if self._fit_period else None,
-                "training_observations": len(self._fitted_returns) if self._fitted_returns is not None else 0,
-            })
+            info.update(
+                {
+                    "fitted_universe_size": (
+                        len(self._fitted_universe) if self._fitted_universe else 0
+                    ),
+                    "fit_period_start": (
+                        self._fit_period[0].strftime("%Y-%m-%d") if self._fit_period else None
+                    ),
+                    "fit_period_end": (
+                        self._fit_period[1].strftime("%Y-%m-%d") if self._fit_period else None
+                    ),
+                    "training_observations": (
+                        len(self._fitted_returns) if self._fitted_returns is not None else 0
+                    ),
+                }
+            )
 
         return info
 
-    def get_clustering_diagnostics(
-        self,
-        date: pd.Timestamp,
-        universe: List[str]
-    ) -> Dict[str, Any]:
+    def get_clustering_diagnostics(self, date: pd.Timestamp, universe: list[str]) -> dict[str, Any]:
         """
         Get detailed clustering diagnostics for analysis.
-        
+
         Args:
             date: Analysis date
             universe: Asset universe
-            
+
         Returns:
             Dictionary with clustering metrics and tree structure
         """
@@ -318,17 +319,14 @@ class HRPModel(PortfolioModel):
             end_date = date
             start_date = date - pd.Timedelta(days=self.hrp_config.lookback_days)
 
-            lookback_mask = (
-                (self._fitted_returns.index >= start_date) &
-                (self._fitted_returns.index < end_date)
+            lookback_mask = (self._fitted_returns.index >= start_date) & (
+                self._fitted_returns.index < end_date
             )
             lookback_returns = self._fitted_returns[lookback_mask]
             prediction_returns = lookback_returns[available_assets]
 
             # Build clustering
-            distance_matrix = self.clustering_engine.build_correlation_distance(
-                prediction_returns
-            )
+            distance_matrix = self.clustering_engine.build_correlation_distance(prediction_returns)
             linkage_matrix = self.clustering_engine.hierarchical_clustering(distance_matrix)
             cluster_tree = self.clustering_engine.build_cluster_tree(
                 available_assets, linkage_matrix
@@ -354,8 +352,8 @@ class HRPModel(PortfolioModel):
     def _validate_fit_inputs(
         self,
         returns: pd.DataFrame,
-        universe: List[str],
-        fit_period: Tuple[pd.Timestamp, pd.Timestamp]
+        universe: list[str],
+        fit_period: tuple[pd.Timestamp, pd.Timestamp],
     ) -> None:
         """Validate inputs for fit method."""
         if returns.empty:
@@ -375,7 +373,7 @@ class HRPModel(PortfolioModel):
                 f"Fit period too short: {period_days} days < {self.hrp_config.min_observations}"
             )
 
-    def _calculate_tree_depth(self, cluster_tree: Dict) -> int:
+    def _calculate_tree_depth(self, cluster_tree: dict) -> int:
         """Calculate the depth of the cluster tree."""
         if cluster_tree["type"] == "leaf":
             return 1
@@ -385,18 +383,14 @@ class HRPModel(PortfolioModel):
 
         return max(left_depth, right_depth) + 1
 
-    def get_risk_contributions(
-        self,
-        weights: pd.Series,
-        date: pd.Timestamp
-    ) -> Dict[str, float]:
+    def get_risk_contributions(self, weights: pd.Series, date: pd.Timestamp) -> dict[str, float]:
         """
         Calculate risk contributions for portfolio weights.
-        
+
         Args:
             weights: Portfolio weights
             date: Date for covariance estimation
-            
+
         Returns:
             Dictionary mapping assets to risk contributions
         """
@@ -408,9 +402,8 @@ class HRPModel(PortfolioModel):
             end_date = date
             start_date = date - pd.Timedelta(days=self.hrp_config.lookback_days)
 
-            lookback_mask = (
-                (self._fitted_returns.index >= start_date) &
-                (self._fitted_returns.index < end_date)
+            lookback_mask = (self._fitted_returns.index >= start_date) & (
+                self._fitted_returns.index < end_date
             )
             lookback_returns = self._fitted_returns[lookback_mask]
 

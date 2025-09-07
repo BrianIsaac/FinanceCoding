@@ -45,10 +45,7 @@ class TransactionCostCalculator:
         self.config = config
 
     def calculate_turnover(
-        self,
-        current_weights: pd.Series,
-        target_weights: pd.Series,
-        method: str = "one_way"
+        self, current_weights: pd.Series, target_weights: pd.Series, method: str = "one_way"
     ) -> float:
         """
         Calculate portfolio turnover between current and target weights.
@@ -85,10 +82,7 @@ class TransactionCostCalculator:
             return buys + sells
 
     def calculate_transaction_costs(
-        self,
-        current_weights: pd.Series,
-        target_weights: pd.Series,
-        portfolio_value: float = 1.0
+        self, current_weights: pd.Series, target_weights: pd.Series, portfolio_value: float = 1.0
     ) -> dict[str, float]:
         """
         Calculate transaction costs for rebalancing.
@@ -133,7 +127,7 @@ class TransactionCostCalculator:
         returns: pd.Series,
         current_weights: pd.Series,
         target_weights: pd.Series,
-        portfolio_value: float = 1.0
+        portfolio_value: float = 1.0,
     ) -> tuple[float, dict[str, float]]:
         """
         Apply transaction costs to portfolio returns.
@@ -162,9 +156,7 @@ class TransactionCostCalculator:
         return net_return, cost_breakdown
 
     def estimate_annual_costs(
-        self,
-        monthly_turnover: float,
-        rebalancing_frequency: int = 12
+        self, monthly_turnover: float, rebalancing_frequency: int = 12
     ) -> dict[str, float]:
         """
         Estimate annual transaction costs based on turnover patterns.
@@ -184,7 +176,9 @@ class TransactionCostCalculator:
 
         # Estimate trades per rebalance (rough approximation)
         avg_trades_per_rebalance = monthly_turnover * 50  # Assume 50 assets average
-        annual_fixed_cost = avg_trades_per_rebalance * rebalancing_frequency * self.config.fixed_cost_per_trade
+        annual_fixed_cost = (
+            avg_trades_per_rebalance * rebalancing_frequency * self.config.fixed_cost_per_trade
+        )
 
         return {
             "annual_turnover": annual_turnover,
@@ -217,9 +211,7 @@ class TransactionCostCalculator:
         return (weight_changes > min_trade_threshold).sum()
 
     def create_cost_report(
-        self,
-        rebalancing_history: pd.DataFrame,
-        returns_history: pd.Series
+        self, rebalancing_history: pd.DataFrame, returns_history: pd.Series
     ) -> dict[str, Any]:
         """
         Create comprehensive transaction cost report.

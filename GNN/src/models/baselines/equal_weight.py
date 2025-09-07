@@ -34,7 +34,7 @@ class EqualWeightModel(PortfolioModel):
         """
         super().__init__(constraints)
         self.top_k = top_k
-        self.fitted_universe = None
+        self.fitted_universe: list[str] | None = None
         self.selection_method = "alphabetical"  # Simple deterministic selection
 
     def fit(
@@ -107,6 +107,9 @@ class EqualWeightModel(PortfolioModel):
             raise ValueError("Universe cannot be empty")
 
         # Filter universe to assets that were in fitted universe
+        if self.fitted_universe is None:
+            raise ValueError("Model must be fitted before generating predictions")
+
         valid_assets = [asset for asset in universe if asset in self.fitted_universe]
 
         if len(valid_assets) == 0:

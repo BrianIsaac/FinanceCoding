@@ -14,14 +14,14 @@ from __future__ import annotations
 
 import argparse
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
 from io import StringIO
-from typing import Dict, Iterable, List, Optional, Tuple
 
 import pandas as pd
 import requests
 
-WIKI_URLS: Dict[str, str] = {
+WIKI_URLS: dict[str, str] = {
     "sp500": "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies",
     "sp400": "https://en.wikipedia.org/wiki/List_of_S%26P_400_companies",
 }
@@ -32,21 +32,24 @@ TICKER_RE = re.compile(r"\(([A-Z][A-Z0-9.\-]{0,9})\)")  # captures ABC, BRK.B, B
 @dataclass(frozen=True)
 class ChangeEvent:
     date: pd.Timestamp
-    added: List[str]
-    removed: List[str]
+    added: list[str]
+    removed: list[str]
     index_name: str  # "SP500" or "SP400"
 
 
 def _new_session() -> requests.Session:
     s = requests.Session()
-    s.headers.update({
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/124.0 Safari/537.36"
-        )
-    })
+    s.headers.update(
+        {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/124.0 Safari/537.36"
+            )
+        }
+    )
     return s
+
 
 def _scrape_current_constituents(html: str) -> list[str]:
     """Extract current constituents from the main constituents table.
@@ -59,7 +62,7 @@ def _scrape_current_constituents(html: str) -> list[str]:
     tables = pd.read_html(StringIO(html), flavor="lxml")
     best: list[str] | None = None
 
-    def _pick_symbol_col(cols: list[str]) -> Optional[str]:
+    def _pick_symbol_col(cols: list[str]) -> str | None:
         # prefer exact matches in this order, then any header containing 'symbol' or 'ticker'
         for exact in ("symbol", "ticker symbol", "ticker"):
             if exact in cols:
@@ -73,7 +76,9 @@ def _scrape_current_constituents(html: str) -> list[str]:
         cols = _flatten_columns(df)
         # Heuristic: a real constituents table usually has a symbol/ticker col AND a company/sector col
         has_id = any(("symbol" in c) or ("ticker" in c) for c in cols)
-        has_meta = any(("security" in c) or ("company" in c) or ("gics" in c) or ("sector" in c) for c in cols)
+        has_meta = any(
+            ("security" in c) or ("company" in c) or ("gics" in c) or ("sector" in c) for c in cols
+        )
         if not (has_id and has_meta):
             continue
 
@@ -86,14 +91,15 @@ def _scrape_current_constituents(html: str) -> list[str]:
         s = df[symcol].astype(str)
 
         # Clean up: remove spaces/footnotes, unify dashes, keep only safe ticker chars
-        s = (s.str.upper()
-               .str.replace(r"\s+", "", regex=True)
-               .str.replace("–", "-", regex=False)
-               .str.replace("—", "-", regex=False)
-               .str.replace(r"\[.*?\]", "", regex=True)      # drop [1], [a], etc.
-               .str.replace(r"\(.*?\)", "", regex=True)      # drop (...) notes
-               .str.replace(r"[^A-Z0-9.\-]", "", regex=True) # keep A-Z0-9.- only
-             )
+        s = (
+            s.str.upper()
+            .str.replace(r"\s+", "", regex=True)
+            .str.replace("–", "-", regex=False)
+            .str.replace("—", "-", regex=False)
+            .str.replace(r"\[.*?\]", "", regex=True)  # drop [1], [a], etc.
+            .str.replace(r"\(.*?\)", "", regex=True)  # drop (...) notes
+            .str.replace(r"[^A-Z0-9.\-]", "", regex=True)  # keep A-Z0-9.- only
+        )
         syms = s[s.str.fullmatch(r"[A-Z0-9.\-]{1,6}")].tolist()
         uniq = sorted(set(syms))
 
@@ -105,7 +111,8 @@ def _scrape_current_constituents(html: str) -> list[str]:
 
     return best or []
 
-def _clean_cell_to_tickers(cell: str) -> List[str]:
+
+def _clean_cell_to_tickers(cell: str) -> list[str]:
     """Extract tickers from a cell: prefer '(TICKER)' patterns; fallback to token heuristics."""
     if cell is None:
         return []
@@ -114,7 +121,7 @@ def _clean_cell_to_tickers(cell: str) -> List[str]:
     if m:
         return [x.replace("–", "-").replace("—", "-").strip() for x in m]
     tokens = re.split(r"[,\;/\s]+", s.upper())
-    out: List[str] = []
+    out: list[str] = []
     for tok in tokens:
         tok = tok.strip()
         if 1 <= len(tok) <= 6 and re.fullmatch(r"[A-Z0-9.\-]+", tok or ""):
@@ -128,22 +135,26 @@ def _fetch_html(url: str, session: requests.Session, timeout: int = 30) -> str:
     return r.text
 
 
-def _flatten_columns(df: pd.DataFrame) -> List[str]:
+def _flatten_columns(df: pd.DataFrame) -> list[str]:
     """Return a list of normalized, lower-cased column names (handles MultiIndex)."""
     if isinstance(df.columns, pd.MultiIndex):
         flat = []
         for tup in df.columns:  # type: ignore[assignment]
-            parts = [str(p).strip().lower() for p in tuple(tup) if p is not None and str(p).strip().lower() != "nan"]
+            parts = [
+                str(p).strip().lower()
+                for p in tuple(tup)
+                if p is not None and str(p).strip().lower() != "nan"
+            ]
             flat.append(" ".join(parts))
         return flat
     else:
         return [str(c).strip().lower() for c in df.columns]
 
 
-def _extract_change_tables(html: str) -> List[pd.DataFrame]:
+def _extract_change_tables(html: str) -> list[pd.DataFrame]:
     """Extract candidate change-history tables via pandas.read_html (MultiIndex-safe)."""
     all_tables = pd.read_html(StringIO(html), flavor="lxml")
-    keep: List[pd.DataFrame] = []
+    keep: list[pd.DataFrame] = []
     for df in all_tables:
         cols = _flatten_columns(df)
         # Must have a 'date' column and at least one 'added …' and one 'removed …' column.
@@ -156,7 +167,7 @@ def _extract_change_tables(html: str) -> List[pd.DataFrame]:
     return keep
 
 
-def _pick_col(cols: List[str], *candidates: str) -> Optional[str]:
+def _pick_col(cols: list[str], *candidates: str) -> str | None:
     """Choose the first matching column name by prefix among candidates."""
     for cand in candidates:
         cand = cand.lower()
@@ -166,8 +177,8 @@ def _pick_col(cols: List[str], *candidates: str) -> Optional[str]:
     return None
 
 
-def _tables_to_events(tables: Iterable[pd.DataFrame], index_name: str) -> List[ChangeEvent]:
-    events: List[ChangeEvent] = []
+def _tables_to_events(tables: Iterable[pd.DataFrame], index_name: str) -> list[ChangeEvent]:
+    events: list[ChangeEvent] = []
     for tbl in tables:
         df = tbl.copy()
         cols = list(df.columns)
@@ -192,21 +203,23 @@ def _tables_to_events(tables: Iterable[pd.DataFrame], index_name: str) -> List[C
             removed = _clean_cell_to_tickers(row[removed_col])
             if not added and not removed:
                 continue
-            events.append(ChangeEvent(
-                date=pd.Timestamp(row[date_col]),
-                added=added,
-                removed=removed,
-                index_name=index_name
-            ))
+            events.append(
+                ChangeEvent(
+                    date=pd.Timestamp(row[date_col]),
+                    added=added,
+                    removed=removed,
+                    index_name=index_name,
+                )
+            )
 
     events.sort(key=lambda e: e.date)
     return events
 
 
-def _events_to_membership(events: List[ChangeEvent], end_cap: Optional[pd.Timestamp]) -> pd.DataFrame:
+def _events_to_membership(events: list[ChangeEvent], end_cap: pd.Timestamp | None) -> pd.DataFrame:
     """Turn add/remove events into membership intervals per ticker."""
-    start_map: Dict[str, pd.Timestamp] = {}
-    intervals: List[Tuple[str, pd.Timestamp, Optional[pd.Timestamp], str]] = []
+    start_map: dict[str, pd.Timestamp] = {}
+    intervals: list[tuple[str, pd.Timestamp, pd.Timestamp | None, str]] = []
 
     for ev in events:
         for t in ev.added:
@@ -229,7 +242,9 @@ def _events_to_membership(events: List[ChangeEvent], end_cap: Optional[pd.Timest
     return out.sort_values(["ticker", "start"]).reset_index(drop=True)
 
 
-def build_membership(index_key: str, end_cap: Optional[str], seed_current: bool = False) -> pd.DataFrame:
+def build_membership(
+    index_key: str, end_cap: str | None, seed_current: bool = False
+) -> pd.DataFrame:
     if index_key not in WIKI_URLS:
         raise ValueError("index must be one of: sp500, sp400")
 
@@ -260,8 +275,8 @@ def build_membership(index_key: str, end_cap: Optional[str], seed_current: bool 
     earliest = events[0].date
 
     # 3) roll FORWARD from earliest to now, creating intervals
-    start_map: dict[str, pd.Timestamp] = {t: earliest for t in roster}
-    intervals: list[tuple[str, pd.Timestamp, Optional[pd.Timestamp], str]] = []
+    start_map: dict[str, pd.Timestamp] = dict.fromkeys(roster, earliest)
+    intervals: list[tuple[str, pd.Timestamp, pd.Timestamp | None, str]] = []
 
     active = set(roster)
     for ev in events:
@@ -298,18 +313,28 @@ def build_membership(index_key: str, end_cap: Optional[str], seed_current: bool 
     out = out.sort_values(["ticker", "start"]).reset_index(drop=True)
     return out
 
+
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Build dynamic membership from Wikipedia change logs.")
+    parser = argparse.ArgumentParser(
+        description="Build dynamic membership from Wikipedia change logs."
+    )
     parser.add_argument("--index", choices=["sp500", "sp400"], required=True)
     parser.add_argument("--out", required=True, help="Output CSV path.")
-    parser.add_argument("--end-cap", default=None, help="Optional ISO date to close open intervals (e.g., 2025-08-10).")
-    parser.add_argument("--seed-current", choices=["yes", "no"], default="yes",
-                        help="Seed membership from the current constituents table and roll changes backward/forward.")
+    parser.add_argument(
+        "--end-cap",
+        default=None,
+        help="Optional ISO date to close open intervals (e.g., 2025-08-10).",
+    )
+    parser.add_argument(
+        "--seed-current",
+        choices=["yes", "no"],
+        default="yes",
+        help="Seed membership from the current constituents table and roll changes backward/forward.",
+    )
     args = parser.parse_args()
 
-    df = build_membership(args.index, args.end_cap, seed_current=(args.seed_current=="yes"))
+    df = build_membership(args.index, args.end_cap, seed_current=(args.seed_current == "yes"))
     df.to_csv(args.out, index=False)
-    print(f"Saved {len(df)} membership intervals -> {args.out}")
 
 
 if __name__ == "__main__":

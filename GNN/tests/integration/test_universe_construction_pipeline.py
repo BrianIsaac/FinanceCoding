@@ -1,15 +1,16 @@
 """Integration tests for complete universe construction pipeline."""
 
-import pytest
-import pandas as pd
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from src.config.data import UniverseConfig, CollectorConfig
+import pandas as pd
+import pytest
+
+from src.config.data import CollectorConfig, UniverseConfig
 from src.data.collectors.wikipedia import WikipediaCollector
-from src.data.processors.universe_builder import UniverseBuilder
-from src.data.processors.survivorship_validator import SurvivorshipValidator
 from src.data.loaders.portfolio_data import PortfolioDataLoader
+from src.data.processors.survivorship_validator import SurvivorshipValidator
+from src.data.processors.universe_builder import UniverseBuilder
 
 
 @pytest.fixture
@@ -282,7 +283,7 @@ class TestUniverseConstructionPipeline:
             exclude_sectors=["Utilities"],
         )
 
-        collector_config = CollectorConfig(source_name="wikipedia", rate_limit=1.0, timeout=30)
+        CollectorConfig(source_name="wikipedia", rate_limit=1.0, timeout=30)
 
         # Create integrated components
         data_loader = PortfolioDataLoader(tmp_path, universe_config)

@@ -9,7 +9,7 @@ and regulatory constraints.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -28,18 +28,18 @@ class TurnoverConstraints:
 class RiskConstraints:
     """Configuration for risk-based constraints."""
 
-    max_portfolio_volatility: Optional[float] = None
-    max_asset_correlation: Optional[float] = None
-    min_diversification_ratio: Optional[float] = None
+    max_portfolio_volatility: float | None = None
+    max_asset_correlation: float | None = None
+    min_diversification_ratio: float | None = None
 
 
 @dataclass
 class RegulatoryConstraints:
     """Configuration for regulatory compliance constraints."""
 
-    max_sector_concentration: Optional[float] = None
+    max_sector_concentration: float | None = None
     max_single_issuer_weight: float = 0.10
-    min_liquidity_threshold: Optional[float] = None
+    min_liquidity_threshold: float | None = None
 
 
 class ConstraintEngine:
@@ -52,9 +52,9 @@ class ConstraintEngine:
 
     def __init__(
         self,
-        turnover_constraints: Optional[TurnoverConstraints] = None,
-        risk_constraints: Optional[RiskConstraints] = None,
-        regulatory_constraints: Optional[RegulatoryConstraints] = None,
+        turnover_constraints: TurnoverConstraints | None = None,
+        risk_constraints: RiskConstraints | None = None,
+        regulatory_constraints: RegulatoryConstraints | None = None,
     ):
         """
         Initialize constraint engine.
@@ -71,8 +71,8 @@ class ConstraintEngine:
     def apply_constraints(
         self,
         weights: pd.Series,
-        previous_weights: Optional[pd.Series] = None,
-        returns_data: Optional[pd.DataFrame] = None,
+        previous_weights: pd.Series | None = None,
+        returns_data: pd.DataFrame | None = None,
     ) -> pd.Series:
         """
         Apply all constraints to portfolio weights.
@@ -105,7 +105,7 @@ class ConstraintEngine:
         # Handle empty weights edge case
         if len(weights) == 0:
             return weights
-            
+
         # Ensure non-negative weights (long-only)
         weights = weights.clip(lower=0.0)
 
@@ -164,8 +164,8 @@ class ConstraintEngine:
         return weights
 
     def calculate_constraint_metrics(
-        self, weights: pd.Series, previous_weights: Optional[pd.Series] = None
-    ) -> Dict[str, Any]:
+        self, weights: pd.Series, previous_weights: pd.Series | None = None
+    ) -> dict[str, Any]:
         """
         Calculate constraint adherence metrics.
 

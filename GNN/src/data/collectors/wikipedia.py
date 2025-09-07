@@ -8,9 +8,9 @@ Extracted and refactored from scripts/build_membership_from_wikipedia.py.
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
 from io import StringIO
-from typing import Dict, Iterable, List, Optional, Tuple
 
 import pandas as pd
 import requests
@@ -18,7 +18,7 @@ import requests
 from src.config.data import CollectorConfig
 
 # Wikipedia URLs for different indices
-WIKI_URLS: Dict[str, str] = {
+WIKI_URLS: dict[str, str] = {
     "sp500": "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies",
     "sp400": "https://en.wikipedia.org/wiki/List_of_S%26P_400_companies",
 }
@@ -39,8 +39,8 @@ class ChangeEvent:
     """
 
     date: pd.Timestamp
-    added: List[str]
-    removed: List[str]
+    added: list[str]
+    removed: list[str]
     index_name: str
 
 
@@ -96,7 +96,7 @@ class WikipediaCollector:
         r.raise_for_status()
         return r.text
 
-    def _flatten_columns(self, df: pd.DataFrame) -> List[str]:
+    def _flatten_columns(self, df: pd.DataFrame) -> list[str]:
         """Return normalized, lower-cased column names (handles MultiIndex).
 
         Args:
@@ -118,7 +118,7 @@ class WikipediaCollector:
         else:
             return [str(c).strip().lower() for c in df.columns]
 
-    def _scrape_current_constituents(self, html: str) -> List[str]:
+    def _scrape_current_constituents(self, html: str) -> list[str]:
         """Extract current constituents from the main constituents table.
 
         Args:
@@ -128,9 +128,9 @@ class WikipediaCollector:
             List of current ticker symbols
         """
         tables = pd.read_html(StringIO(html), flavor="lxml")
-        best: List[str] | None = None
+        best: list[str] | None = None
 
-        def _pick_symbol_col(cols: List[str]) -> Optional[str]:
+        def _pick_symbol_col(cols: list[str]) -> str | None:
             # prefer exact matches in this order, then any header containing 'symbol' or 'ticker'
             for exact in ("symbol", "ticker symbol", "ticker"):
                 if exact in cols:
@@ -142,7 +142,8 @@ class WikipediaCollector:
 
         for df in tables:
             cols = self._flatten_columns(df)
-            # Heuristic: a real constituents table usually has a symbol/ticker col AND a company/sector col
+            # Heuristic: a real constituents table usually has a symbol/ticker col
+            # AND a company/sector col
             has_id = any(("symbol" in c) or ("ticker" in c) for c in cols)
             has_meta = any(
                 ("security" in c) or ("company" in c) or ("gics" in c) or ("sector" in c)
@@ -180,7 +181,7 @@ class WikipediaCollector:
 
         return best or []
 
-    def _clean_cell_to_tickers(self, cell: str) -> List[str]:
+    def _clean_cell_to_tickers(self, cell: str) -> list[str]:
         """Extract tickers from a table cell.
 
         Args:
@@ -196,14 +197,14 @@ class WikipediaCollector:
         if m:
             return [x.replace("–", "-").replace("—", "-").strip() for x in m]
         tokens = re.split(r"[,\;/\s]+", s.upper())
-        out: List[str] = []
+        out: list[str] = []
         for tok in tokens:
             tok = tok.strip()
             if 1 <= len(tok) <= 6 and re.fullmatch(r"[A-Z0-9.\-]+", tok or ""):
                 out.append(tok)
         return out
 
-    def _extract_change_tables(self, html: str) -> List[pd.DataFrame]:
+    def _extract_change_tables(self, html: str) -> list[pd.DataFrame]:
         """Extract change history tables from Wikipedia HTML.
 
         Args:
@@ -213,7 +214,7 @@ class WikipediaCollector:
             List of DataFrames containing change history
         """
         all_tables = pd.read_html(StringIO(html), flavor="lxml")
-        keep: List[pd.DataFrame] = []
+        keep: list[pd.DataFrame] = []
         for df in all_tables:
             cols = self._flatten_columns(df)
             # Must have a 'date' column and at least one 'added …' and one 'removed …' column.
@@ -225,7 +226,7 @@ class WikipediaCollector:
                 keep.append(df)
         return keep
 
-    def _pick_col(self, cols: List[str], *candidates: str) -> Optional[str]:
+    def _pick_col(self, cols: list[str], *candidates: str) -> str | None:
         """Choose the first matching column name by prefix among candidates.
 
         Args:
@@ -244,7 +245,7 @@ class WikipediaCollector:
 
     def _tables_to_events(
         self, tables: Iterable[pd.DataFrame], index_name: str
-    ) -> List[ChangeEvent]:
+    ) -> list[ChangeEvent]:
         """Convert change tables to ChangeEvent objects.
 
         Args:
@@ -254,7 +255,7 @@ class WikipediaCollector:
         Returns:
             List of ChangeEvent objects sorted by date
         """
-        events: List[ChangeEvent] = []
+        events: list[ChangeEvent] = []
         for tbl in tables:
             df = tbl.copy()
             cols = list(df.columns)
@@ -292,7 +293,7 @@ class WikipediaCollector:
         return events
 
     def _events_to_membership(
-        self, events: List[ChangeEvent], end_cap: Optional[pd.Timestamp]
+        self, events: list[ChangeEvent], end_cap: pd.Timestamp | None
     ) -> pd.DataFrame:
         """Convert ChangeEvents to membership intervals DataFrame.
 
@@ -303,8 +304,8 @@ class WikipediaCollector:
         Returns:
             DataFrame with columns: ticker, start, end, index_name
         """
-        start_map: Dict[str, pd.Timestamp] = {}
-        intervals: List[Tuple[str, pd.Timestamp, Optional[pd.Timestamp], str]] = []
+        start_map: dict[str, pd.Timestamp] = {}
+        intervals: list[tuple[str, pd.Timestamp, pd.Timestamp | None, str]] = []
 
         for ev in events:
             for t in ev.added:
@@ -327,7 +328,7 @@ class WikipediaCollector:
         return out.sort_values(["ticker", "start"]).reset_index(drop=True)
 
     def build_membership(
-        self, index_key: str, end_cap: Optional[str] = None, seed_current: bool = True
+        self, index_key: str, end_cap: str | None = None, seed_current: bool = True
     ) -> pd.DataFrame:
         """Build complete membership DataFrame from Wikipedia data.
 
@@ -367,8 +368,8 @@ class WikipediaCollector:
         earliest = events[0].date
 
         # Roll FORWARD from earliest to now, creating intervals
-        start_map: Dict[str, pd.Timestamp] = {t: earliest for t in roster}
-        intervals: List[Tuple[str, pd.Timestamp, Optional[pd.Timestamp], str]] = []
+        start_map: dict[str, pd.Timestamp] = dict.fromkeys(roster, earliest)
+        intervals: list[tuple[str, pd.Timestamp, pd.Timestamp | None, str]] = []
 
         active = set(roster)
         for ev in events:
@@ -421,9 +422,9 @@ class WikipediaCollector:
     def collect_historical_changes(
         self,
         index_key: str = "sp400",
-        start_date: Optional[str] = None,
-        end_date: Optional[str] = None,
-    ) -> List[ChangeEvent]:
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> list[ChangeEvent]:
         """Collect historical membership changes.
 
         Args:

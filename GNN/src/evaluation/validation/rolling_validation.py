@@ -3,9 +3,9 @@ from __future__ import annotations
 
 import copy
 import json
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -27,7 +27,7 @@ class RollSplit:
     val_start: pd.Timestamp
     test_start: pd.Timestamp
 
-    def to_datestr_tuple(self) -> Tuple[str, str, str]:
+    def to_datestr_tuple(self) -> tuple[str, str, str]:
         return (
             self.train_start.date().isoformat(),
             self.val_start.date().isoformat(),
@@ -40,13 +40,13 @@ def _month_add(ts: pd.Timestamp, months: int) -> pd.Timestamp:
 
 
 def make_rolling_splits(
-    sample_timestamps: List[pd.Timestamp],
+    sample_timestamps: list[pd.Timestamp],
     *,
     train_months: int = 36,
     val_months: int = 12,
     test_months: int = 12,
     step_months: int = 12,
-) -> List[RollSplit]:
+) -> list[RollSplit]:
     """
     Build rolling (train/val/test) splits by months.
     Uses sample_timestamps (e.g., graph_YYYY-MM-DD.pt dates) as anchors.
@@ -58,7 +58,7 @@ def make_rolling_splits(
     t_min = ts_sorted[0].normalize()
     t_max = ts_sorted[-1].normalize()
 
-    splits: List[RollSplit] = []
+    splits: list[RollSplit] = []
     cur_train_start = t_min
 
     while True:
@@ -95,12 +95,12 @@ class RollResult:
     split: RollSplit
     seed: int
     out_dir: Path
-    metrics_row: Optional[Dict[str, float]]  # loaded from strategy_metrics.csv if found
-    daily_returns_path: Optional[Path]  # gat_daily_returns.csv if found
-    note: Optional[str] = None
+    metrics_row: dict[str, float] | None  # loaded from strategy_metrics.csv if found
+    daily_returns_path: Path | None  # gat_daily_returns.csv if found
+    note: str | None = None
 
 
-def _find_sample_dates(graph_dir: Path) -> List[pd.Timestamp]:
+def _find_sample_dates(graph_dir: Path) -> list[pd.Timestamp]:
     pats = list(graph_dir.glob("graph_*.pt"))
     out = []
     for p in pats:
@@ -124,7 +124,7 @@ def _clone_cfg_for_roll(
     return cfg
 
 
-def _load_metrics_if_any(out_dir: Path) -> Tuple[Optional[Dict[str, float]], Optional[Path]]:
+def _load_metrics_if_any(out_dir: Path) -> tuple[dict[str, float] | None, Path | None]:
     sm_path = out_dir / "strategy_metrics.csv"
     r_path = out_dir / "gat_daily_returns.csv"
     metrics_row = None
@@ -158,7 +158,7 @@ def run_rolling(
     early_stop: bool = True,
     es_patience: int = 5,
     es_min_delta: float = 0.0,
-) -> Dict[str, object]:
+) -> dict[str, object]:
     """
     Orchestrate multiple rolling train/val/test runs.
     For each roll:
@@ -204,7 +204,7 @@ def run_rolling(
         )
 
     # Execute
-    results: List[RollResult] = []
+    results: list[RollResult] = []
     for ridx, split in enumerate(splits):
         roll_dir = (
             out_root / f"roll_{ridx:02d}_{split.train_start.date()}_{split.test_start.date()}"
@@ -241,8 +241,8 @@ def run_rolling(
             )
 
     # Aggregate across rolls/seeds
-    rows: List[Dict[str, object]] = []
-    r_all_concat: List[pd.Series] = []
+    rows: list[dict[str, object]] = []
+    r_all_concat: list[pd.Series] = []
 
     for rr in results:
         base = {
@@ -311,9 +311,6 @@ def run_rolling(
     }
     with (out_root / "rolling_summary.json").open("w", encoding="utf-8") as f:
         json.dump(summary_payload, f, indent=2)
-
-    print(f"[Rolling] wrote detailed -> {out_root/'rolling_results_detailed.csv'}")
-    print(f"[Rolling] wrote summary  -> {out_root/'rolling_summary.json'}")
 
     return {
         "splits": [s.to_datestr_tuple() for s in splits],

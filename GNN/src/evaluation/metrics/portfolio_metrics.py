@@ -1,8 +1,6 @@
 # src/metrics.py
 from __future__ import annotations
 
-from typing import Dict, Optional
-
 import numpy as np
 import pandas as pd
 from scipy.stats import kurtosis as _kurtosis
@@ -18,7 +16,7 @@ def compute_metrics_from_returns(
     r_daily: pd.Series,
     *,
     trading_days: int = 252,
-) -> Dict[str, float]:
+) -> dict[str, float]:
     """
     Compute standard metrics from a daily return series.
     Expects percentage (not log) returns, e.g., 0.01 for +1%.
@@ -58,8 +56,8 @@ def probabilistic_sharpe_ratio(
     *,
     n_obs: int,
     sr_benchmark: float = 0.0,
-    skew: Optional[float] = None,
-    kurt: Optional[float] = None,
+    skew: float | None = None,
+    kurt: float | None = None,
 ) -> float:
     """
     Probabilistic Sharpe Ratio (PSR): probability Sharpe > sr_benchmark,
@@ -101,8 +99,8 @@ def deflated_sharpe_ratio(
     n_obs: int,
     num_trials: int = 1,
     sr_benchmark: float = 0.0,
-    skew: Optional[float] = None,
-    kurt: Optional[float] = None,
+    skew: float | None = None,
+    kurt: float | None = None,
 ) -> float:
     """
     A conservative "deflated" probability that SR > sr_benchmark,

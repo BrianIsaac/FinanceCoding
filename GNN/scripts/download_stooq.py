@@ -27,8 +27,7 @@ import argparse
 import concurrent.futures as cf
 import io
 import os
-import sys
-from typing import Dict, Iterable, List, Optional, Tuple
+from collections.abc import Iterable
 
 import pandas as pd
 import requests
@@ -59,13 +58,15 @@ def _new_session() -> requests.Session:
         A configured requests.Session instance.
     """
     s = requests.Session()
-    s.headers.update({
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/124.0 Safari/537.36"
-        )
-    })
+    s.headers.update(
+        {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/124.0 Safari/537.36"
+            )
+        }
+    )
     return s
 
 
@@ -83,7 +84,7 @@ def _prewarm_session(session: requests.Session, timeout: int = 15) -> None:
         pass
 
 
-def _fetch_stooq_csv(symbol: str, timeout: int = 20, retries: int = 2) -> Optional[pd.DataFrame]:
+def _fetch_stooq_csv(symbol: str, timeout: int = 20, retries: int = 2) -> pd.DataFrame | None:
     """Download the daily CSV for a single Stooq symbol with a fresh prewarmed session.
 
     Args:
@@ -96,7 +97,7 @@ def _fetch_stooq_csv(symbol: str, timeout: int = 20, retries: int = 2) -> Option
     """
     url = f"https://stooq.com/q/d/l/?s={symbol}&i=d"
 
-    for attempt in range(retries + 1):
+    for _attempt in range(retries + 1):
         try:
             sess = _new_session()
             _prewarm_session(sess, timeout=min(10, timeout))
@@ -115,7 +116,7 @@ def _fetch_stooq_csv(symbol: str, timeout: int = 20, retries: int = 2) -> Option
     return None
 
 
-def _load_membership_tickers(membership_csv: str) -> List[str]:
+def _load_membership_tickers(membership_csv: str) -> list[str]:
     """Load unique tickers from a membership CSV.
 
     Args:
@@ -132,10 +133,10 @@ def _load_membership_tickers(membership_csv: str) -> List[str]:
 
 def _collect_panels(
     tickers: Iterable[str],
-    start: Optional[str],
-    end: Optional[str],
+    start: str | None,
+    end: str | None,
     max_workers: int = 8,
-) -> Tuple[pd.DataFrame, pd.DataFrame]:
+) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Download OHLCV per ticker and build wide Close/Volume panels.
 
     Args:
@@ -147,8 +148,8 @@ def _collect_panels(
     Returns:
         Tuple (prices, volume) where each is Date × Tickers.
     """
-    prices: Dict[str, pd.Series] = {}
-    volumes: Dict[str, pd.Series] = {}
+    prices: dict[str, pd.Series] = {}
+    volumes: dict[str, pd.Series] = {}
 
     symbols = {t: _to_stooq_symbol(t) for t in tickers}
 
@@ -159,7 +160,6 @@ def _collect_panels(
             tkr = futs[fut]
             df = fut.result()
             if df is None or df.empty:
-                print(f"[WARN] No data for {tkr}", file=sys.stderr)
                 continue
             prices[tkr] = df["Close"].rename(tkr)
             volumes[tkr] = df["Volume"].rename(tkr)
@@ -181,10 +181,17 @@ def _collect_panels(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Download daily OHLCV from Stooq and write wide parquet panels.")
+    parser = argparse.ArgumentParser(
+        description="Download daily OHLCV from Stooq and write wide parquet panels."
+    )
     parser.add_argument("--membership", help="CSV with 'ticker' column (from Wikipedia scraper).")
-    parser.add_argument("--tickers", help="Comma-separated tickers (e.g., AAPL,MSFT,NVDA). Used if --membership is absent.")
-    parser.add_argument("--out-dir", required=True, help="Directory to write prices.parquet and volume.parquet")
+    parser.add_argument(
+        "--tickers",
+        help="Comma-separated tickers (e.g., AAPL,MSFT,NVDA). Used if --membership is absent.",
+    )
+    parser.add_argument(
+        "--out-dir", required=True, help="Directory to write prices.parquet and volume.parquet"
+    )
     parser.add_argument("--start", default=None, help="ISO start date (YYYY-MM-DD)")
     parser.add_argument("--end", default=None, help="ISO end date (YYYY-MM-DD)")
     parser.add_argument("--max-workers", type=int, default=8, help="Parallel downloads")
@@ -204,8 +211,6 @@ def main() -> None:
     os.makedirs(args.out_dir, exist_ok=True)
     prices.to_parquet(f"{args.out_dir}/prices.parquet")
     volume.to_parquet(f"{args.out_dir}/volume.parquet")
-    print(f"Saved prices -> {args.out_dir}/prices.parquet  shape={prices.shape}")
-    print(f"Saved volume -> {args.out_dir}/volume.parquet  shape={volume.shape}")
 
 
 if __name__ == "__main__":

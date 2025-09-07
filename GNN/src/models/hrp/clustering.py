@@ -8,7 +8,6 @@ correlation-based distance metrics and configurable linkage methods.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -23,7 +22,7 @@ class ClusteringConfig:
     linkage_method: str = "single"
     min_observations: int = 252
     correlation_method: str = "pearson"
-    min_correlation_threshold: Optional[float] = None
+    min_correlation_threshold: float | None = None
     enable_quasi_diagonalization: bool = False
     memory_efficient: bool = True
     chunk_size: int = 100
@@ -32,37 +31,35 @@ class ClusteringConfig:
 class HRPClustering:
     """
     Hierarchical clustering implementation for HRP portfolio construction.
-    
+
     Implements correlation distance-based hierarchical clustering with
     configurable linkage methods for asset hierarchy construction.
     """
 
-    def __init__(self, config: Optional[ClusteringConfig] = None):
+    def __init__(self, config: ClusteringConfig | None = None):
         """
         Initialize HRP clustering engine.
-        
+
         Args:
             config: Clustering configuration parameters
         """
         self.config = config or ClusteringConfig()
-        self._linkage_matrix: Optional[np.ndarray] = None
-        self._distance_matrix: Optional[np.ndarray] = None
+        self._linkage_matrix: np.ndarray | None = None
+        self._distance_matrix: np.ndarray | None = None
 
     def build_correlation_distance(
-        self,
-        returns: pd.DataFrame,
-        method: Optional[str] = None
+        self, returns: pd.DataFrame, method: str | None = None
     ) -> np.ndarray:
         """
         Convert correlation matrix to distance metric using (1 - correlation)/2.
-        
+
         Args:
             returns: Historical returns DataFrame with datetime index and asset columns
             method: Correlation method override (pearson, spearman, kendall)
-            
+
         Returns:
             Distance matrix as 2D numpy array
-            
+
         Raises:
             ValueError: If returns data is insufficient
         """
@@ -102,27 +99,27 @@ class HRPClustering:
         return distance_matrix
 
     def hierarchical_clustering(
-        self,
-        distance_matrix: Optional[np.ndarray] = None,
-        linkage_method: Optional[str] = None
+        self, distance_matrix: np.ndarray | None = None, linkage_method: str | None = None
     ) -> np.ndarray:
         """
         Build asset hierarchy using correlation distances.
-        
+
         Args:
             distance_matrix: Precomputed distance matrix (uses cached if None)
             linkage_method: Linkage method override (single, complete, average, ward)
-            
+
         Returns:
             Linkage matrix for hierarchical clustering
-            
+
         Raises:
             ValueError: If no distance matrix is available
         """
         # Use provided distance matrix or cached version
         if distance_matrix is None:
             if self._distance_matrix is None:
-                raise ValueError("No distance matrix available. Call build_correlation_distance first.")
+                raise ValueError(
+                    "No distance matrix available. Call build_correlation_distance first."
+                )
             distance_matrix = self._distance_matrix
 
         # Get linkage method
@@ -146,17 +143,15 @@ class HRPClustering:
         return linkage_matrix
 
     def build_cluster_tree(
-        self,
-        asset_names: list[str],
-        linkage_matrix: Optional[np.ndarray] = None
+        self, asset_names: list[str], linkage_matrix: np.ndarray | None = None
     ) -> dict[str, any]:
         """
         Create cluster tree structure for recursive bisection algorithm.
-        
+
         Args:
             asset_names: List of asset identifiers
             linkage_matrix: Precomputed linkage matrix (uses cached if None)
-            
+
         Returns:
             Dictionary representing cluster tree structure
         """
@@ -183,7 +178,7 @@ class HRPClustering:
                     "type": "leaf",
                     "asset": asset_names[node_id],
                     "assets": [asset_names[node_id]],
-                    "distance": 0.0
+                    "distance": 0.0,
                 }
             else:
                 # Internal node (cluster)
@@ -201,7 +196,7 @@ class HRPClustering:
                     "left": left_node,
                     "right": right_node,
                     "assets": left_node["assets"] + right_node["assets"],
-                    "distance": distance
+                    "distance": distance,
                 }
 
         # Root node is the last cluster
@@ -211,24 +206,24 @@ class HRPClustering:
     def get_cluster_assets(self, cluster_tree: dict, target_assets: list[str]) -> list[str]:
         """
         Extract assets from cluster tree that match target asset list.
-        
+
         Args:
             cluster_tree: Cluster tree dictionary
             target_assets: List of assets to filter for
-            
+
         Returns:
             Filtered list of assets present in both tree and target list
         """
         tree_assets = cluster_tree.get("assets", [])
         return [asset for asset in tree_assets if asset in target_assets]
 
-    def validate_correlation_matrix(self, correlation_matrix: pd.DataFrame) -> Tuple[bool, str]:
+    def validate_correlation_matrix(self, correlation_matrix: pd.DataFrame) -> tuple[bool, str]:
         """
         Validate correlation matrix for clustering suitability.
-        
+
         Args:
             correlation_matrix: Correlation matrix to validate
-            
+
         Returns:
             Tuple of (is_valid, error_message)
         """
@@ -262,20 +257,18 @@ class HRPClustering:
             return False, f"Validation error: {str(e)}"
 
     def quasi_diagonalize_correlation(
-        self,
-        correlation_matrix: pd.DataFrame,
-        linkage_matrix: np.ndarray
+        self, correlation_matrix: pd.DataFrame, linkage_matrix: np.ndarray
     ) -> pd.DataFrame:
         """
         Apply quasi-diagonalization to improve clustering stability.
-        
+
         Reorders correlation matrix based on hierarchical clustering results
         to create a quasi-diagonal structure that enhances numerical stability.
-        
+
         Args:
             correlation_matrix: Original correlation matrix
             linkage_matrix: Hierarchical clustering linkage matrix
-            
+
         Returns:
             Quasi-diagonalized correlation matrix with reordered assets
         """
@@ -302,20 +295,18 @@ class HRPClustering:
             return correlation_matrix
 
     def build_correlation_memory_efficient(
-        self,
-        returns: pd.DataFrame,
-        method: Optional[str] = None
+        self, returns: pd.DataFrame, method: str | None = None
     ) -> pd.DataFrame:
         """
         Memory-efficient correlation matrix calculation for large universes.
-        
+
         Uses chunked processing to handle large correlation matrices without
         excessive memory usage.
-        
+
         Args:
             returns: Historical returns DataFrame
             method: Correlation method override
-            
+
         Returns:
             Correlation matrix as pandas DataFrame
         """
@@ -328,11 +319,7 @@ class HRPClustering:
         asset_names = returns.columns.tolist()
 
         # Initialize correlation matrix
-        correlation_matrix = pd.DataFrame(
-            np.eye(n_assets),
-            index=asset_names,
-            columns=asset_names
-        )
+        correlation_matrix = pd.DataFrame(np.eye(n_assets), index=asset_names, columns=asset_names)
 
         # Process in chunks to manage memory
         chunk_size = self.config.chunk_size

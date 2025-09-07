@@ -21,6 +21,7 @@ class HRPConfig(ModelConfig):
         max_weight: Maximum weight constraint per asset
         rebalance_frequency: Rebalancing frequency in days
     """
+
     linkage_method: str = "ward"
     distance_metric: str = "euclidean"
     min_weight: float = 0.01
@@ -40,14 +41,15 @@ class LSTMConfig(ModelConfig):
         prediction_horizon: Number of periods to predict
         features: List of feature names to use
     """
+
     hidden_size: int = 64
     num_layers: int = 2
     dropout: float = 0.2
     sequence_length: int = 60
     prediction_horizon: int = 1
-    features: list[str] = field(default_factory=lambda: [
-        "returns", "volume", "volatility", "momentum"
-    ])
+    features: list[str] = field(
+        default_factory=lambda: ["returns", "volume", "volatility", "momentum"]
+    )
 
 
 @dataclass
@@ -65,18 +67,19 @@ class GATConfig(ModelConfig):
         edge_features: List of edge feature names
         aggregation: Aggregation method ('mean', 'sum', 'max')
     """
+
     hidden_dim: int = 64
     num_heads: int = 8
     num_layers: int = 3
     dropout: float = 0.1
     attention_dropout: float = 0.1
     edge_dim: int = 32
-    node_features: list[str] = field(default_factory=lambda: [
-        "returns", "volatility", "volume", "market_cap", "momentum"
-    ])
-    edge_features: list[str] = field(default_factory=lambda: [
-        "correlation", "covariance", "sector_similarity"
-    ])
+    node_features: list[str] = field(
+        default_factory=lambda: ["returns", "volatility", "volume", "market_cap", "momentum"]
+    )
+    edge_features: list[str] = field(
+        default_factory=lambda: ["correlation", "covariance", "sector_similarity"]
+    )
     aggregation: str = "mean"
 
 
@@ -98,15 +101,13 @@ def get_model_config(model_type: str, config_dict: Optional[dict[str, Any]] = No
         >>> config.hidden_dim
         128
     """
-    model_configs = {
-        'hrp': HRPConfig,
-        'lstm': LSTMConfig,
-        'gat': GATConfig
-    }
+    model_configs = {"hrp": HRPConfig, "lstm": LSTMConfig, "gat": GATConfig}
 
     if model_type not in model_configs:
-        raise ValueError(f"Unsupported model type: {model_type}. "
-                        f"Supported types: {list(model_configs.keys())}")
+        raise ValueError(
+            f"Unsupported model type: {model_type}. "
+            f"Supported types: {list(model_configs.keys())}"
+        )
 
     config_class = model_configs[model_type]
 
@@ -114,10 +115,13 @@ def get_model_config(model_type: str, config_dict: Optional[dict[str, Any]] = No
         return config_class()
 
     # Create config with overrides
-    return config_class(**{
-        k: v for k, v in config_dict.items()
-        if k in config_class.__dataclass_fields__
-    })
+    # Filter to only include valid fields for this dataclass
+    if hasattr(config_class, "__dataclass_fields__"):
+        valid_fields = config_class.__dataclass_fields__
+        filtered_dict = {k: v for k, v in config_dict.items() if k in valid_fields}
+        return config_class(**filtered_dict)
+    else:
+        return config_class(**config_dict)
 
 
 def validate_model_config(config: ModelConfig, model_type: str) -> bool:
@@ -144,7 +148,7 @@ def validate_model_config(config: ModelConfig, model_type: str) -> bool:
         raise ValueError("Max epochs must be positive")
 
     # Model-specific validation
-    if model_type == 'gat' and isinstance(config, GATConfig):
+    if model_type == "gat" and isinstance(config, GATConfig):
         if config.hidden_dim <= 0:
             raise ValueError("Hidden dimension must be positive")
 
@@ -154,14 +158,14 @@ def validate_model_config(config: ModelConfig, model_type: str) -> bool:
         if not 0 <= config.dropout <= 1:
             raise ValueError("Dropout must be between 0 and 1")
 
-    elif model_type == 'lstm' and isinstance(config, LSTMConfig):
+    elif model_type == "lstm" and isinstance(config, LSTMConfig):
         if config.hidden_size <= 0:
             raise ValueError("Hidden size must be positive")
 
         if config.sequence_length <= 0:
             raise ValueError("Sequence length must be positive")
 
-    elif model_type == 'hrp' and isinstance(config, HRPConfig):
+    elif model_type == "hrp" and isinstance(config, HRPConfig):
         if not 0 <= config.min_weight <= config.max_weight <= 1:
             raise ValueError("Weight constraints must satisfy 0 <= min_weight <= max_weight <= 1")
 

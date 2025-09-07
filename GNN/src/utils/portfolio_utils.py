@@ -23,7 +23,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -43,10 +43,11 @@ except Exception:  # pragma: no cover
 
 # ----------------------------- Prices / Returns ----------------------------- #
 
+
 def qa_prices_panel(
     prices_path: str,
-    returns_path: Optional[str] = None,
-) -> Dict[str, Any]:
+    returns_path: str | None = None,
+) -> dict[str, Any]:
     """Quick QA for the cleaned price (and optional returns) panel.
 
     Args:
@@ -61,13 +62,17 @@ def qa_prices_panel(
         px.index = pd.to_datetime(px.index, errors="coerce")
     px = px.sort_index().sort_index(axis=1)
 
-    out: Dict[str, Any] = {
+    out: dict[str, Any] = {
         "prices_shape": tuple(px.shape),
         "prices_start": str(px.index.min().date()) if not px.empty else None,
         "prices_end": str(px.index.max().date()) if not px.empty else None,
         "prices_cols": len(px.columns),
-        "prices_overall_missing_frac": float(px.isna().sum().sum() / px.size) if px.size else np.nan,
-        "prices_share_cols_with_any_na": float((px.isna().mean() > 0).mean()) if px.shape[1] else np.nan,
+        "prices_overall_missing_frac": (
+            float(px.isna().sum().sum() / px.size) if px.size else np.nan
+        ),
+        "prices_share_cols_with_any_na": (
+            float((px.isna().mean() > 0).mean()) if px.shape[1] else np.nan
+        ),
     }
 
     if returns_path and Path(returns_path).exists():
@@ -75,13 +80,17 @@ def qa_prices_panel(
         if not isinstance(rets.index, pd.DatetimeIndex):
             rets.index = pd.to_datetime(rets.index, errors="coerce")
         rets = rets.sort_index().sort_index(axis=1)
-        out.update({
-            "returns_shape": tuple(rets.shape),
-            "returns_start": str(rets.index.min().date()) if not rets.empty else None,
-            "returns_end": str(rets.index.max().date()) if not rets.empty else None,
-            "returns_any_inf": bool(np.isinf(rets.values).any()) if rets.size else False,
-            "returns_overall_missing_frac": float(rets.isna().sum().sum() / rets.size) if rets.size else np.nan,
-        })
+        out.update(
+            {
+                "returns_shape": tuple(rets.shape),
+                "returns_start": str(rets.index.min().date()) if not rets.empty else None,
+                "returns_end": str(rets.index.max().date()) if not rets.empty else None,
+                "returns_any_inf": bool(np.isinf(rets.values).any()) if rets.size else False,
+                "returns_overall_missing_frac": (
+                    float(rets.isna().sum().sum() / rets.size) if rets.size else np.nan
+                ),
+            }
+        )
 
         # Basic alignment sanity
         if not px.empty and not rets.empty:
@@ -92,6 +101,7 @@ def qa_prices_panel(
 
 # ------------------------------- Features QA -------------------------------- #
 
+
 def expected_feature_path(features_dir: str, ts: pd.Timestamp) -> Path:
     """Return the expected per-rebalance feature file path for timestamp `ts`."""
     return Path(features_dir) / f"features_{ts.date()}.parquet"
@@ -100,7 +110,7 @@ def expected_feature_path(features_dir: str, ts: pd.Timestamp) -> Path:
 def qa_features_for_date(
     features_dir: str,
     ts: pd.Timestamp,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Check that a feature file exists for a given rebalance date and is clean.
 
     Args:
@@ -111,18 +121,24 @@ def qa_features_for_date(
         Dict with presence, shape, and NaN/inf counts.
     """
     path = expected_feature_path(features_dir, ts)
-    out: Dict[str, Any] = {"ts": str(ts.date()), "feature_file": str(path), "exists": path.exists()}
+    out: dict[str, Any] = {"ts": str(ts.date()), "feature_file": str(path), "exists": path.exists()}
     if not path.exists():
         return out
 
     feat = pd.read_parquet(path)
-    out.update({
-        "shape": tuple(feat.shape),
-        "columns": list(map(str, feat.columns)),
-        "index_is_tickers": "ticker" not in feat.columns and feat.index.dtype == "object",
-        "any_nan": bool(feat.isna().any().any()),
-        "any_inf": bool(np.isinf(feat.select_dtypes(include=[float, int]).values).any()) if feat.size else False,
-    })
+    out.update(
+        {
+            "shape": tuple(feat.shape),
+            "columns": list(map(str, feat.columns)),
+            "index_is_tickers": "ticker" not in feat.columns and feat.index.dtype == "object",
+            "any_nan": bool(feat.isna().any().any()),
+            "any_inf": (
+                bool(np.isinf(feat.select_dtypes(include=[float, int]).values).any())
+                if feat.size
+                else False
+            ),
+        }
+    )
     return out
 
 
@@ -131,13 +147,13 @@ def qa_features_for_date(
 _DATE_RE = re.compile(r"graph_(\d{4}-\d{2}-\d{2})\.pt$")
 
 
-def list_graph_files(save_dir: str) -> List[Path]:
+def list_graph_files(save_dir: str) -> list[Path]:
     """List all graph snapshot files in a directory, sorted by date if possible."""
     files = sorted(Path(save_dir).glob("graph_*.pt"))
     return files
 
 
-def _infer_ts_from_name(path: Path) -> Optional[pd.Timestamp]:
+def _infer_ts_from_name(path: Path) -> pd.Timestamp | None:
     m = _DATE_RE.search(path.name)
     if not m:
         return None
@@ -164,12 +180,15 @@ def load_graph(path: str | Path) -> Any:
         # 2) Allowlist PyG types and try again
         try:
             from torch.serialization import add_safe_globals  # PyTorch ≥2.6
+
             try:
                 from torch_geometric.data.data import Data, DataEdgeAttr  # type: ignore
+
                 add_safe_globals([Data, DataEdgeAttr])
             except Exception:
                 # Fallback: at least allowlist Data
                 from torch_geometric.data import Data  # type: ignore
+
                 add_safe_globals([Data])
         except Exception:
             pass
@@ -180,8 +199,9 @@ def load_graph(path: str | Path) -> Any:
 @dataclass
 class GraphQAResult:
     """Container of per-graph QA metrics."""
+
     file: str
-    ts: Optional[str]
+    ts: str | None
     num_nodes: int
     num_edges: int
     num_edges_unique: int
@@ -189,20 +209,20 @@ class GraphQAResult:
     duplicate_edges: int
     isolated_nodes: int
     mean_degree: float
-    connected: Optional[bool]
-    mst_tree_ok: Optional[bool]
-    x_shape: Optional[Tuple[int, int]]
+    connected: bool | None
+    mst_tree_ok: bool | None
+    x_shape: tuple[int, int] | None
     x_has_nan: bool
     x_has_inf: bool
-    edge_attr_shape: Optional[Tuple[int, int]]
+    edge_attr_shape: tuple[int, int] | None
     edge_attr_has_nan: bool
     edge_attr_has_inf: bool
-    membership_coverage: Optional[float]
-    extra_in_graph: Optional[int]
-    missing_from_graph: Optional[int]
+    membership_coverage: float | None
+    extra_in_graph: int | None
+    missing_from_graph: int | None
 
 
-def _edges_unique_undirected(edge_index: torch.Tensor) -> Tuple[int, int, int]:
+def _edges_unique_undirected(edge_index: torch.Tensor) -> tuple[int, int, int]:
     """Compute unique undirected edges, self-loops, and duplicates.
 
     Returns:
@@ -223,7 +243,9 @@ def _edges_unique_undirected(edge_index: torch.Tensor) -> Tuple[int, int, int]:
     return num_edges_unique, self_loops, duplicate_edges
 
 
-def _degree_stats(num_nodes: int, edge_index: torch.Tensor, undirected: bool = True) -> Tuple[int, float]:
+def _degree_stats(
+    num_nodes: int, edge_index: torch.Tensor, undirected: bool = True
+) -> tuple[int, float]:
     """Compute isolated node count and mean degree."""
     deg = np.zeros(num_nodes, dtype=np.int64)
     ei = edge_index.cpu().numpy()
@@ -238,7 +260,7 @@ def _degree_stats(num_nodes: int, edge_index: torch.Tensor, undirected: bool = T
     return isolated, mean_deg
 
 
-def _to_str_list(tickers_attr: Any) -> List[str]:
+def _to_str_list(tickers_attr: Any) -> list[str]:
     """Normalize various `tickers` attribute encodings to List[str]."""
     if tickers_attr is None:
         return []
@@ -254,7 +276,7 @@ def _to_str_list(tickers_attr: Any) -> List[str]:
     return [str(tickers_attr)]
 
 
-def active_at(membership: pd.DataFrame, ts: pd.Timestamp) -> List[str]:
+def active_at(membership: pd.DataFrame, ts: pd.Timestamp) -> list[str]:
     """Return active tickers at time ts per membership intervals."""
     mem = membership.copy()
     mem["start"] = pd.to_datetime(mem["start"], errors="coerce")
@@ -269,8 +291,8 @@ def active_at(membership: pd.DataFrame, ts: pd.Timestamp) -> List[str]:
 def qa_single_graph(
     path: str | Path,
     expect_undirected: bool = True,
-    filter_method: Optional[str] = "mst",
-    membership_csv: Optional[str] = None,
+    filter_method: str | None = "mst",
+    membership_csv: str | None = None,
 ) -> GraphQAResult:
     """Run QA on a single graph snapshot.
 
@@ -299,8 +321,8 @@ def qa_single_graph(
     isolated, mean_deg = _degree_stats(num_nodes, edge_index, undirected=expect_undirected)
 
     # Connectivity / MST checks (optional)
-    connected: Optional[bool] = None
-    mst_tree_ok: Optional[bool] = None
+    connected: bool | None = None
+    mst_tree_ok: bool | None = None
     if nx is not None and num_nodes > 0:
         G = nx.Graph()
         G.add_nodes_from(range(num_nodes))
@@ -319,8 +341,12 @@ def qa_single_graph(
 
     ea = getattr(g, "edge_attr", None)
     ea_shape = tuple(ea.shape) if ea is not None else None
-    edge_attr_has_nan = bool(torch.isnan(ea).any().item()) if isinstance(ea, torch.Tensor) else False
-    edge_attr_has_inf = bool(torch.isinf(ea).any().item()) if isinstance(ea, torch.Tensor) else False
+    edge_attr_has_nan = (
+        bool(torch.isnan(ea).any().item()) if isinstance(ea, torch.Tensor) else False
+    )
+    edge_attr_has_inf = (
+        bool(torch.isinf(ea).any().item()) if isinstance(ea, torch.Tensor) else False
+    )
 
     # Membership alignment (optional)
     membership_coverage = None
@@ -330,7 +356,7 @@ def qa_single_graph(
         mem = pd.read_csv(membership_csv)
         mem["ticker"] = mem["ticker"].astype(str).str.upper()
         active = set(active_at(mem, ts))
-        graph_tickers = set(t.upper() for t in _to_str_list(getattr(g, "tickers", [])))
+        graph_tickers = {t.upper() for t in _to_str_list(getattr(g, "tickers", []))}
         inter = active & graph_tickers
         if active:
             membership_coverage = float(len(inter) / len(active))
@@ -364,9 +390,9 @@ def qa_single_graph(
 def qa_all_graphs(
     save_dir: str,
     expect_undirected: bool = True,
-    filter_method: Optional[str] = "mst",
-    membership_csv: Optional[str] = None,
-    export_csv: Optional[str] = None,
+    filter_method: str | None = "mst",
+    membership_csv: str | None = None,
+    export_csv: str | None = None,
 ) -> pd.DataFrame:
     """Run QA across all graph snapshots in a directory.
 
@@ -380,11 +406,13 @@ def qa_all_graphs(
     Returns:
         DataFrame of per-graph QA metrics (one row per file).
     """
-    rows: List[Dict[str, Any]] = []
+    rows: list[dict[str, Any]] = []
     for f in list_graph_files(save_dir):
         res = qa_single_graph(
-            f, expect_undirected=expect_undirected,
-            filter_method=filter_method, membership_csv=membership_csv
+            f,
+            expect_undirected=expect_undirected,
+            filter_method=filter_method,
+            membership_csv=membership_csv,
         )
         rows.append(res.__dict__)
     df = pd.DataFrame(rows).sort_values("ts").reset_index(drop=True)

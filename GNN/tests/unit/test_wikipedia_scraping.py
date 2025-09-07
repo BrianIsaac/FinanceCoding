@@ -1,10 +1,12 @@
 """Unit tests for Wikipedia scraping functionality."""
 
-import pytest
-import pandas as pd
 from unittest.mock import Mock, patch
-from src.data.collectors.wikipedia import WikipediaCollector, ChangeEvent, WIKI_URLS
+
+import pandas as pd
+import pytest
+
 from src.config.data import CollectorConfig
+from src.data.collectors.wikipedia import WIKI_URLS, ChangeEvent, WikipediaCollector
 
 
 @pytest.fixture

@@ -10,7 +10,7 @@ This module:
 from __future__ import annotations
 
 import os
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -19,7 +19,7 @@ from hydra.utils import to_absolute_path
 from omegaconf import DictConfig
 
 
-def _load_universe(universe_csv: Optional[str], tickers_inline: List[str]) -> pd.DataFrame:
+def _load_universe(universe_csv: str | None, tickers_inline: list[str]) -> pd.DataFrame:
     """Loads the trading universe from CSV if present, otherwise from an inline list.
 
     Args:
@@ -46,7 +46,7 @@ def _load_universe(universe_csv: Optional[str], tickers_inline: List[str]) -> pd
     return pd.DataFrame({"ticker": [t.upper() for t in tickers_inline], "sector": np.nan})
 
 
-def _download_prices(tickers: List[str], start: str, end: str) -> Tuple[pd.DataFrame, pd.DataFrame]:
+def _download_prices(tickers: list[str], start: str, end: str) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Downloads adjusted close and volume for the given tickers via yfinance.
 
     Args:
@@ -168,7 +168,7 @@ def _make_rebalance_dates(prices: pd.DataFrame, freq: str = "M") -> pd.Series:
     return pd.Series(rb, name="rebalance_date")
 
 
-def run_data_pipeline(cfg: DictConfig) -> Dict[str, Any]:
+def run_data_pipeline(cfg: DictConfig) -> dict[str, Any]:
     """Runs the full data pipeline and writes artefacts using Hydra paths.
 
     Args:

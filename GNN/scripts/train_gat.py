@@ -22,15 +22,13 @@ Notes:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import sys
+from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional
 
 import hydra
-from omegaconf import DictConfig, OmegaConf
-
 import pandas as pd
+from omegaconf import DictConfig, OmegaConf
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -42,6 +40,7 @@ from src.train import train_gat as _train_single  # noqa: E402
 # ----------------------
 # Helpers
 # ----------------------
+
 
 def _to_path(p) -> Path:
     return Path(hydra.utils.to_absolute_path(str(p)))
@@ -65,7 +64,7 @@ class Roll:
     train_start: str
     val_start: str
     test_start: str
-    test_end: Optional[str]  # hint for downstream (some impls ignore); safe to include
+    test_end: str | None  # hint for downstream (some impls ignore); safe to include
     out_dir: Path
 
 
@@ -76,9 +75,9 @@ def _make_rolls(
     val_m: int,
     test_m: int,
     step_m: int,
-    start_on: Optional[pd.Timestamp] = None,
-    stop_on: Optional[pd.Timestamp] = None,
-) -> List[Roll]:
+    start_on: pd.Timestamp | None = None,
+    stop_on: pd.Timestamp | None = None,
+) -> list[Roll]:
     """
     Build sliding (train/val/test) windows along the month-end timeline.
 
@@ -94,7 +93,7 @@ def _make_rolls(
     if stop_on is not None:
         me = me[me <= stop_on]
 
-    rolls: List[Roll] = []
+    rolls: list[Roll] = []
     k = 0
     i = 0
     while True:
@@ -127,7 +126,7 @@ def _make_rolls(
     return rolls
 
 
-def _read_compare_csv(roll_dir: Path) -> Optional[pd.DataFrame]:
+def _read_compare_csv(roll_dir: Path) -> pd.DataFrame | None:
     p = roll_dir / "compare_gat_vs_baselines.csv"
     if p.exists():
         try:
@@ -146,7 +145,7 @@ def _read_compare_csv(roll_dir: Path) -> Optional[pd.DataFrame]:
     return None
 
 
-def _aggregate_rolls(rolls: List[Roll], out_dir: Path) -> None:
+def _aggregate_rolls(rolls: list[Roll], out_dir: Path) -> None:
     """
     Build a simple aggregate CSV across rolls:
     - If compare_gat_vs_baselines.csv exists per roll, stack and average per strategy.
@@ -162,7 +161,6 @@ def _aggregate_rolls(rolls: List[Roll], out_dir: Path) -> None:
         frames.append(df)
 
     if not frames:
-        print("[Rolling] No per-roll metrics found to aggregate.")
         return
 
     all_df = pd.concat(frames, ignore_index=True)
@@ -171,17 +169,18 @@ def _aggregate_rolls(rolls: List[Roll], out_dir: Path) -> None:
     group_cols = ["strategy"]
     agg = (
         all_df.groupby(group_cols, as_index=False)[metric_cols].mean()
-        if metric_cols else all_df.groupby(group_cols, as_index=False).mean(numeric_only=True)
+        if metric_cols
+        else all_df.groupby(group_cols, as_index=False).mean(numeric_only=True)
     )
 
     agg_path = out_dir / "rolling_summary.csv"
     agg.to_csv(agg_path, index=False)
-    print(f"[Rolling] Wrote aggregate metrics -> {agg_path}")
 
 
 # ----------------------
 # Hydra main
 # ----------------------
+
 
 @hydra.main(version_base=None, config_path="../config", config_name="config")
 def main(cfg: DictConfig) -> None:
@@ -202,12 +201,10 @@ def main(cfg: DictConfig) -> None:
     if not rolling_enabled:
         # Optional: pass early-stop patience down into cfg.train.* so src.train can see it.
         # (If src.train ignores it, it's still harmless.)
-        print("[Mode] Single window training")
         _train_single(cfg)
         return
 
     # ------------- Rolling path -------------
-    print("[Mode] Rolling windows enabled")
 
     # Read the returns index to infer month-ends
     returns_path = _to_path(cfg.data.returns_daily)
@@ -233,12 +230,12 @@ def main(cfg: DictConfig) -> None:
 
     # Parameters (with sane defaults)
     train_m = int(roll_cfg.get("train_months", 36))
-    val_m   = int(roll_cfg.get("val_months", 12))
-    test_m  = int(roll_cfg.get("test_months", 12))
-    step_m  = int(roll_cfg.get("step_months", 12))
+    val_m = int(roll_cfg.get("val_months", 12))
+    test_m = int(roll_cfg.get("test_months", 12))
+    step_m = int(roll_cfg.get("step_months", 12))
     # Optional bounds
     start_on = pd.to_datetime(roll_cfg.get("start")) if roll_cfg.get("start") else None
-    stop_on  = pd.to_datetime(roll_cfg.get("stop")) if roll_cfg.get("stop") else None
+    stop_on = pd.to_datetime(roll_cfg.get("stop")) if roll_cfg.get("stop") else None
 
     # Make the rolls
     rolls = _make_rolls(
@@ -252,14 +249,12 @@ def main(cfg: DictConfig) -> None:
         stop_on=stop_on,
     )
     if not rolls:
-        raise RuntimeError("No rolling windows produced. Check your (train/val/test/step) months and available data range.")
-
-    print(f"[Rolling] Will run {len(rolls)} rolls "
-          f"({train_m}m train / {val_m}m val / {test_m}m test, step={step_m}m).")
+        raise RuntimeError(
+            "No rolling windows produced. Check your (train/val/test/step) months and available data range."
+        )
 
     # Run each roll by cloning cfg and overriding split/out_dir
     for r in rolls:
-        print(f"\n=== Roll {r.k:02d} ===")
         cfg_roll = OmegaConf.create(OmegaConf.to_container(cfg, resolve=True))  # deep copy
 
         # Ensure unique out_dir per roll
@@ -268,8 +263,8 @@ def main(cfg: DictConfig) -> None:
 
         # Override splits
         cfg_roll.split.train_start = r.train_start
-        cfg_roll.split.val_start   = r.val_start
-        cfg_roll.split.test_start  = r.test_start
+        cfg_roll.split.val_start = r.val_start
+        cfg_roll.split.test_start = r.test_start
         # Provide optional test_end hint for downstream (harmless if ignored)
         if "test_end" not in cfg_roll.split:
             OmegaConf.set_struct(cfg_roll.split, False)  # allow new key temporarily

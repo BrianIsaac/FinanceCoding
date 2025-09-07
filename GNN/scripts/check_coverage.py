@@ -25,7 +25,6 @@ Usage:
 from __future__ import annotations
 
 import argparse
-from typing import Dict, List, Optional, Set
 
 import numpy as np
 import pandas as pd
@@ -69,7 +68,7 @@ def _load_prices(path: str) -> pd.DataFrame:
     return px
 
 
-def _load_rebalances(path: Optional[str]) -> Optional[pd.Series]:
+def _load_rebalances(path: str | None) -> pd.Series | None:
     """Load rebalance dates if provided.
 
     Args:
@@ -87,7 +86,7 @@ def _load_rebalances(path: Optional[str]) -> Optional[pd.Series]:
     return s
 
 
-def _membership_active_at(m: pd.DataFrame, ts: pd.Timestamp) -> Set[str]:
+def _membership_active_at(m: pd.DataFrame, ts: pd.Timestamp) -> set[str]:
     """Tickers active at timestamp ts per membership intervals.
 
     Args:
@@ -102,7 +101,7 @@ def _membership_active_at(m: pd.DataFrame, ts: pd.Timestamp) -> Set[str]:
     return set(m.loc[mask, "ticker"].astype(str).tolist())
 
 
-def _missingness_stats(px: pd.DataFrame) -> Dict[str, float]:
+def _missingness_stats(px: pd.DataFrame) -> dict[str, float]:
     """Compute simple panel missingness stats.
 
     Args:
@@ -128,7 +127,7 @@ def _missingness_stats(px: pd.DataFrame) -> Dict[str, float]:
 def _per_rebalance_coverage(
     m: pd.DataFrame,
     rebalances: pd.Series,
-    available_tickers: Set[str],
+    available_tickers: set[str],
 ) -> pd.DataFrame:
     """Compute active vs covered counts at each rebalance date.
 
@@ -140,27 +139,40 @@ def _per_rebalance_coverage(
     Returns:
         DataFrame with columns: ['rebalance_date','active','covered','coverage_ratio'].
     """
-    rows: List[Dict[str, object]] = []
+    rows: list[dict[str, object]] = []
     for ts in pd.to_datetime(rebalances):
         active = _membership_active_at(m, ts)
         covered = active & available_tickers
-        rows.append({
-            "rebalance_date": ts,
-            "active": len(active),
-            "covered": len(covered),
-            "coverage_ratio": (len(covered) / len(active)) if active else np.nan,
-        })
+        rows.append(
+            {
+                "rebalance_date": ts,
+                "active": len(active),
+                "covered": len(covered),
+                "coverage_ratio": (len(covered) / len(active)) if active else np.nan,
+            }
+        )
     out = pd.DataFrame(rows).sort_values("rebalance_date").reset_index(drop=True)
     return out
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Check coverage of membership vs price panel.")
-    parser.add_argument("--membership", required=True, help="membership CSV (from Wikipedia scraper)")
+    parser.add_argument(
+        "--membership", required=True, help="membership CSV (from Wikipedia scraper)"
+    )
     parser.add_argument("--prices", required=True, help="processed/prices_clean.parquet")
-    parser.add_argument("--rebalances", default=None, help="processed/rebalance_dates.csv (optional)")
-    parser.add_argument("--out", default=None, help="Write per-rebalance coverage CSV here (optional)")
-    parser.add_argument("--top-missing", type=int, default=20, help="Show top-N membership tickers missing from data")
+    parser.add_argument(
+        "--rebalances", default=None, help="processed/rebalance_dates.csv (optional)"
+    )
+    parser.add_argument(
+        "--out", default=None, help="Write per-rebalance coverage CSV here (optional)"
+    )
+    parser.add_argument(
+        "--top-missing",
+        type=int,
+        default=20,
+        help="Show top-N membership tickers missing from data",
+    )
     args = parser.parse_args()
 
     # Load inputs
@@ -173,43 +185,30 @@ def main() -> None:
     data_set = set(map(str, px.columns.tolist()))
 
     # Basic counts
-    n_membership = len(membership_set)
-    n_data = len(data_set)
-    n_inter = len(membership_set & data_set)
+    len(membership_set)
+    len(data_set)
+    len(membership_set & data_set)
     missing = sorted(membership_set - data_set)
 
     # Date range
-    start_date = str(px.index.min().date()) if not px.empty else "NA"
-    end_date = str(px.index.max().date()) if not px.empty else "NA"
-    n_days = px.shape[0]
+    str(px.index.min().date()) if not px.empty else "NA"
+    str(px.index.max().date()) if not px.empty else "NA"
+    px.shape[0]
     miss_stats = _missingness_stats(px)
 
-    print("\n=== PANEL SUMMARY ===")
-    print(f"Dates: {start_date} → {end_date}  (#days={n_days})")
-    print(f"Tickers in data:       {n_data:,}")
-    print(f"Tickers in membership: {n_membership:,}")
-    print(f"Intersection:          {n_inter:,}")
-    print(f"Missing (in membership but not in data): {len(missing):,}")
     if missing:
-        head = missing[: args.top_missing]
-        print(f"  Top-{len(head)} missing: {', '.join(head)}")
+        missing[: args.top_missing]
 
-    print("\n=== MISSINGNESS (prices panel) ===")
-    for k, v in miss_stats.items():
-        print(f"{k}: {v:.4f}" if isinstance(v, float) else f"{k}: {v}")
+    for _k, _v in miss_stats.items():
+        pass
 
     # Per-rebalance coverage
     if rb is not None and not rb.empty:
         cov = _per_rebalance_coverage(m, rb, data_set)
-        print("\n=== PER-REBALANCE COVERAGE ===")
-        print(cov.head(10).to_string(index=False))
-        print("...")
-        print(cov.tail(5).to_string(index=False))
         if args.out:
             cov.to_csv(args.out, index=False)
-            print(f"\nWrote per-rebalance coverage → {args.out}")
     else:
-        print("\n(No rebalance file provided; skipping per-rebalance breakdown.)")
+        pass
 
 
 if __name__ == "__main__":

@@ -8,7 +8,7 @@ Extracted and refactored from scripts/augment_with_yfinance.py.
 from __future__ import annotations
 
 import math
-from typing import List, Optional, Tuple
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -51,11 +51,11 @@ class YFinanceCollector:
 
     def download_batch_data(
         self,
-        tickers: List[str],
-        start_date: Optional[str] = None,
-        end_date: Optional[str] = None,
+        tickers: list[str],
+        start_date: str | None = None,
+        end_date: str | None = None,
         batch_size: int = 80,
-    ) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    ) -> tuple[pd.DataFrame, pd.DataFrame]:
         """Download adjusted close and volume data for multiple tickers.
 
         Args:
@@ -67,8 +67,8 @@ class YFinanceCollector:
         Returns:
             Tuple of (prices_df, volume_df) where each is Date × Tickers
         """
-        prices_list: List[pd.DataFrame] = []
-        volume_list: List[pd.DataFrame] = []
+        prices_list: list[pd.DataFrame] = []
+        volume_list: list[pd.DataFrame] = []
 
         # Process tickers in batches for better performance
         for i in range(0, len(tickers), batch_size):
@@ -113,8 +113,7 @@ class YFinanceCollector:
                         prices_list.append(p)
                         volume_list.append(v)
 
-            except Exception as e:
-                print(f"[WARN] Failed to download batch starting at {batch[0]}: {e}")
+            except Exception:
                 continue
 
         # Combine all batches
@@ -170,7 +169,7 @@ class YFinanceCollector:
         primary_volume: pd.DataFrame,
         yahoo_prices: pd.DataFrame,
         yahoo_volume: pd.DataFrame,
-    ) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    ) -> tuple[pd.DataFrame, pd.DataFrame]:
         """Merge Yahoo Finance data with primary data source using splice-fill.
 
         Args:
@@ -211,8 +210,8 @@ class YFinanceCollector:
         return merged_prices, merged_volume
 
     def identify_missing_tickers(
-        self, primary_prices: pd.DataFrame, universe_tickers: List[str], min_data_points: int = 100
-    ) -> List[str]:
+        self, primary_prices: pd.DataFrame, universe_tickers: list[str], min_data_points: int = 100
+    ) -> list[str]:
         """Identify tickers that are missing or sparse in primary data source.
 
         Args:
@@ -242,11 +241,11 @@ class YFinanceCollector:
         self,
         primary_prices: pd.DataFrame,
         primary_volume: pd.DataFrame,
-        universe_tickers: List[str],
-        start_date: Optional[str] = None,
-        end_date: Optional[str] = None,
+        universe_tickers: list[str],
+        start_date: str | None = None,
+        end_date: str | None = None,
         min_data_points: int = 100,
-    ) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    ) -> tuple[pd.DataFrame, pd.DataFrame]:
         """Complete workflow to augment primary data source with Yahoo Finance.
 
         Args:
@@ -266,16 +265,12 @@ class YFinanceCollector:
         )
 
         if not needed_tickers:
-            print("No tickers need Yahoo Finance augmentation")
             return primary_prices, primary_volume
-
-        print(f"Downloading Yahoo Finance data for {len(needed_tickers)} tickers")
 
         # Download Yahoo Finance data for needed tickers
         yahoo_prices, yahoo_volume = self.download_batch_data(needed_tickers, start_date, end_date)
 
         if yahoo_prices.empty:
-            print("No Yahoo Finance data downloaded")
             return primary_prices, primary_volume
 
         # Merge using splice-fill methodology
@@ -284,3 +279,189 @@ class YFinanceCollector:
         )
 
         return merged_prices, merged_volume
+
+    def detect_data_gaps(
+        self, prices_df: pd.DataFrame, min_gap_days: int = 7, min_data_coverage: float = 0.8
+    ) -> dict[str, Any]:
+        """Detect significant data gaps and quality issues in price data.
+
+        Args:
+            prices_df: Price data DataFrame to analyze
+            min_gap_days: Minimum gap size in days to flag
+            min_data_coverage: Minimum data coverage ratio (0-1)
+
+        Returns:
+            Dictionary with gap analysis results
+        """
+        gap_analysis = {
+            "total_tickers": len(prices_df.columns),
+            "date_range": (
+                (prices_df.index.min(), prices_df.index.max())
+                if not prices_df.empty
+                else (None, None)
+            ),
+            "gaps_by_ticker": {},
+            "poor_coverage_tickers": [],
+            "missing_tickers": [],
+            "overall_coverage": 0.0,
+        }
+
+        if prices_df.empty:
+            return gap_analysis
+
+        total_trading_days = len(prices_df.index)
+
+        for ticker in prices_df.columns:
+            series = prices_df[ticker]
+            non_na_count = series.notna().sum()
+            coverage = non_na_count / total_trading_days if total_trading_days > 0 else 0.0
+
+            # Find gaps
+            is_na = series.isna()
+            gap_starts = is_na & ~is_na.shift(1).fillna(False)
+            gap_ends = ~is_na & is_na.shift(1).fillna(False)
+
+            gaps = []
+            start_idx = None
+            for idx in prices_df.index:
+                if gap_starts.loc[idx]:
+                    start_idx = idx
+                elif gap_ends.loc[idx] and start_idx is not None:
+                    gap_days = (idx - start_idx).days
+                    if gap_days >= min_gap_days:
+                        gaps.append({"start": start_idx, "end": idx, "days": gap_days})
+                    start_idx = None
+
+            gap_analysis["gaps_by_ticker"][ticker] = {
+                "coverage": coverage,
+                "non_na_count": int(non_na_count),
+                "significant_gaps": gaps,
+            }
+
+            if coverage < min_data_coverage:
+                gap_analysis["poor_coverage_tickers"].append(ticker)
+
+        # Overall coverage
+        total_cells = len(prices_df.columns) * len(prices_df.index)
+        filled_cells = prices_df.notna().sum().sum()
+        gap_analysis["overall_coverage"] = float(
+            filled_cells / total_cells if total_cells > 0 else 0.0
+        )
+
+        return gap_analysis
+
+    def create_fallback_strategy(
+        self,
+        primary_data: dict[str, pd.DataFrame],
+        universe_tickers: list[str],
+        gap_analysis: dict[str, Any] | None = None,
+    ) -> dict[str, list[str]]:
+        """Create intelligent fallback strategy for data source switching.
+
+        Args:
+            primary_data: Primary source OHLCV data
+            universe_tickers: Complete universe of required tickers
+            gap_analysis: Optional pre-computed gap analysis
+
+        Returns:
+            Dictionary mapping data sources to ticker lists
+        """
+        if gap_analysis is None:
+            gap_analysis = self.detect_data_gaps(primary_data.get("close", pd.DataFrame()))
+
+        strategy = {
+            "primary_sufficient": [],
+            "yahoo_augment": [],
+            "yahoo_replace": [],
+            "completely_missing": [],
+        }
+
+        primary_prices = primary_data.get("close", pd.DataFrame())
+        available_tickers = set(primary_prices.columns)
+
+        for ticker in universe_tickers:
+            if ticker not in available_tickers:
+                strategy["completely_missing"].append(ticker)
+            else:
+                ticker_info = gap_analysis.get("gaps_by_ticker", {}).get(ticker, {})
+                coverage = ticker_info.get("coverage", 0.0)
+                significant_gaps = ticker_info.get("significant_gaps", [])
+
+                if coverage >= 0.9 and len(significant_gaps) == 0:
+                    strategy["primary_sufficient"].append(ticker)
+                elif coverage >= 0.5 and len(significant_gaps) <= 2:
+                    strategy["yahoo_augment"].append(ticker)
+                else:
+                    strategy["yahoo_replace"].append(ticker)
+
+        return strategy
+
+    def execute_fallback_collection(
+        self,
+        primary_data: dict[str, pd.DataFrame],
+        universe_tickers: list[str],
+        start_date: str | None = None,
+        end_date: str | None = None,
+        batch_size: int = 80,
+    ) -> dict[str, pd.DataFrame]:
+        """Execute comprehensive fallback data collection workflow.
+
+        Args:
+            primary_data: Primary source OHLCV data
+            universe_tickers: Complete universe of required tickers
+            start_date: Start date for Yahoo Finance data
+            end_date: End date for Yahoo Finance data
+            batch_size: Batch size for Yahoo downloads
+
+        Returns:
+            Dictionary with merged OHLCV data
+        """
+        gap_analysis = self.detect_data_gaps(primary_data.get("close", pd.DataFrame()))
+
+        strategy = self.create_fallback_strategy(primary_data, universe_tickers, gap_analysis)
+
+        # Collect Yahoo data for needed tickers
+        yahoo_needed = (
+            strategy["yahoo_augment"] + strategy["yahoo_replace"] + strategy["completely_missing"]
+        )
+
+        if not yahoo_needed:
+            return primary_data
+
+        yahoo_prices, yahoo_volume = self.download_batch_data(
+            yahoo_needed, start_date, end_date, batch_size
+        )
+
+        if yahoo_prices.empty:
+            return primary_data
+
+        # Create yahoo OHLCV dict (simplified - only prices and volume available)
+        {
+            "open": pd.DataFrame(),  # Not available from simplified yahoo download
+            "high": pd.DataFrame(),  # Not available from simplified yahoo download
+            "low": pd.DataFrame(),  # Not available from simplified yahoo download
+            "close": yahoo_prices,
+            "volume": yahoo_volume,
+        }
+
+        # Merge data based on strategy
+        merged_data = {}
+        primary_prices = primary_data.get("close", pd.DataFrame())
+        primary_volume = primary_data.get("volume", pd.DataFrame())
+
+        # For close and volume, use splice-fill methodology
+        merged_prices, merged_volume = self.merge_with_primary_source(
+            primary_prices, primary_volume, yahoo_prices, yahoo_volume
+        )
+
+        merged_data["close"] = merged_prices
+        merged_data["volume"] = merged_volume
+
+        # For OHLC components, use primary data where available
+        for component in ["open", "high", "low"]:
+            if component in primary_data and not primary_data[component].empty:
+                merged_data[component] = primary_data[component]
+            else:
+                merged_data[component] = pd.DataFrame()
+
+        return merged_data

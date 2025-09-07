@@ -14,7 +14,6 @@ Key features added/kept vs. your previous version:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional, Tuple
 
 import torch
 from torch import nn
@@ -103,7 +102,7 @@ class GATBlock(nn.Module):
         self.residual = residual and (in_dim == out_dim)
 
     def forward(
-        self, x: torch.Tensor, edge_index: torch.Tensor, edge_attr: Optional[torch.Tensor]
+        self, x: torch.Tensor, edge_index: torch.Tensor, edge_attr: torch.Tensor | None
     ) -> torch.Tensor:
         if self.use_edge_attr and edge_attr is not None:
             # Be robust: if edge_attr has more than 1 feature, compress to 1 via mean.
@@ -153,7 +152,7 @@ class GATPortfolio(nn.Module):
         use_edge_attr: bool = True,
         head: str = "markowitz",
         activation: str = "sparsemax",
-        mem_hidden: Optional[int] = None,
+        mem_hidden: int | None = None,
     ) -> None:
         super().__init__()
         self.use_edge_attr = use_edge_attr
@@ -163,7 +162,7 @@ class GATPortfolio(nn.Module):
         # Backbone
         layers = []
         d_in = in_dim
-        for li in range(num_layers):
+        for _li in range(num_layers):
             block = GATBlock(
                 in_dim=d_in,
                 out_dim=hidden_dim,
@@ -219,9 +218,9 @@ class GATPortfolio(nn.Module):
         x: torch.Tensor,  # [N, F]
         edge_index: torch.Tensor,  # [2, E]
         mask_valid: torch.Tensor,  # [N] bool
-        edge_attr: Optional[torch.Tensor] = None,  # [E, d_e] optional
-        prev_mem: Optional[torch.Tensor] = None,  # [N, mem_dim] optional
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        edge_attr: torch.Tensor | None = None,  # [E, d_e] optional
+        prev_mem: torch.Tensor | None = None,  # [N, mem_dim] optional
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         # Backbone
         h = x
         for block in self.gnn:

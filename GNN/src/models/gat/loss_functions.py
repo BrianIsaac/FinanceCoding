@@ -1,8 +1,6 @@
 # src/loss.py
 from __future__ import annotations
 
-from typing import List
-
 import torch
 from torch import Tensor
 
@@ -20,8 +18,8 @@ def sharpe_loss(returns: Tensor, eps: float = 1e-6) -> Tensor:
 
 
 def turnover_penalty_indexed(
-    weights: List[Tensor],
-    tickers_list: List[List[str]],
+    weights: list[Tensor],
+    tickers_list: list[list[str]],
     tc_decimal: float,
 ) -> Tensor:
     """
@@ -78,7 +76,7 @@ def turnover_penalty_indexed(
     return total
 
 
-def entropy_penalty(weights: List[Tensor], coef: float, eps: float = 1e-12) -> Tensor:
+def entropy_penalty(weights: list[Tensor], coef: float, eps: float = 1e-12) -> Tensor:
     """
     Sum of w * log(w) across provided weight vectors (negative for simplex weights).
     Adding this term with a *positive* coef encourages *higher* entropy (more
@@ -111,7 +109,7 @@ def neg_daily_log_utility(daily_panel: Tensor, w: Tensor, eps: float = 1e-9) -> 
 
 # --- Optional sparsity helper (not wired by default) --------------------------
 def pseudo_l0_sparsity_penalty(
-    weights: List[Tensor], coef: float, p: float = 0.5, eps: float = 1e-12
+    weights: list[Tensor], coef: float, p: float = 0.5, eps: float = 1e-12
 ) -> Tensor:
     """
     A differentiable 'pseudo-L0' penalty: sum (w + eps)^p with 0 < p < 1.

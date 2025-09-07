@@ -30,15 +30,15 @@ Notes
 """
 
 from __future__ import annotations
+
 import argparse
-import os  # noqa: F401
-import sys
-import subprocess
 import json  # noqa: F401
 import math
+import os  # noqa: F401
+import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional, Dict, Tuple
 
 import numpy as np
 import pandas as pd
@@ -50,42 +50,58 @@ if str(REPO_ROOT) not in sys.path:
 
 # safe allowlist for PyTorch 2.6+ when loading graphs
 from torch.serialization import add_safe_globals  # noqa: E402
+
 try:
     from torch_geometric.data.data import Data, DataEdgeAttr  # type: ignore
+
     add_safe_globals([Data, DataEdgeAttr])
 except Exception:
     try:
         from torch_geometric.data import Data  # type: ignore
+
         add_safe_globals([Data])
     except Exception:
         pass
 
 # import utilities from your training module
+from src.train import _annualized_sharpe_from_series  # noqa: F401
+from src.train import evaluate_daily_compound  # for consistency # noqa: F401
+from src.train import load_label_vec  # noqa: F401
 from src.train import (  # noqa: E402
-    list_samples, split_samples, load_graph, load_label_vec,  # noqa: F401
-    _eval_periods_daily_returns, _annualized_sharpe_from_series,  # noqa: F401
-    _backtest_baseline, evaluate_daily_compound,  # for consistency # noqa: F401
+    list_samples,
+    load_graph,
+    split_samples,
 )
 
 # ------------------------------------------------------------
 # Metrics
 # ------------------------------------------------------------
 
-def compute_metrics_from_returns(r: pd.Series) -> Dict[str, float]:
+
+def compute_metrics_from_returns(r: pd.Series) -> dict[str, float]:
     r = r.copy().dropna()
     if r.empty:
-        return dict(CAGR=np.nan, AnnMean=np.nan, AnnVol=np.nan, Sharpe=np.nan, MDD=np.nan)
+        return {
+            "CAGR": np.nan,
+            "AnnMean": np.nan,
+            "AnnVol": np.nan,
+            "Sharpe": np.nan,
+            "MDD": np.nan,
+        }
     eq = (1.0 + r).cumprod()
     ann = 252.0
     n = int(r.shape[0])
-    cagr    = float(eq.iloc[-1] ** (ann / max(n, 1)) - 1.0)
+    cagr = float(eq.iloc[-1] ** (ann / max(n, 1)) - 1.0)
     annmean = float(r.mean() * ann)
-    annvol  = float(r.std(ddof=0) * math.sqrt(ann))
-    sharpe  = float(annmean / annvol) if annvol > 0 else float("nan")
+    annvol = float(r.std(ddof=0) * math.sqrt(ann))
+    sharpe = float(annmean / annvol) if annvol > 0 else float("nan")
     mdd = float((eq / eq.cummax() - 1.0).min())
-    return dict(CAGR=cagr, AnnMean=annmean, AnnVol=annvol, Sharpe=sharpe, MDD=mdd)
+    return {"CAGR": cagr, "AnnMean": annmean, "AnnVol": annvol, "Sharpe": sharpe, "MDD": mdd}
 
-def block_bootstrap_sharpe_ci(r: pd.Series, alpha=0.05, B=2000, block_len=10, seed=123) -> Tuple[float,float]:
+
+def block_bootstrap_sharpe_ci(
+    r: pd.Series, alpha=0.05, B=2000, block_len=10, seed=123
+) -> tuple[float, float]:
     """Simple moving block bootstrap CI for Sharpe (annualized)."""
     rng = np.random.default_rng(seed)
     r = r.dropna().values
@@ -107,11 +123,12 @@ def block_bootstrap_sharpe_ci(r: pd.Series, alpha=0.05, B=2000, block_len=10, se
     arr = np.array([x for x in sh if np.isfinite(x)])
     if len(arr) == 0:
         return (np.nan, np.nan)
-    lo = float(np.quantile(arr, alpha/2))
-    hi = float(np.quantile(arr, 1 - alpha/2))
+    lo = float(np.quantile(arr, alpha / 2))
+    hi = float(np.quantile(arr, 1 - alpha / 2))
     return (lo, hi)
 
-def deflated_sharpe_ratio(r: pd.Series, sr_hat: Optional[float] = None, n_trials: int = 1) -> float:
+
+def deflated_sharpe_ratio(r: pd.Series, sr_hat: float | None = None, n_trials: int = 1) -> float:
     """
     Approximate Deflated Sharpe Ratio (Bailey & López de Prado, 2014).
     Uses Probabilistic Sharpe Ratio with a deflation threshold for multiple trials.
@@ -142,17 +159,21 @@ def deflated_sharpe_ratio(r: pd.Series, sr_hat: Optional[float] = None, n_trials
     # N(0,1) quantile for 1 - 1/n_trials
     if n_trials > 1:
         from scipy.stats import norm
+
         z = float(norm.ppf(1.0 - 1.0 / n_trials))
     sr_defl = z * (denom / math.sqrt(T))
     from scipy.stats import norm
+
     dsr = float(norm.cdf((sr_hat - sr_defl) * math.sqrt(T) / denom))
     return dsr
+
 
 # ------------------------------------------------------------
 # Eval helpers (Top-K + optional feature ablation + stride)
 # ------------------------------------------------------------
 
-def _zero_features_inplace(g, mask_bits: Optional[str]):
+
+def _zero_features_inplace(g, mask_bits: str | None):
     """Mask is an 8-char string of 1/0; 0 columns are zeroed (eval-only)."""
     if not mask_bits:
         return g
@@ -163,15 +184,16 @@ def _zero_features_inplace(g, mask_bits: Optional[str]):
     g.x[:, ~keep] = 0.0
     return g
 
+
 @torch.no_grad()
 def eval_direct_with_topk_and_stride(
     ckpt_path: Path,
-    split: Dict[str,str],
+    split: dict[str, str],
     returns_daily_path: Path,
     tc_bps: float,
-    topk: Optional[int],
+    topk: int | None,
     rebalance_stride: int = 1,
-    feature_mask: Optional[str] = None,
+    feature_mask: str | None = None,
 ) -> pd.Series:
     """
     Load a trained Direct-head model and stitch daily returns across TEST windows,
@@ -181,7 +203,8 @@ def eval_direct_with_topk_and_stride(
     payload = torch.load(str(ckpt_path), map_location=device)
     cfg_dict = payload.get("cfg", {})
     # build model the same way train.py did
-    from src.model_gat import GATPortfolio
+    from src.models.gat.gat_model import GATPortfolio
+
     model = GATPortfolio(
         in_dim=cfg_dict["model"]["in_dim"],
         hidden_dim=cfg_dict["model"]["hidden_dim"],
@@ -197,28 +220,34 @@ def eval_direct_with_topk_and_stride(
     model.load_state_dict(payload["state_dict"])
     model.eval()
 
-    graph_dir  = Path(cfg_dict["data"]["graph_dir"])
+    graph_dir = Path(cfg_dict["data"]["graph_dir"])
     labels_dir = Path(cfg_dict["data"]["labels_dir"])
     returns_daily: pd.DataFrame = pd.read_parquet(returns_daily_path).sort_index()
 
     # samples
     samples_all = list_samples(graph_dir, labels_dir)
-    _, _, test_s_full = split_samples(samples_all, split["train_start"], split["val_start"], split["test_start"])
+    _, _, test_s_full = split_samples(
+        samples_all, split["train_start"], split["val_start"], split["test_start"]
+    )
     # stride (1 = default)
-    test_s = [s for i, s in enumerate(sorted(test_s_full, key=lambda s: s.ts)) if (i % max(1, rebalance_stride) == 0)]
+    test_s = [
+        s
+        for i, s in enumerate(sorted(test_s_full, key=lambda s: s.ts))
+        if (i % max(1, rebalance_stride) == 0)
+    ]
     if not test_s:
         return pd.Series(dtype=float)
 
     dates: pd.DatetimeIndex = returns_daily.index  # type: ignore
-    prev_w: Optional[pd.Series] = None
-    chunks: List[pd.Series] = []
+    prev_w: pd.Series | None = None
+    chunks: list[pd.Series] = []
 
     for i, s in enumerate(test_s):
         # trading window bounds
         if i + 1 == len(test_s):
             end_trading = dates[-1]
         else:
-            end_trading = dates[dates.searchsorted(test_s[i+1].ts, "left") - 1]
+            end_trading = dates[dates.searchsorted(test_s[i + 1].ts, "left") - 1]
         start_idx = dates.searchsorted(s.ts, "right")
         if start_idx >= len(dates) or end_trading < dates[start_idx]:
             continue
@@ -226,7 +255,7 @@ def eval_direct_with_topk_and_stride(
 
         g = load_graph(s.graph_path)
         g = _zero_features_inplace(g, feature_mask)
-        tickers: List[str] = list(getattr(g, "tickers", []))
+        tickers: list[str] = list(getattr(g, "tickers", []))
         x = g.x.to(device)
         eidx = g.edge_index.to(device)
         eattr = getattr(g, "edge_attr", None)
@@ -279,9 +308,11 @@ def eval_direct_with_topk_and_stride(
     r_all = r_all[~r_all.index.duplicated(keep="first")]
     return r_all.rename("r")
 
+
 # ------------------------------------------------------------
 # Runner
 # ------------------------------------------------------------
+
 
 @dataclass
 class RunCfg:
@@ -292,14 +323,16 @@ class RunCfg:
     ent: float
     l1: float
     tc_bps: int
-    topk: Optional[int]
+    topk: int | None
     stride: int
-    feat_mask: Optional[str]
+    feat_mask: str | None
 
-def run_train_once(out_dir: Path, cfg: RunCfg, base_cmd: List[str]) -> None:
+
+def run_train_once(out_dir: Path, cfg: RunCfg, base_cmd: list[str]) -> None:
     """Call scripts/train_gat.py with overrides for a Direct-head run."""
     args = [
-        sys.executable, "scripts/train_gat.py",   # use current interpreter/venv
+        sys.executable,
+        "scripts/train_gat.py",  # use current interpreter/venv
         "roll.enabled=false",
         f"train.out_dir={str(out_dir)}",
         "model.head=direct",
@@ -314,8 +347,8 @@ def run_train_once(out_dir: Path, cfg: RunCfg, base_cmd: List[str]) -> None:
     ]
     # allow user pass-through
     args.extend(base_cmd)
-    print("[train] ", " ".join(args))
     subprocess.run(args, check=True)
+
 
 def main():
     from itertools import product
@@ -331,14 +364,23 @@ def main():
     ap.add_argument("--entropies", type=str, default="1e-3,5e-3")
     ap.add_argument("--l1s", type=str, default="0,2e-3")
 
-    ap.add_argument("--topk", type=str, default="50,100")   # inference Top-K; can be "" for none
+    ap.add_argument("--topk", type=str, default="50,100")  # inference Top-K; can be "" for none
     ap.add_argument("--tc-bps", type=str, default="5,10,25")
     ap.add_argument("--rebalance-stride", type=int, default=1)
-    ap.add_argument("--feature-mask", type=str, default=None, help="8-char 0/1 string; 0 columns zeroed at EVAL ONLY")
-    ap.add_argument("--shuffle-seed", type=int, default=123, help="seed for shuffling the hyperparameter grid")
+    ap.add_argument(
+        "--feature-mask",
+        type=str,
+        default=None,
+        help="8-char 0/1 string; 0 columns zeroed at EVAL ONLY",
+    )
+    ap.add_argument(
+        "--shuffle-seed", type=int, default=123, help="seed for shuffling the hyperparameter grid"
+    )
 
     # pass-through overrides to train_gat.py (e.g., different split.* or train.seed)
-    ap.add_argument("--train-overrides", type=str, default="", help="extra hydra overrides, space-separated")
+    ap.add_argument(
+        "--train-overrides", type=str, default="", help="extra hydra overrides, space-separated"
+    )
 
     args = ap.parse_args()
     out_base = Path(args.out_base)
@@ -346,16 +388,24 @@ def main():
     passthru = args.train_overrides.strip().split() if args.train_overrides.strip() else []
 
     # parse grids
-    def _floats(s): return [float(x) for x in str(s).split(",") if x != ""]
-    def _ints(s):   return [int(float(x)) for x in str(s).split(",") if x != ""]
-    lrs   = _floats(args.lrs)
-    wds   = _floats(args.wds)
+    def _floats(s):
+        return [float(x) for x in str(s).split(",") if x != ""]
+
+    def _ints(s):
+        return [int(float(x)) for x in str(s).split(",") if x != ""]
+
+    lrs = _floats(args.lrs)
+    wds = _floats(args.wds)
     drops = _floats(args.dropouts)
-    caps  = _floats(args.caps)
-    ents  = _floats(args.entropies)
-    l1s   = _floats(args.l1s)
-    tcs   = _ints(args.tc_bps)
-    topks = [int(x) for x in str(args.topk).split(",") if x.strip().isdigit()] if (args.topk and args.topk.strip()) else [None]
+    caps = _floats(args.caps)
+    ents = _floats(args.entropies)
+    l1s = _floats(args.l1s)
+    tcs = _ints(args.tc_bps)
+    topks = (
+        [int(x) for x in str(args.topk).split(",") if x.strip().isdigit()]
+        if (args.topk and args.topk.strip())
+        else [None]
+    )
 
     # build and shuffle the full grid, then sample first max-runs for balanced coverage
     grid = list(product(tcs, lrs, wds, drops, caps, ents, l1s, topks))
@@ -374,48 +424,77 @@ def main():
         out_dir.mkdir(parents=True, exist_ok=True)
 
         rcfg = RunCfg(
-            lr=lr, wd=wd, dropout=dr, cap=cap, ent=ent, l1=l1,
-            tc_bps=tc, topk=k, stride=args.rebalance_stride,
-            feat_mask=args.feature_mask
+            lr=lr,
+            wd=wd,
+            dropout=dr,
+            cap=cap,
+            ent=ent,
+            l1=l1,
+            tc_bps=tc,
+            topk=k,
+            stride=args.rebalance_stride,
+            feat_mask=args.feature_mask,
         )
 
         # persist the run recipe for reproducibility
         with open(out_dir / "run_cfg.json", "w") as fh:
-            json.dump({
-                "tag": tag,
-                "lr": lr, "wd": wd, "dropout": dr, "cap": cap, "entropy": ent, "l1": l1,
-                "tc_bps": tc, "topk": (k if k else 0), "stride": args.rebalance_stride,
-                "feature_mask": args.feature_mask,
-                "train_overrides": passthru,
-            }, fh, indent=2)
+            json.dump(
+                {
+                    "tag": tag,
+                    "lr": lr,
+                    "wd": wd,
+                    "dropout": dr,
+                    "cap": cap,
+                    "entropy": ent,
+                    "l1": l1,
+                    "tc_bps": tc,
+                    "topk": (k if k else 0),
+                    "stride": args.rebalance_stride,
+                    "feature_mask": args.feature_mask,
+                    "train_overrides": passthru,
+                },
+                fh,
+                indent=2,
+            )
 
         # 1) Train
         try:
             run_train_once(out_dir, rcfg, passthru)
-        except subprocess.CalledProcessError as e:
-            print(f"[ERROR] training failed for {tag}: {e}")
-            leaderboard.append({
-                "tag": tag, "tc_bps": tc, "topk": (k if k else 0),
-                "lr": lr, "wd": wd, "do": dr, "cap": cap, "ent": ent, "l1": l1,
-                "Sharpe_GAT": np.nan, "Sharpe_Blend": np.nan, "Sharpe_HRP": np.nan,
-                "DSR_GAT": np.nan, "CAGR_GAT": np.nan, "MDD_GAT": np.nan,
-            })
+        except subprocess.CalledProcessError:
+            leaderboard.append(
+                {
+                    "tag": tag,
+                    "tc_bps": tc,
+                    "topk": (k if k else 0),
+                    "lr": lr,
+                    "wd": wd,
+                    "do": dr,
+                    "cap": cap,
+                    "ent": ent,
+                    "l1": l1,
+                    "Sharpe_GAT": np.nan,
+                    "Sharpe_Blend": np.nan,
+                    "Sharpe_HRP": np.nan,
+                    "DSR_GAT": np.nan,
+                    "CAGR_GAT": np.nan,
+                    "MDD_GAT": np.nan,
+                }
+            )
             continue
 
         # 2) Gather paths & cfg for eval
         ckpt = out_dir / "gat_best.pt"
         if not ckpt.exists():
-            print(f"[WARN] checkpoint missing for {tag}; skipping eval.")
             continue
         payload = torch.load(str(ckpt), map_location="cpu")
         cfg = payload["cfg"]
         rets_path = Path(cfg["data"]["returns_daily"])
         # split dates (single-window path used by train_gat.py)
-        split = dict(
-            train_start=cfg["split"]["train_start"],
-            val_start=cfg["split"]["val_start"],
-            test_start=cfg["split"]["test_start"],
-        )
+        split = {
+            "train_start": cfg["split"]["train_start"],
+            "val_start": cfg["split"]["val_start"],
+            "test_start": cfg["split"]["test_start"],
+        }
 
         # 3) Evaluate Direct with Top-K + stride (this recomputes returns)
         r_gat = eval_direct_with_topk_and_stride(
@@ -433,11 +512,13 @@ def main():
             r_gat.to_frame().to_csv(out_dir / f"gat_direct_topk{(k if k else 0)}_daily_returns.csv")
 
         # 4) Read baselines daily (already written by train_gat.py)
-        baselines: Dict[str, pd.Series] = {}
-        for strat in ["EW","HRP","MinVar","MV"]:
+        baselines: dict[str, pd.Series] = {}
+        for strat in ["EW", "HRP", "MinVar", "MV"]:
             p = out_dir / f"{strat.lower()}_daily_returns.csv"
             if p.exists():
-                baselines[strat] = pd.read_csv(p, parse_dates=[0], index_col=0).iloc[:,0].rename(strat)
+                baselines[strat] = (
+                    pd.read_csv(p, parse_dates=[0], index_col=0).iloc[:, 0].rename(strat)
+                )
 
         # 5) Ensemble with HRP (returns-level blend)
         r_hrp = baselines.get("HRP", pd.Series(dtype=float))
@@ -457,13 +538,15 @@ def main():
             m = compute_metrics_from_returns(series)
             lo, hi = block_bootstrap_sharpe_ci(series, alpha=0.05, B=1500, block_len=10, seed=123)
             dsr = deflated_sharpe_ratio(series, sr_hat=m["Sharpe"], n_trials=max(1, args.max_runs))
-            rows.append({
-                "strategy": name,
-                **m,
-                "Sharpe_CI95_lo": lo,
-                "Sharpe_CI95_hi": hi,
-                "DeflatedSharpeProb": dsr,
-            })
+            rows.append(
+                {
+                    "strategy": name,
+                    **m,
+                    "Sharpe_CI95_lo": lo,
+                    "Sharpe_CI95_hi": hi,
+                    "DeflatedSharpeProb": dsr,
+                }
+            )
 
         # 7) Win-rates vs baselines (per-day)
         if not r_gat.empty:
@@ -479,30 +562,39 @@ def main():
         df_out.to_csv(out_dir / "summary_metrics.csv", index=False)
 
         # 8) Leaderboard row
-        gat_row = next((r for r in rows if r.get("strategy")=="GAT-Direct" and "Sharpe" in r), None)
-        blend_row = next((r for r in rows if r.get("strategy")=="Blend" and "Sharpe" in r), None)
-        hrp_row = next((r for r in rows if r.get("strategy")=="HRP" and "Sharpe" in r), None)
-        leaderboard.append({
-            "tag": tag,
-            "tc_bps": tc,
-            "topk": (k if k else 0),
-            "lr": lr, "wd": wd, "do": dr, "cap": cap, "ent": ent, "l1": l1,
-            "Sharpe_GAT": (gat_row or {}).get("Sharpe", np.nan),
-            "Sharpe_Blend": (blend_row or {}).get("Sharpe", np.nan),
-            "Sharpe_HRP": (hrp_row or {}).get("Sharpe", np.nan),
-            "DSR_GAT": (gat_row or {}).get("DeflatedSharpeProb", np.nan),
-            "CAGR_GAT": (gat_row or {}).get("CAGR", np.nan),
-            "MDD_GAT": (gat_row or {}).get("MDD", np.nan),
-        })
+        gat_row = next(
+            (r for r in rows if r.get("strategy") == "GAT-Direct" and "Sharpe" in r), None
+        )
+        blend_row = next((r for r in rows if r.get("strategy") == "Blend" and "Sharpe" in r), None)
+        hrp_row = next((r for r in rows if r.get("strategy") == "HRP" and "Sharpe" in r), None)
+        leaderboard.append(
+            {
+                "tag": tag,
+                "tc_bps": tc,
+                "topk": (k if k else 0),
+                "lr": lr,
+                "wd": wd,
+                "do": dr,
+                "cap": cap,
+                "ent": ent,
+                "l1": l1,
+                "Sharpe_GAT": (gat_row or {}).get("Sharpe", np.nan),
+                "Sharpe_Blend": (blend_row or {}).get("Sharpe", np.nan),
+                "Sharpe_HRP": (hrp_row or {}).get("Sharpe", np.nan),
+                "DSR_GAT": (gat_row or {}).get("DeflatedSharpeProb", np.nan),
+                "CAGR_GAT": (gat_row or {}).get("CAGR", np.nan),
+                "MDD_GAT": (gat_row or {}).get("MDD", np.nan),
+            }
+        )
 
     # all done
-    board = pd.DataFrame(leaderboard).sort_values(["Sharpe_Blend","Sharpe_GAT"], ascending=False)
+    board = pd.DataFrame(leaderboard).sort_values(["Sharpe_Blend", "Sharpe_GAT"], ascending=False)
     board.to_csv(out_base / "leaderboard.csv", index=False)
-    print("\n=== Leaderboard (top 12 by Blend Sharpe then GAT Sharpe) ===")
     if not board.empty:
-        print(board.head(12).to_string(index=False))
+        pass
     else:
-        print("(no successful runs)")
+        pass
+
 
 if __name__ == "__main__":
     main()

@@ -25,24 +25,25 @@ from __future__ import annotations
 
 import os
 import sys
+
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-from typing import Optional
 
 import hydra
 import pandas as pd
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig
 
-# Reuse your existing helpers
-from src.features import rolling_features
-from src.data import (
+from src.data.processors.data_pipeline import (
     _align_calendar,
     _basic_clean,
     _compute_daily_returns,
     _make_rebalance_dates,
 )
 
+# Reuse your existing helpers
+from src.data.processors.features import rolling_features
 
-def _read_panel(path: str, start: Optional[str], end: Optional[str]) -> pd.DataFrame:
+
+def _read_panel(path: str, start: str | None, end: str | None) -> pd.DataFrame:
     """Read a wide parquet panel and subset by date if requested.
 
     Args:
@@ -72,7 +73,6 @@ def main(cfg: DictConfig) -> None:
         cfg: Hydra DictConfig composed from your configs.
              Reads optional keys under cfg.ingest: prices_path, volume_path.
     """
-    print(OmegaConf.to_yaml(cfg))
 
     # Defaults; override via Hydra: ingest.prices_path=..., ingest.volume_path=...
     prices_path: str = getattr(cfg.get("ingest", {}), "prices_path", "data/stooq/prices.parquet")
@@ -121,13 +121,6 @@ def main(cfg: DictConfig) -> None:
     os.makedirs(out_dir, exist_ok=True)
     for t, df in feats.items():
         df.to_parquet(os.path.join(out_dir, f"features_{t.date()}.parquet"))
-
-    print("Ingestion complete.")
-    print(f"Interim:   {os.path.abspath(cfg.paths.prices_cache)}")
-    print(f"Processed: {os.path.abspath(cfg.paths.prices_processed)}")
-    print(f"Returns:   {os.path.abspath(cfg.paths.returns_processed)}")
-    print(f"Rebalances:{os.path.abspath(cfg.paths.rebalance_csv)}")
-    print(f"Features:  {os.path.abspath(out_dir)}")
 
 
 if __name__ == "__main__":

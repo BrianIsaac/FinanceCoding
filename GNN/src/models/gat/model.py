@@ -8,13 +8,13 @@ implementation, integrating the GAT architecture with graph construction utiliti
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import pandas as pd
 import torch
 
-from .gat_model import GATPortfolio, HeadCfg
-from .graph_builder import GraphBuildConfig, build_graph_from_returns
+from .gat_model import HeadCfg
+from .graph_builder import GraphBuildConfig
 
 __all__ = [
     "GATPortfolioModel",
@@ -58,8 +58,8 @@ class GATPortfolioModel:
     def fit(
         self,
         returns: pd.DataFrame,
-        universe: List[str],
-        fit_period: Tuple[pd.Timestamp, pd.Timestamp],
+        universe: list[str],
+        fit_period: tuple[pd.Timestamp, pd.Timestamp],
     ) -> None:
         """
         Train GAT model on historical data.
@@ -73,7 +73,7 @@ class GATPortfolioModel:
         # For now, preserve existing GAT functionality
         pass
 
-    def predict_weights(self, date: pd.Timestamp, universe: List[str]) -> pd.Series:
+    def predict_weights(self, date: pd.Timestamp, universe: list[str]) -> pd.Series:
         """
         Generate portfolio weights for rebalancing date.
 
@@ -89,7 +89,7 @@ class GATPortfolioModel:
         equal_weights = 1.0 / len(universe)
         return pd.Series(equal_weights, index=universe)
 
-    def get_model_info(self) -> Dict[str, Any]:
+    def get_model_info(self) -> dict[str, Any]:
         """
         Return model metadata for analysis.
 

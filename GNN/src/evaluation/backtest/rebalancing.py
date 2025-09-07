@@ -63,7 +63,7 @@ class PortfolioRebalancer:
         self,
         start_date: pd.Timestamp,
         end_date: pd.Timestamp,
-        universe_calendar: Any  # UniverseCalendar from Story 1.2
+        universe_calendar: Any,  # UniverseCalendar from Story 1.2
     ) -> list[pd.Timestamp]:
         """
         Generate rebalancing dates based on configuration and universe calendar.
@@ -80,11 +80,13 @@ class PortfolioRebalancer:
 
         if self.config.frequency == "monthly":
             # Generate month-end dates
-            date_range = pd.date_range(start=start_date, end=end_date, freq='ME')
+            date_range = pd.date_range(start=start_date, end=end_date, freq="ME")
 
             # Filter to dates with active universe
             for date in date_range:
-                if hasattr(universe_calendar, 'is_active_date') and universe_calendar.is_active_date(date):
+                if hasattr(
+                    universe_calendar, "is_active_date"
+                ) and universe_calendar.is_active_date(date):
                     rebalance_dates.append(date)
                 else:
                     # Fallback: use the date if universe_calendar doesn't have is_active_date
@@ -92,7 +94,7 @@ class PortfolioRebalancer:
 
         elif self.config.frequency == "quarterly":
             # Generate quarter-end dates
-            date_range = pd.date_range(start=start_date, end=end_date, freq='Q')
+            date_range = pd.date_range(start=start_date, end=end_date, freq="Q")
             rebalance_dates.extend(date_range.tolist())
 
         else:
@@ -106,7 +108,7 @@ class PortfolioRebalancer:
         model: PortfolioModel,
         current_weights: pd.Series,
         universe: list[str],
-        portfolio_value: float = 1.0
+        portfolio_value: float = 1.0,
     ) -> tuple[pd.Series, dict[str, Any]]:
         """
         Execute portfolio rebalancing for a specific date.
@@ -134,7 +136,7 @@ class PortfolioRebalancer:
                     returns=0.0,  # Will be calculated elsewhere
                     current_weights=current_weights,
                     target_weights=target_weights,
-                    portfolio_value=portfolio_value
+                    portfolio_value=portfolio_value,
                 )
                 transaction_costs = cost_info
             else:
@@ -173,7 +175,7 @@ class PortfolioRebalancer:
         universe_calendar: Any,
         start_date: pd.Timestamp,
         end_date: pd.Timestamp,
-        initial_portfolio_value: float = 1.0
+        initial_portfolio_value: float = 1.0,
     ) -> dict[str, Any]:
         """
         Execute full backtest with systematic rebalancing.
@@ -209,7 +211,7 @@ class PortfolioRebalancer:
 
         for rebalance_date in rebalance_dates:
             # Get universe for this date
-            if hasattr(universe_calendar, 'get_active_tickers'):
+            if hasattr(universe_calendar, "get_active_tickers"):
                 universe = universe_calendar.get_active_tickers(rebalance_date)
             else:
                 # Fallback: use all available assets
@@ -222,34 +224,36 @@ class PortfolioRebalancer:
 
             # Update portfolio state
             current_weights = new_weights
-            weight_history.append({
-                "date": rebalance_date,
-                "weights": new_weights.to_dict(),
-            })
+            weight_history.append(
+                {
+                    "date": rebalance_date,
+                    "weights": new_weights.to_dict(),
+                }
+            )
 
             # Calculate period performance (stub)
             period_return = 0.0  # Will be calculated with actual returns
-            portfolio_value *= (1 + period_return)
+            portfolio_value *= 1 + period_return
 
-            performance_history.append({
-                "date": rebalance_date,
-                "portfolio_value": portfolio_value,
-                "period_return": period_return,
-            })
+            performance_history.append(
+                {
+                    "date": rebalance_date,
+                    "portfolio_value": portfolio_value,
+                    "period_return": period_return,
+                }
+            )
 
         return {
             "weight_history": weight_history,
             "performance_history": performance_history,
             "rebalancing_history": self.rebalancing_history,
             "final_portfolio_value": portfolio_value,
-            "total_rebalances": len([r for r in self.rebalancing_history if r.get("rebalanced", False)]),
+            "total_rebalances": len(
+                [r for r in self.rebalancing_history if r.get("rebalanced", False)]
+            ),
         }
 
-    def _should_rebalance(
-        self,
-        current_weights: pd.Series,
-        target_weights: pd.Series
-    ) -> bool:
+    def _should_rebalance(self, current_weights: pd.Series, target_weights: pd.Series) -> bool:
         """
         Determine if rebalancing is necessary based on weight differences.
 
@@ -298,9 +302,9 @@ class PortfolioRebalancer:
             r["transaction_costs"]["turnover"] for r in executed_rebalances
         ) / len(executed_rebalances)
 
-        average_positions = sum(
-            r["active_positions"] for r in executed_rebalances
-        ) / len(executed_rebalances)
+        average_positions = sum(r["active_positions"] for r in executed_rebalances) / len(
+            executed_rebalances
+        )
 
         return {
             "total_periods": len(self.rebalancing_history),

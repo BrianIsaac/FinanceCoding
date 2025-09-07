@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
 import torch
@@ -52,8 +51,8 @@ def _auto_feasible_cap(cap: float, n_eff: int) -> float:
 
 
 def stitch_daily_returns(
-    weights_by_window: List[pd.Series],
-    window_dates: List[Tuple[pd.Timestamp, pd.Timestamp]],
+    weights_by_window: list[pd.Series],
+    window_dates: list[tuple[pd.Timestamp, pd.Timestamp]],
     returns_daily: pd.DataFrame,
     turnover_bps: float,
 ) -> pd.Series:
@@ -62,8 +61,8 @@ def stitch_daily_returns(
     first trading day of each window. Windows must be ordered and non-overlapping.
     """
     assert len(weights_by_window) == len(window_dates)
-    daily_chunks: List[pd.Series] = []
-    prev_w: Optional[pd.Series] = None
+    daily_chunks: list[pd.Series] = []
+    prev_w: pd.Series | None = None
     tc_decimal = float(turnover_bps) / 10000.0
 
     for w, (start_trading, end_trading) in zip(weights_by_window, window_dates):
@@ -114,7 +113,7 @@ def _scores_from_model_output(
 
 def _build_topk_equal_weight(
     scores: torch.Tensor,
-    tickers: List[str],
+    tickers: list[str],
     k: int,
     cap: float,
 ) -> pd.Series:
@@ -135,15 +134,15 @@ def _build_topk_equal_weight(
 def evaluate_topk_ew(
     model: nn.Module,
     device: torch.device,
-    samples: List,  # expects objects with .ts, .graph_path; we don't import the Sample dataclass to avoid cycles
+    samples: list,  # expects objects with .ts, .graph_path; we don't import the Sample dataclass to avoid cycles
     returns_daily: pd.DataFrame,
     turnover_bps: float,
     *,
     head: str,
     topk: int,
     cap: float = 0.02,
-    out_dir: Optional[Path] = None,
-) -> Dict[str, float]:
+    out_dir: Path | None = None,
+) -> dict[str, float]:
     """
     Mirror the Markowitz evaluation, but allocate by Top-k Equal-Weight (cap-respecting).
     Saves:
@@ -157,9 +156,9 @@ def evaluate_topk_ew(
     dates: pd.DatetimeIndex = returns_daily.index
 
     equity = 1.0
-    rows: List[Dict] = []
-    weights_by_window: List[pd.Series] = []
-    window_dates: List[Tuple[pd.Timestamp, pd.Timestamp]] = []
+    rows: list[dict] = []
+    weights_by_window: list[pd.Series] = []
+    window_dates: list[tuple[pd.Timestamp, pd.Timestamp]] = []
 
     with torch.no_grad():
         samples_sorted = sorted(samples, key=lambda s: s.ts)
@@ -176,7 +175,7 @@ def evaluate_topk_ew(
 
             # load graph snapshot (torch_geometric Data)
             g = torch.load(str(s.graph_path), map_location="cpu")
-            tickers: List[str] = list(getattr(g, "tickers", []))
+            tickers: list[str] = list(getattr(g, "tickers", []))
 
             x = g.x.to(device)
             edge_index = g.edge_index.to(device)

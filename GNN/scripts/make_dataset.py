@@ -4,15 +4,15 @@ from __future__ import annotations
 
 import os
 import sys
+
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-from typing import Dict
 
 import hydra
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig
 
-from src.env import load_project_dotenv
-from src.data import run_data_pipeline
-from src.features import rolling_features
+from src.data.processors.data_pipeline import run_data_pipeline
+from src.data.processors.features import rolling_features
+from src.utils.environment import load_project_dotenv
 
 
 @hydra.main(config_path="../config", config_name="config", version_base=None)
@@ -29,13 +29,12 @@ def main(cfg: DictConfig) -> None:
     load_project_dotenv(".env", override=False)
 
     # Log resolved config for reproducibility.
-    print(OmegaConf.to_yaml(cfg))
 
-    artefacts: Dict[str, object] = run_data_pipeline(cfg)
+    artefacts: dict[str, object] = run_data_pipeline(cfg)
 
     feats = rolling_features(
-        px=artefacts["prices"],            # type: ignore[arg-type]
-        rets=artefacts["returns"],         # type: ignore[arg-type]
+        px=artefacts["prices"],  # type: ignore[arg-type]
+        rets=artefacts["returns"],  # type: ignore[arg-type]
         rebal_dates=artefacts["rebalance_dates"],  # type: ignore[arg-type]
     )
 
@@ -43,8 +42,6 @@ def main(cfg: DictConfig) -> None:
     os.makedirs(out_dir, exist_ok=True)
     for t, df in feats.items():
         df.to_parquet(os.path.join(out_dir, f"features_{t.date()}.parquet"))
-
-    print(f"Saved features to: {os.path.abspath(out_dir)}")
 
 
 if __name__ == "__main__":

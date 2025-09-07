@@ -3,20 +3,20 @@
 
 from __future__ import annotations
 
-# --- ensure repo root on sys.path so `from src import graph` resolves correctly ---
+import importlib
+
+# --- ensure repo root on sys.path so imports resolve correctly ---
 import sys
+import warnings
+from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
 
-import warnings
-from dataclasses import dataclass
-from typing import List, Optional, Tuple, Sequence, Dict
-
-import importlib
 import hydra
 import numpy as np
 import pandas as pd
 import torch
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -32,14 +32,15 @@ nx = None  # sentinel to avoid accidental use
 
 # Prefer your central implementations if available
 try:
-    from src import graph as graph_lib  # type: ignore
-    # reload to avoid stale bytecode if the user just edited src/graph.py
+    from src.models.gat import graph_builder as graph_lib  # type: ignore
+
+    # reload to avoid stale bytecode if the user just edited src/models/gat/graph_builder.py
     graph_lib = importlib.reload(graph_lib)
 except Exception:
     graph_lib = None  # type: ignore
 
 try:
-    from src import features as feat_lib  # type: ignore
+    from src.data.processors import features as feat_lib  # type: ignore
 except Exception:
     feat_lib = None  # type: ignore
 
@@ -47,6 +48,7 @@ except Exception:
 # -----------------------------------------------------------------------------
 # Config model
 # -----------------------------------------------------------------------------
+
 
 @dataclass
 class GraphBuildCfg:
@@ -90,6 +92,7 @@ def _resolve_cfg(cfg: DictConfig) -> GraphBuildCfg:
 # IO helpers
 # -----------------------------------------------------------------------------
 
+
 def _ensure_dir(p: Path) -> None:
     p.mkdir(parents=True, exist_ok=True)
 
@@ -118,7 +121,7 @@ def _load_returns(path: Path) -> pd.DataFrame:
     return df.astype(float)
 
 
-def _rebalance_dates(returns: pd.DataFrame, freq: str, calendar: str) -> List[pd.Timestamp]:
+def _rebalance_dates(returns: pd.DataFrame, freq: str, calendar: str) -> list[pd.Timestamp]:
     idx = returns.index.to_series()
     if freq in ("monthly", "m"):
         dates = idx.groupby(idx.index.to_period("M")).tail(1).index
@@ -133,11 +136,12 @@ def _rebalance_dates(returns: pd.DataFrame, freq: str, calendar: str) -> List[pd
 # Core calculations
 # -----------------------------------------------------------------------------
 
+
 def _window(
     returns: pd.DataFrame,
     end_date: pd.Timestamp,
     lookback_days: int,
-    start_anchor: Optional[pd.Timestamp],
+    start_anchor: pd.Timestamp | None,
     expanding: bool,
 ) -> pd.DataFrame:
     right = returns.loc[:end_date].iloc[:-1]  # exclude end_date to avoid leakage
@@ -151,7 +155,7 @@ def _window(
 def _prune_min_overlap(win: pd.DataFrame, min_overlap: int) -> pd.DataFrame:
     if min_overlap <= 0:
         return win
-    mask = (win.notna().sum(axis=0) >= int(min_overlap))
+    mask = win.notna().sum(axis=0) >= int(min_overlap)
     return win.loc[:, mask]
 
 
@@ -164,7 +168,7 @@ def _corr_from_window(win: pd.DataFrame, use_abs: bool) -> np.ndarray:
     return np.abs(C) if use_abs else C
 
 
-def _mst_edges_from_corr(C: np.ndarray) -> List[Tuple[int, int, float]]:
+def _mst_edges_from_corr(C: np.ndarray) -> list[tuple[int, int, float]]:
     """Fast vectorized Prim’s MST on correlation-derived distances."""
     n = C.shape[0]
     if n <= 1:
@@ -176,7 +180,7 @@ def _mst_edges_from_corr(C: np.ndarray) -> List[Tuple[int, int, float]]:
     best_dist = D[0].copy()
     best_from = np.zeros(n, dtype=int)
 
-    edges: List[Tuple[int, int, float]] = []
+    edges: list[tuple[int, int, float]] = []
     for _ in range(n - 1):
         masked = np.where(selected, np.inf, best_dist)
         j = int(np.argmin(masked))
@@ -200,7 +204,7 @@ def _tmfg_keep_edges(n: int, cfg_keep: str | int) -> int:
     return max(0, 3 * (n - 2))  # TMFG triangulation
 
 
-def _edges_from_corr(C: np.ndarray, gcfg: GraphBuildCfg) -> Tuple[np.ndarray, Optional[np.ndarray]]:
+def _edges_from_corr(C: np.ndarray, gcfg: GraphBuildCfg) -> tuple[np.ndarray, np.ndarray | None]:
     n = C.shape[0]
 
     # Prefer central implementation (uses TMFG/MST/kNN/threshold and builds attrs)
@@ -219,7 +223,9 @@ def _edges_from_corr(C: np.ndarray, gcfg: GraphBuildCfg) -> Tuple[np.ndarray, Op
         except Exception as err:
             if gcfg.graph_filter == "tmfg":
                 raise RuntimeError(f"src.graph.edges_from_corr failed for TMFG: {err}")
-            warnings.warn(f"[graph_lib] edges_from_corr failed; local fallback in use: {err}")
+            warnings.warn(
+                f"[graph_lib] edges_from_corr failed; local fallback in use: {err}", stacklevel=2
+            )
 
     # If TMFG was requested but central impl not available, fail loudly
     if gcfg.graph_filter == "tmfg":
@@ -235,16 +241,16 @@ def _edges_from_corr(C: np.ndarray, gcfg: GraphBuildCfg) -> Tuple[np.ndarray, Op
         raise ValueError(f"Unknown graph_filter='{gcfg.graph_filter}'")
 
     # Build edge_index and edge_attr
-    rows: List[Tuple[int, int]] = []
-    attrs: List[List[float]] = []
-    include_corr = ("corr" in gcfg.edge_attr)
-    include_strength = ("strength" in gcfg.edge_attr)
-    include_sign = ("sign" in gcfg.edge_attr)
+    rows: list[tuple[int, int]] = []
+    attrs: list[list[float]] = []
+    include_corr = "corr" in gcfg.edge_attr
+    include_strength = "strength" in gcfg.edge_attr
+    include_sign = "sign" in gcfg.edge_attr
 
     for i, j, c in edges:
         rows.append((i, j))
         rows.append((j, i))  # undirected as bidirectional edges
-        a: List[float] = []
+        a: list[float] = []
         if include_corr:
             a.append(float(c))
         if include_strength:
@@ -274,7 +280,9 @@ def _default_features(win: pd.DataFrame) -> pd.DataFrame:
     return out.fillna(0.0)
 
 
-def _winsorize_df(df: pd.DataFrame, method: str, c: float, q_low: float, q_high: float) -> pd.DataFrame:
+def _winsorize_df(
+    df: pd.DataFrame, method: str, c: float, q_low: float, q_high: float
+) -> pd.DataFrame:
     X = df.copy()
     m = (method or "mad").lower()
     if m == "mad":
@@ -303,7 +311,9 @@ def _build_features(cfg: DictConfig, asof: pd.Timestamp, win: pd.DataFrame) -> p
         else:
             feats = _default_features(win)
     except Exception as err:
-        warnings.warn(f"[features] compute_features_from_window failed; using defaults: {err}")
+        warnings.warn(
+            f"[features] compute_features_from_window failed; using defaults: {err}", stacklevel=2
+        )
         feats = _default_features(win)
 
     gf = getattr(cfg.graph, "features", None)
@@ -334,10 +344,15 @@ def _build_features(cfg: DictConfig, asof: pd.Timestamp, win: pd.DataFrame) -> p
     return feats
 
 
-def _save_snapshot(out_dir: Path, asof: pd.Timestamp, x: torch.Tensor,
-                   edge_index: torch.Tensor, edge_attr: Optional[torch.Tensor],
-                   tickers: List[str]) -> None:
-    payload: Dict[str, object] = {
+def _save_snapshot(
+    out_dir: Path,
+    asof: pd.Timestamp,
+    x: torch.Tensor,
+    edge_index: torch.Tensor,
+    edge_attr: torch.Tensor | None,
+    tickers: list[str],
+) -> None:
+    payload: dict[str, object] = {
         "x": x.contiguous(),
         "edge_index": edge_index.contiguous(),
         "tickers": tickers,
@@ -347,16 +362,15 @@ def _save_snapshot(out_dir: Path, asof: pd.Timestamp, x: torch.Tensor,
     data_obj = Data(**payload)
     target = out_dir / f"graph_{asof.date()}.pt"
     torch.save(data_obj, target)
-    print(f"[OK] {target}  (n={len(tickers)}, E={edge_index.shape[1]})")
 
 
 # -----------------------------------------------------------------------------
 # Entry
 # -----------------------------------------------------------------------------
 
+
 @hydra.main(config_path="../config", config_name="config", version_base=None)
 def main(cfg: DictConfig) -> None:
-    print(OmegaConf.to_yaml(cfg))
 
     gcfg = _resolve_cfg(cfg)
     returns_path = _find_returns_path(cfg)
@@ -370,7 +384,7 @@ def main(cfg: DictConfig) -> None:
 
     dtype = torch.float32 if gcfg.dtype == "float32" else torch.float64
 
-    start_anchor: Optional[pd.Timestamp] = None
+    start_anchor: pd.Timestamp | None = None
 
     for asof in dates:
         win = _window(returns, asof, gcfg.window_days, start_anchor, gcfg.expanding)
@@ -382,7 +396,6 @@ def main(cfg: DictConfig) -> None:
 
         tickers = [str(c) for c in win.columns]
         if len(tickers) < 2 or len(win) < 2:
-            print(f"[skip] {asof.date()} insufficient data (n={len(tickers)}, T={len(win)})")
             continue
 
         # Prefer robust shrinkage corr from src.graph if available
@@ -405,8 +418,6 @@ def main(cfg: DictConfig) -> None:
         edge_attr = torch.from_numpy(eattr_np).to(dtype=dtype) if eattr_np is not None else None
 
         _save_snapshot(out_dir, asof, x, edge_index, edge_attr, tickers)
-
-    print(f"[done] graphs written to: {out_dir.resolve()}")
 
 
 if __name__ == "__main__":

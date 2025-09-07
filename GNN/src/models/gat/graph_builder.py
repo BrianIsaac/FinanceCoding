@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import List, Literal, Optional, Tuple
+from typing import Literal
 
 import numpy as np
 import pandas as pd
@@ -59,7 +59,7 @@ def _corr_to_dist(C: np.ndarray) -> np.ndarray:
     return D
 
 
-def _mst_edges_from_corr(C: np.ndarray) -> List[Tuple[int, int]]:
+def _mst_edges_from_corr(C: np.ndarray) -> list[tuple[int, int]]:
     """
     Build an MST over correlation-derived distances with a vectorised Prim's algorithm.
     Returns an edge list of undirected pairs (i, j), i<j.
@@ -71,7 +71,7 @@ def _mst_edges_from_corr(C: np.ndarray) -> List[Tuple[int, int]]:
 
     selected = np.zeros(n, dtype=bool)
     selected[0] = True
-    edges: List[Tuple[int, int]] = []
+    edges: list[tuple[int, int]] = []
 
     best_dist = D[0].copy()
     best_from = np.zeros(n, dtype=int)
@@ -95,7 +95,7 @@ def _mst_edges_from_corr(C: np.ndarray) -> List[Tuple[int, int]]:
     return edges
 
 
-def _greedy_init_k4(A: np.ndarray) -> List[int]:
+def _greedy_init_k4(A: np.ndarray) -> list[int]:
     """
     Greedy K4 initializer for TMFG on |correlation| matrix A (diagonal should be -inf).
     Heuristic: pick node with largest degree (row sum), then add nodes that maximize
@@ -105,7 +105,7 @@ def _greedy_init_k4(A: np.ndarray) -> List[int]:
     if n < 4:
         return list(range(min(n, 4)))
 
-    chosen: List[int] = []
+    chosen: list[int] = []
     remaining = set(range(n))
 
     # 1) max row-sum
@@ -125,7 +125,7 @@ def _greedy_init_k4(A: np.ndarray) -> List[int]:
     return chosen
 
 
-def _tmfg_edges_from_corr(C: np.ndarray) -> List[Tuple[int, int]]:
+def _tmfg_edges_from_corr(C: np.ndarray) -> list[tuple[int, int]]:
     """
     Triangulated Maximally Filtered Graph (TMFG) on |correlation|.
     Simplified O(N^2) greedy implementation:
@@ -156,7 +156,7 @@ def _tmfg_edges_from_corr(C: np.ndarray) -> List[Tuple[int, int]]:
         return _mst_edges_from_corr(C)
 
     i0, i1, i2, i3 = seed
-    edges: set[Tuple[int, int]] = set()
+    edges: set[tuple[int, int]] = set()
 
     def _add(u: int, v: int):
         a, b = (u, v) if u < v else (v, u)
@@ -170,7 +170,7 @@ def _tmfg_edges_from_corr(C: np.ndarray) -> List[Tuple[int, int]]:
             _add(k4[a], k4[b])
 
     # faces of tetrahedron (order doesn't matter for this scoring)
-    faces: List[Tuple[int, int, int]] = [
+    faces: list[tuple[int, int, int]] = [
         (i0, i1, i2),
         (i0, i1, i3),
         (i0, i2, i3),
@@ -201,10 +201,10 @@ def _tmfg_edges_from_corr(C: np.ndarray) -> List[Tuple[int, int]]:
         # Split face into three new faces
         faces.extend([(r, a, b), (r, a, c), (r, b, c)])
 
-    return sorted(list(edges))
+    return sorted(edges)
 
 
-def _knn_edges_from_corr(C: np.ndarray, k: int) -> List[Tuple[int, int]]:
+def _knn_edges_from_corr(C: np.ndarray, k: int) -> list[tuple[int, int]]:
     """
     Symmetric k-NN graph on absolute correlation.
     Keep the top-|rho| neighbors for each node; symmetrise.
@@ -215,7 +215,7 @@ def _knn_edges_from_corr(C: np.ndarray, k: int) -> List[Tuple[int, int]]:
     A = np.abs(C).copy()
     np.fill_diagonal(A, -np.inf)
 
-    nbrs: List[set] = [set() for _ in range(n)]
+    nbrs: list[set] = [set() for _ in range(n)]
     for i in range(n):
         kk = min(k, n - 1)
         if kk <= 0:
@@ -225,21 +225,21 @@ def _knn_edges_from_corr(C: np.ndarray, k: int) -> List[Tuple[int, int]]:
             if i != j:
                 nbrs[i].add(int(j))
 
-    edges: set[Tuple[int, int]] = set()
+    edges: set[tuple[int, int]] = set()
     for i in range(n):
         for j in nbrs[i]:
             if i in nbrs[j]:  # symmetric
                 a, b = (i, j) if i < j else (j, i)
                 edges.add((a, b))
-    return sorted(list(edges))
+    return sorted(edges)
 
 
-def _threshold_edges_from_corr(C: np.ndarray, thr: float) -> List[Tuple[int, int]]:
+def _threshold_edges_from_corr(C: np.ndarray, thr: float) -> list[tuple[int, int]]:
     """
     Keep edges with |rho| >= threshold.
     """
     n = C.shape[0]
-    E: List[Tuple[int, int]] = []
+    E: list[tuple[int, int]] = []
     for i in range(n):
         for j in range(i + 1, n):
             if abs(C[i, j]) >= thr:
@@ -247,7 +247,7 @@ def _threshold_edges_from_corr(C: np.ndarray, thr: float) -> List[Tuple[int, int
     return E
 
 
-def _edge_attr_from_corr(C: np.ndarray, E: List[Tuple[int, int]]) -> np.ndarray:
+def _edge_attr_from_corr(C: np.ndarray, E: list[tuple[int, int]]) -> np.ndarray:
     """
     Build edge attributes:
       [rho, abs_rho, sign]
@@ -264,8 +264,8 @@ def _edge_attr_from_corr(C: np.ndarray, E: List[Tuple[int, int]]) -> np.ndarray:
 
 def build_graph_from_returns(
     returns_window: pd.DataFrame,
-    features_matrix: Optional[np.ndarray],
-    tickers: List[str],
+    features_matrix: np.ndarray | None,
+    tickers: list[str],
     ts: pd.Timestamp,
     cfg: GraphBuildConfig,
 ) -> Data:
@@ -350,8 +350,8 @@ def build_graph_from_returns(
 def build_period_graph(
     returns_daily: pd.DataFrame,
     period_end: pd.Timestamp,
-    tickers: List[str],
-    features_matrix: Optional[np.ndarray],
+    tickers: list[str],
+    features_matrix: np.ndarray | None,
     cfg: GraphBuildConfig,
 ) -> Data:
     """

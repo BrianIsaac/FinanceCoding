@@ -9,10 +9,7 @@ handling missing data and corporate actions.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
-from typing import Dict, List, Optional, Tuple
 
-import numpy as np
 import pandas as pd
 
 
@@ -44,7 +41,7 @@ class CalendarAligner:
         """
         self.config = config
 
-    def align_price_data(self, data_sources: Dict[str, pd.DataFrame]) -> pd.DataFrame:
+    def align_price_data(self, data_sources: dict[str, pd.DataFrame]) -> pd.DataFrame:
         """
         Align price data from multiple sources to common calendar.
 
@@ -62,7 +59,7 @@ class CalendarAligner:
         # Stub implementation - returns empty DataFrame
         return pd.DataFrame()
 
-    def align_volume_data(self, data_sources: Dict[str, pd.DataFrame]) -> pd.DataFrame:
+    def align_volume_data(self, data_sources: dict[str, pd.DataFrame]) -> pd.DataFrame:
         """
         Align volume data from multiple sources to common calendar.
 
@@ -97,7 +94,7 @@ class CalendarAligner:
         # Stub implementation - returns empty DataFrame
         return pd.DataFrame()
 
-    def get_alignment_quality_metrics(self, aligned_data: pd.DataFrame) -> Dict[str, float]:
+    def get_alignment_quality_metrics(self, aligned_data: pd.DataFrame) -> dict[str, float]:
         """
         Calculate quality metrics for aligned data.
 

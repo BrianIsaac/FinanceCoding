@@ -6,14 +6,12 @@ universe snapshots for backtesting and portfolio optimization.
 
 from __future__ import annotations
 
-import os
-from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import pandas as pd
 
-from src.config.data import CollectorConfig, UniverseConfig, create_collector_config
+from src.config.data import UniverseConfig, create_collector_config
 from src.data.collectors.wikipedia import WikipediaCollector
 
 
@@ -137,7 +135,7 @@ class UniverseBuilder:
 
         return snapshot_df
 
-    def _apply_universe_filters(self, tickers: List[str], date: pd.Timestamp) -> List[str]:
+    def _apply_universe_filters(self, tickers: list[str], date: pd.Timestamp) -> list[str]:
         """Apply universe configuration filters to ticker list.
 
         Args:
@@ -171,14 +169,10 @@ class UniverseBuilder:
             DataFrame with universe calendar data
         """
         # Build membership intervals from Wikipedia
-        print(f"Building membership intervals for {self.universe_config.universe_type}...")
         membership_df = self.build_membership_intervals(start_date, end_date)
-        print(f"Found {len(membership_df)} membership intervals")
 
         # Create monthly snapshots
-        print(f"Creating monthly snapshots from {start_date} to {end_date}...")
         universe_calendar = self.create_monthly_snapshots(membership_df, start_date, end_date)
-        print(f"Generated {len(universe_calendar)} universe records")
 
         # Add metadata
         universe_calendar["universe_type"] = self.universe_config.universe_type
@@ -187,7 +181,7 @@ class UniverseBuilder:
         return universe_calendar
 
     def save_universe_calendar(
-        self, universe_calendar: pd.DataFrame, filename: Optional[str] = None
+        self, universe_calendar: pd.DataFrame, filename: str | None = None
     ) -> Path:
         """Save universe calendar to parquet file.
 
@@ -204,10 +198,9 @@ class UniverseBuilder:
         output_path = self.output_dir / filename
         universe_calendar.to_parquet(output_path, index=False)
 
-        print(f"Saved universe calendar to {output_path}")
         return output_path
 
-    def validate_universe_calendar(self, universe_calendar: pd.DataFrame) -> Dict[str, Any]:
+    def validate_universe_calendar(self, universe_calendar: pd.DataFrame) -> dict[str, Any]:
         """Validate universe calendar data quality.
 
         Args:
@@ -265,13 +258,10 @@ class UniverseBuilder:
 
         # Validate data quality
         validation_results = self.validate_universe_calendar(universe_calendar)
-        print(f"Validation results: {validation_results}")
 
         # Check if validation passes basic requirements
         if validation_results.get("min_constituents", 0) < 300:
-            print(
-                f"WARNING: Minimum constituents ({validation_results['min_constituents']}) below expected threshold"
-            )
+            pass
 
         # Save to parquet
         output_path = self.save_universe_calendar(universe_calendar)

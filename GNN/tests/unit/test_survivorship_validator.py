@@ -1,10 +1,12 @@
 """Unit tests for survivorship bias validation functionality."""
 
-import pytest
-import pandas as pd
 from unittest.mock import patch
-from src.data.processors.survivorship_validator import SurvivorshipValidator
+
+import pandas as pd
+import pytest
+
 from src.config.data import UniverseConfig
+from src.data.processors.survivorship_validator import SurvivorshipValidator
 
 
 @pytest.fixture
@@ -291,6 +293,7 @@ def test_save_detailed_report(mock_mkdir, mock_json_dump, mock_open, survivorshi
 
     # Should open file for writing (Path object)
     from pathlib import Path
+
     mock_open.assert_called_once_with(Path(output_path), "w")
 
     # Should write JSON data

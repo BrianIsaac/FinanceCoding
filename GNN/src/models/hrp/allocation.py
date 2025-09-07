@@ -8,7 +8,6 @@ distributes capital based on hierarchical clustering structure and risk parity p
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -19,23 +18,23 @@ class AllocationConfig:
     """Configuration for HRP allocation algorithm."""
 
     risk_measure: str = "variance"  # variance, vol, equal
-    min_allocation: float = 0.001   # Minimum allocation per asset
-    max_allocation: float = 0.5     # Maximum allocation per asset
-    allocation_precision: int = 6   # Decimal precision for allocations
+    min_allocation: float = 0.001  # Minimum allocation per asset
+    max_allocation: float = 0.5  # Maximum allocation per asset
+    allocation_precision: int = 6  # Decimal precision for allocations
 
 
 class HRPAllocation:
     """
     Recursive bisection allocation engine for HRP portfolio construction.
-    
+
     Implements the hierarchical risk parity allocation algorithm that distributes
     capital through the cluster tree using equal risk contribution principles.
     """
 
-    def __init__(self, config: Optional[AllocationConfig] = None):
+    def __init__(self, config: AllocationConfig | None = None):
         """
         Initialize HRP allocation engine.
-        
+
         Args:
             config: Allocation configuration parameters
         """
@@ -44,20 +43,20 @@ class HRPAllocation:
     def recursive_bisection(
         self,
         covariance_matrix: pd.DataFrame,
-        cluster_tree: Dict,
-        initial_weights: Optional[pd.Series] = None
+        cluster_tree: dict,
+        initial_weights: pd.Series | None = None,
     ) -> pd.Series:
         """
         Allocate capital through recursive cluster bisection.
-        
+
         Args:
             covariance_matrix: Asset covariance matrix
             cluster_tree: Hierarchical cluster tree structure
             initial_weights: Optional initial weight distribution (defaults to equal)
-            
+
         Returns:
             Portfolio weights as pandas Series
-            
+
         Raises:
             ValueError: If inputs are invalid
         """
@@ -72,20 +71,14 @@ class HRPAllocation:
 
         # Initialize equal weights if not provided
         if initial_weights is None:
-            initial_weights = pd.Series(
-                1.0 / len(asset_names),
-                index=asset_names,
-                dtype=float
-            )
+            initial_weights = pd.Series(1.0 / len(asset_names), index=asset_names, dtype=float)
 
         # Ensure covariance matrix alignment
         aligned_cov = self._align_covariance_matrix(covariance_matrix, asset_names)
 
         # Start recursive bisection from root
         weights = self._bisect_cluster(
-            cluster_tree,
-            aligned_cov,
-            initial_weights.sum()  # Total allocation for this cluster
+            cluster_tree, aligned_cov, initial_weights.sum()  # Total allocation for this cluster
         )
 
         # Apply allocation constraints
@@ -94,19 +87,16 @@ class HRPAllocation:
         return constrained_weights
 
     def _bisect_cluster(
-        self,
-        cluster_node: Dict,
-        covariance_matrix: pd.DataFrame,
-        total_allocation: float
+        self, cluster_node: dict, covariance_matrix: pd.DataFrame, total_allocation: float
     ) -> pd.Series:
         """
         Recursively bisect cluster and allocate capital.
-        
+
         Args:
             cluster_node: Current cluster node
             covariance_matrix: Aligned covariance matrix
             total_allocation: Total allocation available for this cluster
-            
+
         Returns:
             Allocation weights for assets in this cluster
         """
@@ -144,18 +134,14 @@ class HRPAllocation:
         combined_weights = pd.concat([left_weights, right_weights])
         return combined_weights
 
-    def _calculate_cluster_risk(
-        self,
-        assets: List[str],
-        covariance_matrix: pd.DataFrame
-    ) -> float:
+    def _calculate_cluster_risk(self, assets: list[str], covariance_matrix: pd.DataFrame) -> float:
         """
         Calculate risk measure for a cluster of assets.
-        
+
         Args:
             assets: List of asset names in cluster
             covariance_matrix: Full covariance matrix
-            
+
         Returns:
             Risk measure for the cluster
         """
@@ -201,9 +187,7 @@ class HRPAllocation:
             return 1.0
 
     def _calculate_cluster_risk_variance(
-        self,
-        assets: List[str],
-        covariance_matrix: pd.DataFrame
+        self, assets: list[str], covariance_matrix: pd.DataFrame
     ) -> float:
         """Helper method for variance risk calculation."""
         if not assets or len(assets) == 0:
@@ -231,19 +215,16 @@ class HRPAllocation:
             return 1.0
 
     def calculate_risk_budgets(
-        self,
-        weights: pd.Series,
-        covariance_matrix: pd.DataFrame,
-        cluster_tree: Dict
-    ) -> Dict[str, float]:
+        self, weights: pd.Series, covariance_matrix: pd.DataFrame, cluster_tree: dict
+    ) -> dict[str, float]:
         """
         Calculate risk budgeting for equal risk contribution validation.
-        
+
         Args:
             weights: Portfolio weights
             covariance_matrix: Asset covariance matrix
             cluster_tree: Cluster tree structure
-            
+
         Returns:
             Dictionary mapping assets to their risk contributions
         """
@@ -256,8 +237,9 @@ class HRPAllocation:
             return {}
 
         # Calculate portfolio variance
-        portfolio_var = np.dot(aligned_weights.values,
-                              np.dot(aligned_cov.values, aligned_weights.values))
+        portfolio_var = np.dot(
+            aligned_weights.values, np.dot(aligned_cov.values, aligned_weights.values)
+        )
 
         if portfolio_var <= 0:
             return dict.fromkeys(aligned_weights.index, 0.0)
@@ -276,19 +258,16 @@ class HRPAllocation:
         return risk_contributions
 
     def optimize_cluster_allocation(
-        self,
-        assets: List[str],
-        covariance_matrix: pd.DataFrame,
-        target_allocation: float
+        self, assets: list[str], covariance_matrix: pd.DataFrame, target_allocation: float
     ) -> pd.Series:
         """
         Optimize allocation within a single cluster for risk parity.
-        
+
         Args:
             assets: List of assets in cluster
             covariance_matrix: Full covariance matrix
             target_allocation: Total allocation target for this cluster
-            
+
         Returns:
             Optimized weights for cluster assets
         """
@@ -323,11 +302,7 @@ class HRPAllocation:
             equal_weight = target_allocation / len(cluster_assets)
             return pd.Series([equal_weight] * len(cluster_assets), index=cluster_assets)
 
-    def _validate_inputs(
-        self,
-        covariance_matrix: pd.DataFrame,
-        cluster_tree: Dict
-    ) -> None:
+    def _validate_inputs(self, covariance_matrix: pd.DataFrame, cluster_tree: dict) -> None:
         """Validate allocation inputs."""
         if covariance_matrix.empty:
             raise ValueError("Empty covariance matrix")
@@ -339,9 +314,7 @@ class HRPAllocation:
             raise ValueError("Cluster tree must contain 'assets' field")
 
     def _align_covariance_matrix(
-        self,
-        covariance_matrix: pd.DataFrame,
-        asset_names: List[str]
+        self, covariance_matrix: pd.DataFrame, asset_names: list[str]
     ) -> pd.DataFrame:
         """Align covariance matrix with asset names from cluster tree."""
         common_assets = [a for a in asset_names if a in covariance_matrix.index]
@@ -359,14 +332,11 @@ class HRPAllocation:
 
         # Apply minimum/maximum allocation constraints
         constrained = weights.clip(
-            lower=self.config.min_allocation,
-            upper=self.config.max_allocation
+            lower=self.config.min_allocation, upper=self.config.max_allocation
         )
 
         # Remove tiny allocations
-        constrained = constrained.where(
-            constrained >= self.config.min_allocation, 0.0
-        )
+        constrained = constrained.where(constrained >= self.config.min_allocation, 0.0)
 
         # Normalize to sum to 1.0
         weight_sum = constrained.sum()
@@ -374,10 +344,7 @@ class HRPAllocation:
             constrained = constrained / weight_sum
         else:
             # Equal weights fallback
-            constrained = pd.Series(
-                1.0 / len(constrained),
-                index=constrained.index
-            )
+            constrained = pd.Series(1.0 / len(constrained), index=constrained.index)
 
         # Round to specified precision
         constrained = constrained.round(self.config.allocation_precision)
@@ -385,17 +352,15 @@ class HRPAllocation:
         return constrained
 
     def handle_edge_cases(
-        self,
-        cluster_tree: Dict,
-        covariance_matrix: pd.DataFrame
-    ) -> Tuple[bool, str]:
+        self, cluster_tree: dict, covariance_matrix: pd.DataFrame
+    ) -> tuple[bool, str]:
         """
         Handle edge cases for allocation (single assets, empty clusters).
-        
+
         Args:
             cluster_tree: Cluster tree structure
             covariance_matrix: Asset covariance matrix
-            
+
         Returns:
             Tuple of (needs_special_handling, handling_type)
         """

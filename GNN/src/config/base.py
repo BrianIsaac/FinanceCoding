@@ -22,6 +22,7 @@ class ProjectConfig:
         log_level: Logging level (DEBUG, INFO, WARNING, ERROR)
         gpu_memory_fraction: Fraction of GPU memory to allocate (0.0-1.0)
     """
+
     data_dir: str = "data"
     output_dir: str = "outputs"
     log_level: str = "INFO"
@@ -40,6 +41,7 @@ class DataConfig:
         lookback_window: Number of periods for rolling calculations
         min_history: Minimum number of periods required per asset
     """
+
     universe: str = "midcap400"
     start_date: str = "2016-01-01"
     end_date: str = "2024-12-31"
@@ -59,6 +61,7 @@ class ModelConfig:
         early_stopping_patience: Epochs to wait before early stopping
         validation_split: Fraction of data to use for validation
     """
+
     batch_size: int = 32
     learning_rate: float = 0.001
     max_epochs: int = 100
@@ -161,8 +164,8 @@ def setup_logging(config: ProjectConfig) -> logging.Logger:
     """
     logging.basicConfig(
         level=getattr(logging, config.log_level.upper()),
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
     )
 
     return logging.getLogger(__name__)

@@ -1,11 +1,13 @@
 """Unit tests for universe builder functionality."""
 
-import pytest
-import pandas as pd
 from pathlib import Path
 from unittest.mock import Mock, patch
-from src.data.processors.universe_builder import UniverseBuilder, create_universe_builder
+
+import pandas as pd
+import pytest
+
 from src.config.data import UniverseConfig
+from src.data.processors.universe_builder import UniverseBuilder, create_universe_builder
 
 
 @pytest.fixture
@@ -131,7 +133,7 @@ def test_validate_universe_calendar(universe_builder):
     # Create 400 unique tickers for each date
     base_tickers = ["AAPL", "MSFT", "GOOGL", "TSLA"]
     all_tickers = [f"{ticker}_{i}" for ticker in base_tickers for i in range(100)]
-    
+
     for date in dates:
         for ticker in all_tickers:  # 400 tickers per month
             calendar_data.append({"date": date, "ticker": ticker, "index_name": "SP400"})
