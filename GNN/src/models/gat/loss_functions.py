@@ -105,11 +105,11 @@ class SharpeRatioLoss(nn.Module):
         self,
         risk_free_rate: float = 0.0,
         constraint_penalty: float = 1.0,
-        lookback_window: int = 252
+        lookback_window: int = 252,
     ):
         """
         Initialize Sharpe ratio loss.
-        
+
         Args:
             risk_free_rate: Risk-free rate for Sharpe ratio calculation
             constraint_penalty: Weight for constraint violation penalty
@@ -124,16 +124,16 @@ class SharpeRatioLoss(nn.Module):
         self,
         portfolio_weights: torch.Tensor,
         returns: torch.Tensor,
-        constraints_mask: torch.Tensor | None = None
+        constraints_mask: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """
         Compute negative Sharpe ratio as loss for direct optimization.
-        
+
         Args:
             portfolio_weights: Portfolio weights [batch_size, n_assets]
             returns: Asset returns [batch_size, n_assets] or [batch_size, time_steps, n_assets]
             constraints_mask: Mask for valid assets [batch_size, n_assets]
-            
+
         Returns:
             Loss value (negative Sharpe ratio + constraint penalties)
         """
@@ -191,11 +191,11 @@ class MarkownitzLayer(nn.Module):
         self,
         risk_aversion: float = 1.0,
         transaction_cost: float = 0.001,
-        regularization: float = 1e-4
+        regularization: float = 1e-4,
     ):
         """
         Initialize Markowitz optimization layer.
-        
+
         Args:
             risk_aversion: Risk aversion parameter (higher = more risk-averse)
             transaction_cost: Transaction cost per trade
@@ -211,17 +211,17 @@ class MarkownitzLayer(nn.Module):
         expected_returns: torch.Tensor,  # [batch_size, n_assets]
         covariance_matrix: torch.Tensor,  # [batch_size, n_assets, n_assets] or [n_assets, n_assets]
         constraints_mask: torch.Tensor | None = None,  # [batch_size, n_assets]
-        previous_weights: torch.Tensor | None = None  # [batch_size, n_assets]
+        previous_weights: torch.Tensor | None = None,  # [batch_size, n_assets]
     ) -> torch.Tensor:
         """
         Compute optimal portfolio weights using mean-variance optimization.
-        
+
         Args:
             expected_returns: Expected returns for each asset
             covariance_matrix: Asset return covariance matrix
             constraints_mask: Valid asset mask
             previous_weights: Previous portfolio weights for turnover calculation
-            
+
         Returns:
             Optimal portfolio weights
         """
@@ -247,9 +247,10 @@ class MarkownitzLayer(nn.Module):
             precision_matrix = torch.linalg.pinv(reg_cov)
 
             # Optimal weights (before normalization)
-            raw_weights = torch.bmm(
-                precision_matrix, expected_returns.unsqueeze(-1)
-            ).squeeze(-1) / self.risk_aversion
+            raw_weights = (
+                torch.bmm(precision_matrix, expected_returns.unsqueeze(-1)).squeeze(-1)
+                / self.risk_aversion
+            )
 
             # Apply transaction costs if previous weights provided
             if previous_weights is not None:
@@ -289,15 +290,15 @@ class ConstraintAwareLoss(nn.Module):
         weight_sum_penalty: float = 10.0,
         negative_weight_penalty: float = 10.0,
         concentration_penalty: float = 1.0,
-        turnover_penalty: float = 0.1
+        turnover_penalty: float = 0.1,
     ):
         """
         Initialize constraint-aware loss.
-        
+
         Args:
             weight_sum_penalty: Penalty for weights not summing to 1
             negative_weight_penalty: Penalty for negative weights
-            concentration_penalty: Penalty for concentrated portfolios  
+            concentration_penalty: Penalty for concentrated portfolios
             turnover_penalty: Penalty for high turnover
         """
         super().__init__()
@@ -310,16 +311,16 @@ class ConstraintAwareLoss(nn.Module):
         self,
         portfolio_weights: torch.Tensor,
         previous_weights: torch.Tensor | None = None,
-        max_weight: float = 0.1
+        max_weight: float = 0.1,
     ) -> torch.Tensor:
         """
         Compute constraint violation penalties.
-        
+
         Args:
             portfolio_weights: Current portfolio weights
             previous_weights: Previous weights for turnover calculation
             max_weight: Maximum weight per asset
-            
+
         Returns:
             Total constraint penalty
         """
@@ -334,7 +335,7 @@ class ConstraintAwareLoss(nn.Module):
         penalty += self.negative_weight_penalty * negative_weights
 
         # Concentration penalty (Herfindahl-Hirschman Index)
-        hhi = (portfolio_weights ** 2).sum(dim=-1).mean()
+        hhi = (portfolio_weights**2).sum(dim=-1).mean()
         penalty += self.concentration_penalty * hhi
 
         # Maximum weight constraint
@@ -357,11 +358,11 @@ class CombinedPortfolioLoss(nn.Module):
         sharpe_weight: float = 1.0,
         constraint_weight: float = 1.0,
         markowitz_weight: float = 0.5,
-        risk_aversion: float = 1.0
+        risk_aversion: float = 1.0,
     ):
         """
         Initialize combined portfolio loss.
-        
+
         Args:
             sharpe_weight: Weight for Sharpe ratio component
             constraint_weight: Weight for constraint penalties
@@ -384,19 +385,19 @@ class CombinedPortfolioLoss(nn.Module):
         expected_returns: torch.Tensor,
         covariance_matrix: torch.Tensor,
         constraints_mask: torch.Tensor | None = None,
-        previous_weights: torch.Tensor | None = None
+        previous_weights: torch.Tensor | None = None,
     ) -> dict[str, torch.Tensor]:
         """
         Compute combined portfolio loss with multiple components.
-        
+
         Args:
             portfolio_weights: Portfolio weights
             returns: Historical returns
-            expected_returns: Expected returns  
+            expected_returns: Expected returns
             covariance_matrix: Return covariance matrix
             constraints_mask: Valid asset mask
             previous_weights: Previous weights
-            
+
         Returns:
             Dictionary with loss components and total loss
         """
@@ -417,14 +418,14 @@ class CombinedPortfolioLoss(nn.Module):
 
         # Combined loss
         total_loss = (
-            self.sharpe_weight * sharpe_component +
-            self.constraint_weight * constraint_component +
-            self.markowitz_weight * markowitz_component
+            self.sharpe_weight * sharpe_component
+            + self.constraint_weight * constraint_component
+            + self.markowitz_weight * markowitz_component
         )
 
         return {
             "total_loss": total_loss,
             "sharpe_component": sharpe_component,
             "constraint_component": constraint_component,
-            "markowitz_component": markowitz_component
+            "markowitz_component": markowitz_component,
         }

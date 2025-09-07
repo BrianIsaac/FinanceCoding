@@ -284,11 +284,11 @@ def _edge_attr_from_corr(C: np.ndarray, E: list[tuple[int, int]]) -> np.ndarray:
 def _compute_adaptive_knn_k(universe_size: int, cfg: GraphBuildConfig) -> int:
     """
     Compute adaptive k-NN parameter based on universe size.
-    
+
     Args:
         universe_size: Number of assets in universe
         cfg: Graph build configuration
-        
+
     Returns:
         Optimal k for k-NN graph construction
     """
@@ -305,18 +305,16 @@ def _compute_adaptive_knn_k(universe_size: int, cfg: GraphBuildConfig) -> int:
 
 
 def _prune_edges_by_weight(
-    edges: list[tuple[int, int]],
-    edge_attrs: np.ndarray,
-    cfg: GraphBuildConfig
+    edges: list[tuple[int, int]], edge_attrs: np.ndarray, cfg: GraphBuildConfig
 ) -> tuple[list[tuple[int, int]], np.ndarray]:
     """
     Prune edges based on correlation strength and memory constraints.
-    
+
     Args:
         edges: List of edge tuples
         edge_attrs: Edge attributes array
         cfg: Graph build configuration
-        
+
     Returns:
         Pruned edges and attributes
     """
@@ -343,20 +341,17 @@ def _prune_edges_by_weight(
 
 
 def _enforce_max_edges_per_node(
-    edges: list[tuple[int, int]],
-    edge_attrs: np.ndarray,
-    n_nodes: int,
-    max_edges: int
+    edges: list[tuple[int, int]], edge_attrs: np.ndarray, n_nodes: int, max_edges: int
 ) -> tuple[list[tuple[int, int]], np.ndarray]:
     """
     Enforce maximum edges per node constraint for memory efficiency.
-    
+
     Args:
         edges: List of edge tuples
-        edge_attrs: Edge attributes array  
+        edge_attrs: Edge attributes array
         n_nodes: Number of nodes
         max_edges: Maximum edges per node
-        
+
     Returns:
         Filtered edges and attributes
     """
@@ -395,20 +390,17 @@ def _enforce_max_edges_per_node(
 
 
 def _build_ensemble_graph(
-    C: np.ndarray,
-    methods: list[str],
-    weights: list[float] | None,
-    cfg: GraphBuildConfig
+    C: np.ndarray, methods: list[str], weights: list[float] | None, cfg: GraphBuildConfig
 ) -> tuple[list[tuple[int, int]], np.ndarray]:
     """
     Build ensemble graph combining multiple construction methods.
-    
+
     Args:
         C: Correlation matrix
         methods: List of graph construction methods
         weights: Weights for combining methods (None for equal weights)
         cfg: Graph build configuration
-        
+
     Returns:
         Combined edges and attributes
     """
@@ -467,7 +459,7 @@ class GraphCache:
     def __init__(self, cache_dir: str = ".cache/graphs", ttl_days: int = 30):
         """
         Initialize graph cache.
-        
+
         Args:
             cache_dir: Directory to store cached graphs
             ttl_days: Time-to-live for cached graphs in days
@@ -477,11 +469,7 @@ class GraphCache:
         os.makedirs(cache_dir, exist_ok=True)
 
     def _get_cache_key(
-        self,
-        tickers: list[str],
-        ts: pd.Timestamp,
-        cfg: GraphBuildConfig,
-        returns_hash: str
+        self, tickers: list[str], ts: pd.Timestamp, cfg: GraphBuildConfig, returns_hash: str
     ) -> str:
         """Generate cache key for graph configuration."""
         # Create deterministic hash from configuration
@@ -502,13 +490,17 @@ class GraphCache:
             return False
 
         # Check file age
-        file_age_days = (pd.Timestamp.now() - pd.Timestamp.fromtimestamp(os.path.getmtime(cache_path))).days
+        file_age_days = (
+            pd.Timestamp.now() - pd.Timestamp.fromtimestamp(os.path.getmtime(cache_path))
+        ).days
         return file_age_days < self.ttl_days
 
     def _hash_returns_window(self, returns_window: pd.DataFrame) -> str:
         """Create hash of returns data for cache validation."""
         # Use a small sample of the returns data to create hash
-        sample_data = returns_window.iloc[::max(1, len(returns_window)//100)].values  # Sample every 100th row
+        sample_data = returns_window.iloc[
+            :: max(1, len(returns_window) // 100)
+        ].values  # Sample every 100th row
         return hashlib.md5(sample_data.tobytes()).hexdigest()[:16]
 
     def get_cached_graph(
@@ -516,7 +508,7 @@ class GraphCache:
         returns_window: pd.DataFrame,
         tickers: list[str],
         ts: pd.Timestamp,
-        cfg: GraphBuildConfig
+        cfg: GraphBuildConfig,
     ) -> Data | None:
         """Retrieve cached graph if available and valid."""
         if not cfg.enable_caching:
@@ -530,12 +522,11 @@ class GraphCache:
             return None
 
         try:
-            with open(cache_path, 'rb') as f:
+            with open(cache_path, "rb") as f:
                 cached_data = pickle.load(f)
                 # Validate that cached data matches current request
-                if (cached_data.get('tickers') == tickers and
-                    cached_data.get('timestamp') == ts):
-                    return cached_data['graph']
+                if cached_data.get("tickers") == tickers and cached_data.get("timestamp") == ts:
+                    return cached_data["graph"]
         except Exception:
             # If cache is corrupted, ignore and rebuild
             pass
@@ -548,7 +539,7 @@ class GraphCache:
         returns_window: pd.DataFrame,
         tickers: list[str],
         ts: pd.Timestamp,
-        cfg: GraphBuildConfig
+        cfg: GraphBuildConfig,
     ) -> None:
         """Cache graph for future use."""
         if not cfg.enable_caching:
@@ -558,15 +549,10 @@ class GraphCache:
         cache_key = self._get_cache_key(tickers, ts, cfg, returns_hash)
         cache_path = self._get_cache_path(cache_key)
 
-        cache_data = {
-            'graph': graph,
-            'tickers': tickers,
-            'timestamp': ts,
-            'config_hash': cache_key
-        }
+        cache_data = {"graph": graph, "tickers": tickers, "timestamp": ts, "config_hash": cache_key}
 
         try:
-            with open(cache_path, 'wb') as f:
+            with open(cache_path, "wb") as f:
                 pickle.dump(cache_data, f)
         except Exception:
             # Fail silently if caching doesn't work
@@ -605,7 +591,7 @@ def build_graph_from_returns(
 ) -> Data:
     """
     Build graph from returns data with enhanced dynamic universe handling and caching.
-    
+
     Parameters
     ----------
     returns_window : (T x N) DataFrame

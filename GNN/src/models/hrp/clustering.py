@@ -66,13 +66,13 @@ class HRPClustering:
         correlation_method = method or self.config.correlation_method
 
         # Validate input data
+        if returns.empty or returns.isna().all().all():
+            raise ValueError("Returns data is empty")
+
         if len(returns) < self.config.min_observations:
             raise ValueError(
                 f"Insufficient observations: {len(returns)} < {self.config.min_observations}"
             )
-
-        if returns.empty or returns.isna().all().all():
-            raise ValueError("Returns data is empty or contains only NaN values")
 
         # Calculate correlation matrix
         correlation_matrix = returns.corr(method=correlation_method)

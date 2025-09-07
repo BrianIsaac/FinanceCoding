@@ -43,7 +43,9 @@ class GATModelConfig:
     mem_hidden: int | None = None
 
     # Head configuration
-    head_config: HeadCfg = field(default_factory=lambda: HeadCfg(mode="direct", activation="sparsemax"))
+    head_config: HeadCfg = field(
+        default_factory=lambda: HeadCfg(mode="direct", activation="sparsemax")
+    )
 
     # Graph construction configuration
     graph_config: GraphBuildConfig = field(default_factory=GraphBuildConfig)
@@ -61,11 +63,10 @@ class GATModelConfig:
     max_vram_gb: float = 11.0
 
 
-
 class GATPortfolioModel(PortfolioModel):
     """
     Graph Attention Network-based portfolio optimization model.
-    
+
     This class integrates graph construction, GAT model training, and portfolio
     weight prediction into a unified interface implementing the PortfolioModel protocol.
     """
@@ -87,7 +88,7 @@ class GATPortfolioModel(PortfolioModel):
         if config.use_mixed_precision and torch.cuda.is_available():
             try:
                 # Use new API if available (PyTorch 2.1+)
-                self.scaler = torch.amp.GradScaler('cuda')
+                self.scaler = torch.amp.GradScaler("cuda")
             except (AttributeError, TypeError):
                 # Fall back to older API
                 self.scaler = torch.cuda.amp.GradScaler()
@@ -96,16 +97,18 @@ class GATPortfolioModel(PortfolioModel):
 
         # Training history
         self.training_history: dict[str, list[float]] = {
-            "loss": [], "sharpe": [], "weights_norm": []
+            "loss": [],
+            "sharpe": [],
+            "weights_norm": [],
         }
 
     def _build_model(self, input_dim: int) -> GATPortfolio:
         """
         Build GAT model architecture.
-        
+
         Args:
             input_dim: Number of input features per asset
-            
+
         Returns:
             Configured GAT model
         """
@@ -129,11 +132,11 @@ class GATPortfolioModel(PortfolioModel):
     def _prepare_features(self, returns: pd.DataFrame, universe: list[str]) -> np.ndarray:
         """
         Prepare node features from returns data.
-        
+
         Args:
             returns: Historical returns DataFrame
             universe: List of asset tickers
-            
+
         Returns:
             Node features matrix [n_assets, n_features]
         """
@@ -164,11 +167,20 @@ class GATPortfolioModel(PortfolioModel):
             max_drawdown = (asset_returns.cumsum().expanding().max() - asset_returns.cumsum()).max()
             var_95 = np.percentile(asset_returns, 5)  # Value at Risk 95%
 
-            features.append([
-                mean_return, volatility, skewness, kurtosis,
-                corr_with_market, beta, momentum_1m, momentum_3m,
-                max_drawdown, var_95
-            ])
+            features.append(
+                [
+                    mean_return,
+                    volatility,
+                    skewness,
+                    kurtosis,
+                    corr_with_market,
+                    beta,
+                    momentum_1m,
+                    momentum_3m,
+                    max_drawdown,
+                    var_95,
+                ]
+            )
 
         return np.array(features, dtype=np.float32)
 
@@ -202,7 +214,7 @@ class GATPortfolioModel(PortfolioModel):
         self.optimizer = Adam(
             self.model.parameters(),
             lr=self.config.learning_rate,
-            weight_decay=self.config.weight_decay
+            weight_decay=self.config.weight_decay,
         )
 
         # Generate training samples by creating graphs for different time windows
@@ -213,10 +225,10 @@ class GATPortfolioModel(PortfolioModel):
         rebalance_dates = pd.date_range(
             start=start_date + pd.Timedelta(days=self.config.graph_config.lookback_days),
             end=end_date - pd.Timedelta(days=21),  # Leave some buffer
-            freq='MS'  # Month start
+            freq="MS",  # Month start
         )
 
-        for date in rebalance_dates[:self.config.batch_size]:  # Limit for memory
+        for date in rebalance_dates[: self.config.batch_size]:  # Limit for memory
             try:
                 # Build graph using lookback window ending day before rebalance
                 graph_data = build_period_graph(
@@ -224,7 +236,7 @@ class GATPortfolioModel(PortfolioModel):
                     period_end=date,
                     tickers=universe,
                     features_matrix=features_matrix,
-                    cfg=self.config.graph_config
+                    cfg=self.config.graph_config,
                 )
 
                 # Get forward returns for the next month as labels
@@ -254,7 +266,11 @@ class GATPortfolioModel(PortfolioModel):
                 # Move data to device
                 x = graph_data.x.to(self.device)
                 edge_index = graph_data.edge_index.to(self.device)
-                edge_attr = graph_data.edge_attr.to(self.device) if graph_data.edge_attr is not None else None
+                edge_attr = (
+                    graph_data.edge_attr.to(self.device)
+                    if graph_data.edge_attr is not None
+                    else None
+                )
                 mask_valid = torch.ones(len(universe), dtype=torch.bool, device=self.device)
 
                 # Forward pass with mixed precision if enabled
@@ -264,7 +280,9 @@ class GATPortfolioModel(PortfolioModel):
 
                         # Reshape for loss computation
                         weights = weights.unsqueeze(0)  # [1, n_assets]
-                        returns_tensor = torch.tensor(labels, dtype=torch.float32, device=self.device).unsqueeze(0)
+                        returns_tensor = torch.tensor(
+                            labels, dtype=torch.float32, device=self.device
+                        ).unsqueeze(0)
 
                         loss = self.loss_fn(weights, returns_tensor, mask_valid.unsqueeze(0))
 
@@ -275,7 +293,9 @@ class GATPortfolioModel(PortfolioModel):
                 else:
                     weights, _ = self.model(x, edge_index, mask_valid, edge_attr)
                     weights = weights.unsqueeze(0)
-                    returns_tensor = torch.tensor(labels, dtype=torch.float32, device=self.device).unsqueeze(0)
+                    returns_tensor = torch.tensor(
+                        labels, dtype=torch.float32, device=self.device
+                    ).unsqueeze(0)
 
                     loss = self.loss_fn(weights, returns_tensor, mask_valid.unsqueeze(0))
                     loss.backward()
@@ -289,7 +309,7 @@ class GATPortfolioModel(PortfolioModel):
 
             # Early stopping check
             if len(self.training_history["loss"]) > self.config.patience:
-                recent_losses = self.training_history["loss"][-self.config.patience:]
+                recent_losses = self.training_history["loss"][-self.config.patience :]
                 if all(loss >= min(recent_losses) for loss in recent_losses[-5:]):
                     print(f"Early stopping at epoch {epoch}")
                     break
@@ -378,7 +398,9 @@ class GATPortfolioModel(PortfolioModel):
             },
             "device": str(self.device),
             "is_fitted": self.is_fitted,
-            "training_history": self.training_history if hasattr(self, 'training_history') else None,
+            "training_history": (
+                self.training_history if hasattr(self, "training_history") else None
+            ),
         }
 
         # Add model parameter count if model is built

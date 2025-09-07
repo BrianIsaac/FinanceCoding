@@ -361,10 +361,10 @@ class TestLSTMComputationalPerformance:
             assert (
                 train_ratio < size_ratio**1.5
             ), f"Training scaling too poor: {train_ratio:.2f}x for {size_ratio:.1f}x size increase"
-            assert (
-                inference_ratio < size_ratio**1.2
-            ), (f"Inference scaling too poor: {inference_ratio:.2f}x for "
-               f"{size_ratio:.1f}x size increase")
+            assert inference_ratio < size_ratio**1.2, (
+                f"Inference scaling too poor: {inference_ratio:.2f}x for "
+                f"{size_ratio:.1f}x size increase"
+            )
 
         # All configurations should complete in reasonable time
         max_training_time = max(training_times.values())

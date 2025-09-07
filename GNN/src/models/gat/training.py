@@ -69,7 +69,7 @@ class GPUMemoryManager:
     def __init__(self, max_vram_gb: float = 11.0):
         """
         Initialize GPU memory manager.
-        
+
         Args:
             max_vram_gb: Maximum VRAM to use in GB
         """
@@ -82,24 +82,24 @@ class GPUMemoryManager:
             return {"allocated": 0.0, "reserved": 0.0, "available": 0.0}
 
         allocated = torch.cuda.memory_allocated() / 1024**3  # GB
-        reserved = torch.cuda.memory_reserved() / 1024**3    # GB
-        available = self.max_memory / 1024**3 - allocated   # GB
+        reserved = torch.cuda.memory_reserved() / 1024**3  # GB
+        available = self.max_memory / 1024**3 - allocated  # GB
 
         return {
             "allocated": allocated,
             "reserved": reserved,
             "available": available,
-            "max_allowed": self.max_memory / 1024**3
+            "max_allowed": self.max_memory / 1024**3,
         }
 
     def estimate_batch_memory(self, model: nn.Module, sample_batch_size: int = 1) -> float:
         """
         Estimate memory usage for a given batch size.
-        
+
         Args:
             model: Model to estimate memory for
             sample_batch_size: Sample batch size for estimation
-            
+
         Returns:
             Estimated memory usage in GB
         """
@@ -135,11 +135,11 @@ class GPUMemoryManager:
     def get_optimal_batch_size(self, model: nn.Module, max_batch_size: int = 64) -> int:
         """
         Determine optimal batch size for memory constraints.
-        
+
         Args:
             model: Model to optimize batch size for
             max_batch_size: Maximum batch size to consider
-            
+
         Returns:
             Optimal batch size
         """
@@ -176,11 +176,11 @@ class PortfolioOptimizationLoss(nn.Module):
         risk_free_rate: float = 0.0,
         constraint_penalty: float = 1.0,
         regularization_weight: float = 0.1,
-        target_volatility: float | None = None
+        target_volatility: float | None = None,
     ):
         """
         Initialize portfolio optimization loss.
-        
+
         Args:
             risk_free_rate: Risk-free rate for Sharpe ratio calculation
             constraint_penalty: Weight for constraint violation penalties
@@ -198,17 +198,17 @@ class PortfolioOptimizationLoss(nn.Module):
         portfolio_weights: torch.Tensor,
         returns: torch.Tensor,
         constraints_mask: torch.Tensor | None = None,
-        prev_weights: torch.Tensor | None = None
+        prev_weights: torch.Tensor | None = None,
     ) -> dict[str, torch.Tensor]:
         """
         Compute portfolio optimization loss with detailed components.
-        
+
         Args:
             portfolio_weights: Portfolio weights [batch_size, n_assets]
             returns: Asset returns [batch_size, n_assets]
             constraints_mask: Valid asset mask [batch_size, n_assets]
             prev_weights: Previous weights for turnover calculation
-            
+
         Returns:
             Dictionary with loss components
         """
@@ -234,7 +234,7 @@ class PortfolioOptimizationLoss(nn.Module):
         negative_weight_penalty = torch.mean(torch.relu(-portfolio_weights))
 
         # Regularization terms
-        concentration_penalty = torch.mean((portfolio_weights ** 2).sum(dim=-1))  # Herfindahl index
+        concentration_penalty = torch.mean((portfolio_weights**2).sum(dim=-1))  # Herfindahl index
 
         # Turnover penalty
         turnover_penalty = torch.tensor(0.0, device=portfolio_weights.device)
@@ -251,9 +251,9 @@ class PortfolioOptimizationLoss(nn.Module):
         regularization_loss = concentration_penalty + turnover_penalty + volatility_penalty
 
         total_loss = (
-            -sharpe_ratio +
-            self.constraint_penalty * constraint_loss +
-            self.regularization_weight * regularization_loss
+            -sharpe_ratio
+            + self.constraint_penalty * constraint_loss
+            + self.regularization_weight * regularization_loss
         )
 
         return {
@@ -272,14 +272,11 @@ class GATTrainer:
     """Memory-efficient trainer for GAT portfolio models."""
 
     def __init__(
-        self,
-        model: GATPortfolio,
-        config: GATTrainingConfig,
-        device: torch.device | None = None
+        self, model: GATPortfolio, config: GATTrainingConfig, device: torch.device | None = None
     ):
         """
         Initialize GAT trainer.
-        
+
         Args:
             model: GAT portfolio model to train
             config: Training configuration
@@ -298,44 +295,37 @@ class GATTrainer:
         # Initialize optimizer
         if config.weight_decay > 0:
             self.optimizer = AdamW(
-                self.model.parameters(),
-                lr=config.learning_rate,
-                weight_decay=config.weight_decay
+                self.model.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay
             )
         else:
-            self.optimizer = Adam(
-                self.model.parameters(),
-                lr=config.learning_rate
-            )
+            self.optimizer = Adam(self.model.parameters(), lr=config.learning_rate)
 
         # Initialize loss function
         self.loss_fn = PortfolioOptimizationLoss(
             risk_free_rate=config.risk_free_rate,
             constraint_penalty=config.constraint_penalty,
-            regularization_weight=config.regularization_weight
+            regularization_weight=config.regularization_weight,
         )
 
         # Initialize learning rate scheduler
         self.scheduler = None
         if config.use_scheduler:
             if config.scheduler_type == "cosine":
-                self.scheduler = CosineAnnealingLR(
-                    self.optimizer, T_max=config.max_epochs
-                )
+                self.scheduler = CosineAnnealingLR(self.optimizer, T_max=config.max_epochs)
             elif config.scheduler_type == "plateau":
                 self.scheduler = ReduceLROnPlateau(
                     self.optimizer,
                     mode="min",
                     factor=config.scheduler_factor,
                     patience=config.scheduler_patience,
-                    verbose=True
+                    verbose=True,
                 )
 
         # Initialize mixed precision scaler
         if config.use_mixed_precision and torch.cuda.is_available():
             try:
                 # Use new API if available (PyTorch 2.1+)
-                self.scaler = torch.amp.GradScaler('cuda')
+                self.scaler = torch.amp.GradScaler("cuda")
             except (AttributeError, TypeError):
                 # Fall back to older API
                 self.scaler = torch.cuda.amp.GradScaler()
@@ -344,39 +334,43 @@ class GATTrainer:
 
         # Training history
         self.history: dict[str, list[float]] = {
-            "train_loss": [], "val_loss": [], "train_sharpe": [], "val_sharpe": [],
-            "learning_rate": [], "memory_usage": []
+            "train_loss": [],
+            "val_loss": [],
+            "train_sharpe": [],
+            "val_sharpe": [],
+            "learning_rate": [],
+            "memory_usage": [],
         }
 
     def create_data_batches(
-        self,
-        graph_data_list: list[Any],
-        batch_size: int | None = None
+        self, graph_data_list: list[Any], batch_size: int | None = None
     ) -> Iterator[list[Any]]:
         """
         Create batches from graph data with memory constraints.
-        
+
         Args:
             graph_data_list: List of graph data objects
             batch_size: Batch size (uses config if None)
-            
+
         Yields:
             Batches of graph data
         """
         if batch_size is None:
             # Determine optimal batch size
-            batch_size = self.memory_manager.get_optimal_batch_size(self.model, self.config.batch_size)
+            batch_size = self.memory_manager.get_optimal_batch_size(
+                self.model, self.config.batch_size
+            )
 
         for i in range(0, len(graph_data_list), batch_size):
-            yield graph_data_list[i:i + batch_size]
+            yield graph_data_list[i : i + batch_size]
 
     def train_epoch(self, train_data_list: list[Any]) -> dict[str, float]:
         """
         Train for one epoch with gradient accumulation and memory optimization.
-        
+
         Args:
             train_data_list: List of training graph data
-            
+
         Returns:
             Training metrics for the epoch
         """
@@ -400,7 +394,11 @@ class GATTrainer:
                     # Move data to device
                     x = graph_data.x.to(self.device)
                     edge_index = graph_data.edge_index.to(self.device)
-                    edge_attr = graph_data.edge_attr.to(self.device) if graph_data.edge_attr is not None else None
+                    edge_attr = (
+                        graph_data.edge_attr.to(self.device)
+                        if graph_data.edge_attr is not None
+                        else None
+                    )
                     mask_valid = torch.ones(x.size(0), dtype=torch.bool, device=self.device)
                     returns_tensor = torch.tensor(labels, dtype=torch.float32, device=self.device)
 
@@ -413,7 +411,7 @@ class GATTrainer:
                             loss_dict = self.loss_fn(
                                 weights.unsqueeze(0),
                                 returns_tensor.unsqueeze(0),
-                                mask_valid.unsqueeze(0)
+                                mask_valid.unsqueeze(0),
                             )
 
                             total_loss = loss_dict["total_loss"]
@@ -431,7 +429,7 @@ class GATTrainer:
                         loss_dict = self.loss_fn(
                             weights.unsqueeze(0),
                             returns_tensor.unsqueeze(0),
-                            mask_valid.unsqueeze(0)
+                            mask_valid.unsqueeze(0),
                         )
 
                         total_loss = loss_dict["total_loss"]
@@ -449,13 +447,17 @@ class GATTrainer:
                     if self.scaler is not None:
                         # Gradient clipping
                         self.scaler.unscale_(self.optimizer)
-                        torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.config.gradient_clip_norm)
+                        torch.nn.utils.clip_grad_norm_(
+                            self.model.parameters(), self.config.gradient_clip_norm
+                        )
 
                         # Update parameters
                         self.scaler.step(self.optimizer)
                         self.scaler.update()
                     else:
-                        torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.config.gradient_clip_norm)
+                        torch.nn.utils.clip_grad_norm_(
+                            self.model.parameters(), self.config.gradient_clip_norm
+                        )
                         self.optimizer.step()
 
                     self.optimizer.zero_grad()
@@ -473,18 +475,18 @@ class GATTrainer:
                     raise e
 
         return {
-            "loss": np.mean(epoch_losses) if epoch_losses else float('inf'),
+            "loss": np.mean(epoch_losses) if epoch_losses else float("inf"),
             "sharpe": np.mean(epoch_sharpe_ratios) if epoch_sharpe_ratios else 0.0,
-            "batches_processed": len(batches)
+            "batches_processed": len(batches),
         }
 
     def validate(self, val_data_list: list[Any]) -> dict[str, float]:
         """
         Validate model performance.
-        
+
         Args:
             val_data_list: List of validation graph data
-            
+
         Returns:
             Validation metrics
         """
@@ -498,16 +500,22 @@ class GATTrainer:
                     for graph_data, labels in batch:
                         x = graph_data.x.to(self.device)
                         edge_index = graph_data.edge_index.to(self.device)
-                        edge_attr = graph_data.edge_attr.to(self.device) if graph_data.edge_attr is not None else None
+                        edge_attr = (
+                            graph_data.edge_attr.to(self.device)
+                            if graph_data.edge_attr is not None
+                            else None
+                        )
                         mask_valid = torch.ones(x.size(0), dtype=torch.bool, device=self.device)
-                        returns_tensor = torch.tensor(labels, dtype=torch.float32, device=self.device)
+                        returns_tensor = torch.tensor(
+                            labels, dtype=torch.float32, device=self.device
+                        )
 
                         weights, _, reg_loss = self.model(x, edge_index, mask_valid, edge_attr)
 
                         loss_dict = self.loss_fn(
                             weights.unsqueeze(0),
                             returns_tensor.unsqueeze(0),
-                            mask_valid.unsqueeze(0)
+                            mask_valid.unsqueeze(0),
                         )
 
                         total_loss = loss_dict["total_loss"]
@@ -525,26 +533,24 @@ class GATTrainer:
                         raise e
 
         return {
-            "loss": np.mean(val_losses) if val_losses else float('inf'),
-            "sharpe": np.mean(val_sharpe_ratios) if val_sharpe_ratios else 0.0
+            "loss": np.mean(val_losses) if val_losses else float("inf"),
+            "sharpe": np.mean(val_sharpe_ratios) if val_sharpe_ratios else 0.0,
         }
 
     def train(
-        self,
-        train_data_list: list[Any],
-        val_data_list: list[Any] | None = None
+        self, train_data_list: list[Any], val_data_list: list[Any] | None = None
     ) -> dict[str, Any]:
         """
         Complete training loop with early stopping and memory optimization.
-        
+
         Args:
             train_data_list: Training data
             val_data_list: Validation data (optional)
-            
+
         Returns:
             Training history and final metrics
         """
-        best_metric = float('inf')
+        best_metric = float("inf")
         patience_counter = 0
 
         print(f"Starting training on {self.device}")
@@ -557,14 +563,14 @@ class GATTrainer:
             self.history["train_sharpe"].append(train_metrics["sharpe"])
 
             # Validation
-            val_metrics = {"loss": float('inf'), "sharpe": 0.0}
+            val_metrics = {"loss": float("inf"), "sharpe": 0.0}
             if val_data_list:
                 val_metrics = self.validate(val_data_list)
                 self.history["val_loss"].append(val_metrics["loss"])
                 self.history["val_sharpe"].append(val_metrics["sharpe"])
 
             # Learning rate scheduling
-            current_lr = self.optimizer.param_groups[0]['lr']
+            current_lr = self.optimizer.param_groups[0]["lr"]
             if self.scheduler:
                 if isinstance(self.scheduler, ReduceLROnPlateau):
                     self.scheduler.step(val_metrics["loss"])
@@ -590,12 +596,14 @@ class GATTrainer:
 
             # Progress logging
             if epoch % 10 == 0:
-                print(f"Epoch {epoch:3d}: "
-                      f"Train Loss: {train_metrics['loss']:.6f}, "
-                      f"Val Loss: {val_metrics['loss']:.6f}, "
-                      f"Train Sharpe: {train_metrics['sharpe']:.4f}, "
-                      f"LR: {current_lr:.2e}, "
-                      f"Memory: {memory_info['allocated']:.1f}GB")
+                print(
+                    f"Epoch {epoch:3d}: "
+                    f"Train Loss: {train_metrics['loss']:.6f}, "
+                    f"Val Loss: {val_metrics['loss']:.6f}, "
+                    f"Train Sharpe: {train_metrics['sharpe']:.4f}, "
+                    f"LR: {current_lr:.2e}, "
+                    f"Memory: {memory_info['allocated']:.1f}GB"
+                )
 
             # Early stopping check
             if patience_counter >= self.config.patience:
@@ -603,12 +611,12 @@ class GATTrainer:
                 break
 
         # Load best model if available
-        if hasattr(self, 'best_model_state'):
+        if hasattr(self, "best_model_state"):
             self.model.load_state_dict(self.best_model_state)
 
         return {
             "history": self.history,
             "best_metric": best_metric,
             "final_epoch": epoch,
-            "memory_usage": memory_info
+            "memory_usage": memory_info,
         }

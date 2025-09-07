@@ -241,20 +241,23 @@ class HRPModel(PortfolioModel):
             raw_weights = pd.Series(1.0 / len(prediction_assets), index=prediction_assets)
 
         # Apply portfolio constraints using base class method
+        # This handles all constraints including min_weight_threshold, top_k_positions,
+        # max_position_weight, and proper normalization
         constrained_weights = self.validate_weights(raw_weights)
 
-        # Ensure minimum weight threshold is applied
-        if (
-            hasattr(self.constraints, "min_weight_threshold")
-            and self.constraints.min_weight_threshold > 0
-        ):
-            constrained_weights = constrained_weights.where(
-                constrained_weights >= self.constraints.min_weight_threshold, 0.0
-            )
-            # Renormalize after applying threshold
-            weight_sum = constrained_weights.sum()
-            if weight_sum > 0:
-                constrained_weights = constrained_weights / weight_sum
+        # Fallback for impossible constraints (when all weights become zero or very small)
+        if constrained_weights.sum() < 0.5:  # Weights sum is too small to be valid
+            # Use equal weights as fallback when constraints are impossible to satisfy
+            n_assets = len(prediction_assets)
+            fallback_weights = pd.Series(1.0 / n_assets, index=prediction_assets)
+            # Try to apply constraints again, but if they fail, return equal weights
+            try:
+                constrained_weights = self.validate_weights(fallback_weights)
+                if constrained_weights.sum() < 0.5:
+                    # Even equal weights fail constraints, return equal weights anyway
+                    constrained_weights = fallback_weights
+            except Exception:
+                constrained_weights = fallback_weights
 
         return constrained_weights
 

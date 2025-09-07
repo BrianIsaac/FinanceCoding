@@ -11,9 +11,9 @@ import pytest
 
 from src.models.base.constraints import (
     ConstraintEngine,
-    RegulatoryConstraints,
-    RiskConstraints,
-    TurnoverConstraints,
+    ConstraintViolationType,
+    PortfolioConstraints,
+    ViolationSeverity,
 )
 
 
@@ -37,35 +37,30 @@ class TestConstraintEngine:
     @pytest.fixture
     def default_engine(self):
         """Create ConstraintEngine with default settings."""
-        return ConstraintEngine()
+        constraints = PortfolioConstraints()
+        return ConstraintEngine(constraints)
 
     @pytest.fixture
     def strict_engine(self):
         """Create ConstraintEngine with strict constraints."""
-        turnover_constraints = TurnoverConstraints(
+        constraints = PortfolioConstraints(
             max_monthly_turnover=0.10,
             transaction_cost_bps=10.0,
             enable_turnover_penalty=True,
-        )
-
-        regulatory_constraints = RegulatoryConstraints(
             max_single_issuer_weight=0.08,
         )
-
-        return ConstraintEngine(
-            turnover_constraints=turnover_constraints,
-            regulatory_constraints=regulatory_constraints,
-        )
+        return ConstraintEngine(constraints)
 
     def test_engine_initialization(self):
         """Test proper constraint engine initialization."""
-        engine = ConstraintEngine()
+        constraints = PortfolioConstraints()
+        engine = ConstraintEngine(constraints)
 
-        assert engine.turnover_constraints is not None
-        assert engine.risk_constraints is not None
-        assert engine.regulatory_constraints is not None
-        assert engine.turnover_constraints.max_monthly_turnover == 0.20
-        assert engine.regulatory_constraints.max_single_issuer_weight == 0.10
+        assert engine.constraints is not None
+        assert engine.constraints.max_monthly_turnover == 0.20
+        assert engine.constraints.max_single_issuer_weight == 0.10
+        assert engine.violation_log == []
+        assert engine.turnover_history == {}
 
     def test_apply_basic_constraints_long_only(self, default_engine):
         """Test long-only constraint enforcement."""
@@ -74,7 +69,7 @@ class TestConstraintEngine:
             [-0.05, 0.15, 0.10, -0.02, 0.82], index=[f"ASSET_{i:03d}" for i in range(5)]
         )
 
-        constrained = default_engine.apply_constraints(negative_weights)
+        constrained, violations = default_engine.enforce_constraints(negative_weights)
 
         # All weights should be non-negative
         assert all(
@@ -88,7 +83,7 @@ class TestConstraintEngine:
         """Test maximum single position weight constraint."""
         # sample_weights has ASSET_009 at 0.25, which exceeds strict_engine's 0.08 limit
         original_max_weight = sample_weights.max()
-        constrained = strict_engine.apply_constraints(sample_weights)
+        constrained, violations = strict_engine.enforce_constraints(sample_weights)
 
         # After clipping and renormalization, max weight should be reduced from original
         new_max_weight = constrained.max()
@@ -109,7 +104,7 @@ class TestConstraintEngine:
 
         if turnover <= max_turnover:
             # Should return weights unchanged (after basic constraints)
-            constrained = default_engine.apply_constraints(
+            constrained, violations = default_engine.enforce_constraints(
                 sample_weights, previous_weights=previous_weights
             )
 
@@ -121,7 +116,7 @@ class TestConstraintEngine:
         # Create weights that would result in high turnover
         high_turnover_weights = pd.Series([0.8, 0.2] + [0.0] * 8, index=previous_weights.index)
 
-        constrained = strict_engine.apply_constraints(
+        constrained, violations = strict_engine.enforce_constraints(
             high_turnover_weights, previous_weights=previous_weights
         )
 
@@ -137,20 +132,20 @@ class TestConstraintEngine:
             actual_turnover < original_turnover
         ), "Turnover should be reduced by constraint engine"
 
-    def test_apply_constraints_empty_weights(self, default_engine):
+    def test_enforce_constraints_empty_weights(self, default_engine):
         """Test constraint application on empty weights."""
         empty_weights = pd.Series([], dtype=float)
 
-        constrained = default_engine.apply_constraints(empty_weights)
+        constrained, violations = default_engine.enforce_constraints(empty_weights)
 
         # Should return equal weights fallback
         assert len(constrained) > 0 or len(empty_weights) == 0
 
-    def test_apply_constraints_all_zero_weights(self, default_engine):
+    def test_enforce_constraints_all_zero_weights(self, default_engine):
         """Test constraint application when all weights are zero."""
         zero_weights = pd.Series([0.0, 0.0, 0.0, 0.0], index=[f"ASSET_{i:03d}" for i in range(4)])
 
-        constrained = default_engine.apply_constraints(zero_weights)
+        constrained, violations = default_engine.enforce_constraints(zero_weights)
 
         # Should fallback to equal weights
         expected_weight = 1.0 / len(zero_weights)
@@ -199,25 +194,19 @@ class TestConstraintEngine:
         # Should indicate complete turnover
         assert metrics["turnover"] == 1.0  # Complete portfolio change
 
-    def test_turnover_constraints_configuration(self):
-        """Test TurnoverConstraints configuration."""
-        constraints = TurnoverConstraints(
+    def test_portfolio_constraints_configuration(self):
+        """Test PortfolioConstraints configuration."""
+        constraints = PortfolioConstraints(
             max_monthly_turnover=0.15,
             transaction_cost_bps=5.0,
             enable_turnover_penalty=False,
+            max_single_issuer_weight=0.05,
+            max_sector_concentration=0.20,
         )
 
         assert constraints.max_monthly_turnover == 0.15
         assert constraints.transaction_cost_bps == 5.0
         assert constraints.enable_turnover_penalty is False
-
-    def test_regulatory_constraints_configuration(self):
-        """Test RegulatoryConstraints configuration."""
-        constraints = RegulatoryConstraints(
-            max_single_issuer_weight=0.05,
-            max_sector_concentration=0.20,
-        )
-
         assert constraints.max_single_issuer_weight == 0.05
         assert constraints.max_sector_concentration == 0.20
 
@@ -230,15 +219,15 @@ class TestConstraintEngine:
 
         # Risk constraints should not modify weights (stub implementation)
         original_weights = sample_weights.copy()
-        constrained = default_engine.apply_constraints(sample_weights, returns_data=returns_data)
+        constrained, violations = default_engine.enforce_constraints(sample_weights)
 
         # Should be similar (risk constraints are stub)
         # Note: basic constraints might still apply
         assert len(constrained) == len(original_weights)
 
-    def test_apply_constraints_preserves_index(self, default_engine, sample_weights):
+    def test_enforce_constraints_preserves_index(self, default_engine, sample_weights):
         """Test that constraint application preserves weight index."""
-        constrained = default_engine.apply_constraints(sample_weights)
+        constrained, violations = default_engine.enforce_constraints(sample_weights)
 
         assert list(constrained.index) == list(sample_weights.index)
         assert constrained.index.name == sample_weights.index.name

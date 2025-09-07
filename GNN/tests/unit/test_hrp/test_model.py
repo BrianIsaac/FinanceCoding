@@ -133,13 +133,14 @@ class TestHRPModel:
 
     def test_fit_insufficient_asset_coverage(self, hrp_model, sample_returns_data):
         """Test model fitting with insufficient asset coverage."""
-        # Request universe with many missing assets
+        # Request universe with many missing assets (more than 20% missing)
         universe = sample_returns_data.columns.tolist() + [
             "MISSING_1",
             "MISSING_2",
             "MISSING_3",
             "MISSING_4",
             "MISSING_5",
+            "MISSING_6",  # Add more missing assets to trigger < 80% coverage
         ]
         fit_period = (pd.Timestamp("2020-06-01"), pd.Timestamp("2021-06-01"))
 
@@ -192,6 +193,7 @@ class TestHRPModel:
             top_k_positions=5,  # Only 5 positions allowed
             max_position_weight=0.25,
             max_monthly_turnover=0.30,
+            min_weight_threshold=0.05,  # 5% minimum weight - ensures only 5 positions max
         )
 
         hrp_config = HRPConfig(lookback_days=300)

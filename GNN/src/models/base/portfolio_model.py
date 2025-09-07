@@ -8,27 +8,16 @@ ensuring consistent APIs across different ML approaches (HRP, LSTM, GAT).
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
-from typing import Any
+from typing import Any, Optional
 
 import pandas as pd
 
-
-@dataclass
-class PortfolioConstraints:
-    """
-    Portfolio constraints configuration.
-
-    Defines constraints that apply to all portfolio optimization models
-    to ensure consistent risk management and regulatory compliance.
-    """
-
-    long_only: bool = True
-    top_k_positions: int | None = None
-    max_position_weight: float = 0.10
-    max_monthly_turnover: float = 0.20
-    transaction_cost_bps: float = 10.0
-    min_weight_threshold: float = 0.01
+from ...evaluation.backtest.transaction_costs import (
+    TransactionCostCalculator,
+    TransactionCostConfig,
+)
+from .constraint_engine import UnifiedConstraintEngine
+from .constraints import PortfolioConstraints
 
 
 class PortfolioModel(ABC):
@@ -37,18 +26,31 @@ class PortfolioModel(ABC):
 
     All portfolio models (HRP, LSTM, GAT, baselines) must inherit from this class
     and implement the required methods. This ensures a unified interface for
-    backtesting, evaluation, and production deployment.
+    backtesting, evaluation, and production deployment with consistent constraint
+    enforcement across all models.
     """
 
     def __init__(self, constraints: PortfolioConstraints):
         """
-        Initialize portfolio model with constraints.
+        Initialize portfolio model with unified constraint system.
 
         Args:
             constraints: Portfolio constraints configuration
         """
         self.constraints = constraints
         self.is_fitted = False
+
+        # Initialize unified constraint engine with transaction cost integration
+        transaction_config = TransactionCostConfig(
+            linear_cost_bps=constraints.transaction_cost_bps,
+            bid_ask_spread_bps=5.0,
+        )
+        transaction_calculator = TransactionCostCalculator(transaction_config)
+
+        self.constraint_engine = UnifiedConstraintEngine(
+            constraints=constraints,
+            transaction_cost_calculator=transaction_calculator,
+        )
 
     @abstractmethod
     def fit(
@@ -99,72 +101,75 @@ class PortfolioModel(ABC):
         """
         pass
 
-    def validate_weights(self, weights: pd.Series) -> pd.Series:
+    def validate_weights(
+        self,
+        weights: pd.Series,
+        previous_weights: Optional[pd.Series] = None,
+        model_scores: Optional[pd.Series] = None,
+        date: Optional[pd.Timestamp] = None,
+    ) -> pd.Series:
         """
-        Validate and enforce portfolio constraints on weights.
+        Validate and enforce portfolio constraints using unified constraint engine.
 
         Args:
             weights: Raw portfolio weights
+            previous_weights: Previous period weights for turnover calculation
+            model_scores: Model confidence scores for position ranking
+            date: Current rebalancing date for logging
 
         Returns:
             Constrained weights that satisfy all portfolio constraints
         """
-        # Ensure long-only constraint
-        if self.constraints.long_only:
-            weights = weights.clip(lower=0.0)
+        # Use unified constraint engine for comprehensive constraint enforcement
+        constrained_weights, violations, cost_analysis = (
+            self.constraint_engine.enforce_all_constraints(
+                weights=weights,
+                previous_weights=previous_weights,
+                model_scores=model_scores,
+                date=date,
+            )
+        )
 
-        # Apply minimum weight threshold
-        weights = weights.where(weights >= self.constraints.min_weight_threshold, 0.0)
+        # Store latest violations and cost analysis for reporting
+        self._latest_violations = violations
+        self._latest_cost_analysis = cost_analysis
 
-        # Apply top-k positions constraint first
-        if self.constraints.top_k_positions is not None:
-            top_k_weights = weights.nlargest(self.constraints.top_k_positions)
-            weights = weights.where(weights.isin(top_k_weights), 0.0)
+        return constrained_weights
 
-        # Final normalization to ensure weights sum to 1.0
-        weight_sum = weights.sum()
-        if weight_sum > 0:
-            weights = weights / weight_sum
+    def get_constraint_violations(self):
+        """Get latest constraint violations from validation."""
+        return getattr(self, "_latest_violations", [])
 
-        # Handle max position weight constraint after normalization
-        if self.constraints.max_position_weight < 1.0:
-            # Iteratively adjust weights that exceed the constraint
-            max_iters = 10
-            for _ in range(max_iters):
-                violating_mask = weights > self.constraints.max_position_weight
-                if not violating_mask.any():
-                    break
+    def get_transaction_cost_analysis(self):
+        """Get latest transaction cost analysis from validation."""
+        return getattr(self, "_latest_cost_analysis", {})
 
-                # Clip violating weights to max allowed
-                excess_weight = (
-                    weights[violating_mask] - self.constraints.max_position_weight
-                ).sum()
-                weights[violating_mask] = self.constraints.max_position_weight
+    def validate_portfolio_feasibility(
+        self, weights: pd.Series, previous_weights: Optional[pd.Series] = None
+    ):
+        """
+        Validate overall portfolio feasibility using unified constraint engine.
 
-                # Redistribute excess to non-violating assets
-                non_violating_mask = ~violating_mask
-                if non_violating_mask.any():
-                    available_capacity = (
-                        self.constraints.max_position_weight - weights[non_violating_mask]
-                    ).clip(lower=0)
-                    total_capacity = available_capacity.sum()
+        Args:
+            weights: Portfolio weights to validate
+            previous_weights: Previous weights for comparison
 
-                    if total_capacity > 0:
-                        # Redistribute proportionally based on available capacity
-                        redistribution = excess_weight * (available_capacity / total_capacity)
-                        weights[non_violating_mask] += redistribution
-                    else:
-                        # No capacity left - the remaining excess represents cash
-                        break
-        else:
-            # If all weights are zero, use constrained equal weights
-            n_assets = len(weights)
-            if self.constraints.max_position_weight * n_assets >= 1.0:
-                # Equal weights respect constraint
-                weights = pd.Series(1.0 / n_assets, index=weights.index)
-            else:
-                # Use max allowed weight but accept that portfolio won't sum to 1.0
-                # This represents the maximum investable amount given constraints
-                weights = pd.Series(self.constraints.max_position_weight, index=weights.index)
+        Returns:
+            Feasibility assessment with recommendations
+        """
+        return self.constraint_engine.validate_portfolio_feasibility(weights, previous_weights)
 
-        return weights
+    def create_constraint_report(
+        self, weights: pd.Series, previous_weights: Optional[pd.Series] = None
+    ):
+        """
+        Create comprehensive constraint enforcement report.
+
+        Args:
+            weights: Current portfolio weights
+            previous_weights: Previous weights for comparison
+
+        Returns:
+            Comprehensive constraint report
+        """
+        return self.constraint_engine.create_enforcement_report(weights, previous_weights)
