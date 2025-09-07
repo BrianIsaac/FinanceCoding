@@ -163,7 +163,8 @@ class PortfolioModel(ABC):
                 # Equal weights respect constraint
                 weights = pd.Series(1.0 / n_assets, index=weights.index)
             else:
-                # Use max allowed weight and leave remainder as cash
+                # Use max allowed weight but accept that portfolio won't sum to 1.0
+                # This represents the maximum investable amount given constraints
                 weights = pd.Series(self.constraints.max_position_weight, index=weights.index)
 
         return weights

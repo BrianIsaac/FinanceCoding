@@ -40,18 +40,18 @@ def masked_softmax(logits: torch.Tensor, mask: torch.Tensor, dim: int = -1) -> t
     return p / s
 
 
-def sparsemax(input: torch.Tensor, dim: int = -1) -> torch.Tensor:
+def sparsemax(tensor: torch.Tensor, dim: int = -1) -> torch.Tensor:
     # after
-    input = input.transpose(dim, -1)
-    input_flat = input.reshape(-1, input.size(-1))
+    tensor = tensor.transpose(dim, -1)
+    input_flat = tensor.reshape(-1, tensor.size(-1))
     zs = torch.sort(input_flat, descending=True, dim=-1).values
-    range_ = torch.arange(1, zs.size(-1) + 1, device=input.device, dtype=input.dtype).view(1, -1)
+    range_ = torch.arange(1, zs.size(-1) + 1, device=tensor.device, dtype=tensor.dtype).view(1, -1)
     cssv = zs.cumsum(dim=-1) - 1
     cond = zs - cssv / range_ > 0
     k = cond.sum(dim=-1).clamp(min=1)
     tau = cssv.gather(1, (k - 1).unsqueeze(1)).squeeze(1) / k
     output_flat = torch.clamp(input_flat - tau.unsqueeze(1), min=0.0)
-    output = output_flat.view_as(input)
+    output = output_flat.view_as(tensor)
     output = output.transpose(dim, -1)
     s = output.sum(dim=dim, keepdim=True).clamp_min(1e-12)
     return output / s
@@ -62,6 +62,113 @@ def masked_sparsemax(logits: torch.Tensor, mask: torch.Tensor, dim: int = -1) ->
     z = torch.where(mask, logits, torch.full_like(logits, very_neg))
     p = sparsemax(z, dim=dim)
     return torch.where(mask, p, torch.zeros_like(p))
+
+
+# ---------------------------- portfolio-specific layers ----------------------------
+
+
+class PortfolioConstraintLayer(nn.Module):
+    """Portfolio constraint enforcement layer for GAT models."""
+
+    def __init__(self, temperature: float = 1.0, min_weight: float = 1e-6):
+        """
+        Initialize portfolio constraint layer.
+        
+        Args:
+            temperature: Temperature parameter for softmax/sparsemax
+            min_weight: Minimum weight threshold
+        """
+        super().__init__()
+        self.temperature = temperature
+        self.min_weight = min_weight
+
+    def forward(self, logits: torch.Tensor, mask: torch.Tensor, activation: str = "sparsemax") -> torch.Tensor:
+        """
+        Apply portfolio constraints to raw logits.
+        
+        Args:
+            logits: Raw portfolio weight logits [batch_size, n_assets]
+            mask: Valid asset mask [batch_size, n_assets] 
+            activation: Constraint activation ("softmax" or "sparsemax")
+            
+        Returns:
+            Constrained portfolio weights
+        """
+        # Scale by temperature
+        scaled_logits = logits / self.temperature
+
+        # Apply constraint-aware activation
+        if activation.lower() == "sparsemax":
+            weights = masked_sparsemax(scaled_logits, mask.bool(), dim=-1)
+        else:
+            weights = masked_softmax(scaled_logits, mask.bool(), dim=-1)
+
+        # Apply minimum weight threshold
+        weights = torch.where(weights < self.min_weight, torch.zeros_like(weights), weights)
+
+        # Renormalize to ensure sum = 1
+        weight_sum = weights.sum(dim=-1, keepdim=True).clamp(min=1e-12)
+        weights = weights / weight_sum
+
+        return weights
+
+
+class PortfolioRegularization(nn.Module):
+    """Portfolio-specific regularization terms."""
+
+    def __init__(
+        self,
+        concentration_penalty: float = 0.1,
+        turnover_penalty: float = 0.05,
+        diversification_reward: float = 0.02
+    ):
+        """
+        Initialize portfolio regularization.
+        
+        Args:
+            concentration_penalty: Penalty for concentrated portfolios
+            turnover_penalty: Penalty for high turnover
+            diversification_reward: Reward for diversified portfolios
+        """
+        super().__init__()
+        self.concentration_penalty = concentration_penalty
+        self.turnover_penalty = turnover_penalty
+        self.diversification_reward = diversification_reward
+
+    def forward(
+        self,
+        weights: torch.Tensor,
+        prev_weights: torch.Tensor | None = None
+    ) -> torch.Tensor:
+        """
+        Compute portfolio regularization loss.
+        
+        Args:
+            weights: Current portfolio weights [batch_size, n_assets]
+            prev_weights: Previous portfolio weights for turnover calculation
+            
+        Returns:
+            Regularization loss
+        """
+        reg_loss = torch.tensor(0.0, device=weights.device)
+
+        # Concentration penalty (negative entropy)
+        if self.concentration_penalty > 0:
+            weights_safe = weights.clamp(min=1e-12)
+            entropy = -(weights_safe * torch.log(weights_safe)).sum(dim=-1).mean()
+            reg_loss += self.concentration_penalty * (-entropy)
+
+        # Turnover penalty
+        if self.turnover_penalty > 0 and prev_weights is not None:
+            turnover = torch.abs(weights - prev_weights).sum(dim=-1).mean()
+            reg_loss += self.turnover_penalty * turnover
+
+        # Diversification reward (Herfindahl-Hirschman Index penalty)
+        if self.diversification_reward > 0:
+            hhi = (weights ** 2).sum(dim=-1).mean()
+            reg_loss += self.diversification_reward * hhi
+
+        return reg_loss
 
 
 # ---------------------------- blocks ----------------------------
@@ -105,20 +212,36 @@ class GATBlock(nn.Module):
         self, x: torch.Tensor, edge_index: torch.Tensor, edge_attr: torch.Tensor | None
     ) -> torch.Tensor:
         if self.use_edge_attr and edge_attr is not None:
-            # Be robust: if edge_attr has more than 1 feature, compress to 1 via mean.
+            # Enhanced edge attribute processing for portfolio applications
             if edge_attr.dim() == 1:
                 ea = edge_attr.view(-1, 1)
-            elif edge_attr.size(-1) != 1:
-                ea = edge_attr.mean(dim=-1, keepdim=True)
+            elif self.edge_dim and edge_attr.size(-1) == self.edge_dim:
+                # Use all edge features if they match expected dimension
+                ea = edge_attr
+            elif edge_attr.size(-1) > self.edge_dim:
+                # For 3D edge attributes [rho, |rho|, sign], use all features
+                if self.edge_dim == 3 and edge_attr.size(-1) == 3:
+                    ea = edge_attr
+                else:
+                    # Compress via weighted mean (give more weight to correlation strength)
+                    if edge_attr.size(-1) >= 2:
+                        weights = torch.tensor([0.5, 0.3, 0.2], device=edge_attr.device)[:edge_attr.size(-1)]
+                        weights = weights / weights.sum()
+                        ea = (edge_attr * weights).sum(dim=-1, keepdim=True)
+                    else:
+                        ea = edge_attr.mean(dim=-1, keepdim=True)
             else:
                 ea = edge_attr
             h = self.conv(x, edge_index, ea)
         else:
             h = self.conv(x, edge_index)
+
         h = self.proj(h)
+
         if self.residual:
             h = h + x
-        h = F.elu(h)
+
+        h = F.elu(h)  # Using ELU for better gradient flow
         h = self.ln(h)
         h = self.dropout(h)
         return h
@@ -135,6 +258,8 @@ class HeadCfg:
 
 class GATPortfolio(nn.Module):
     """
+    Enhanced GAT model for portfolio optimization with portfolio-specific optimizations.
+    
     Returns:
         if head == "direct":  (weights[N], new_mem[N, mem_dim])
         if head == "markowitz": (mu_hat[N], new_mem[N, mem_dim])
@@ -153,40 +278,69 @@ class GATPortfolio(nn.Module):
         head: str = "markowitz",
         activation: str = "sparsemax",
         mem_hidden: int | None = None,
+        constraint_aware: bool = True,
+        portfolio_temperature: float = 1.0,
     ) -> None:
         super().__init__()
         self.use_edge_attr = use_edge_attr
         self.head_mode = head
         self.head_activation = activation if head == "direct" else "none"
+        self.constraint_aware = constraint_aware
+        self.portfolio_temperature = portfolio_temperature
 
-        # Backbone
+        # Backbone with enhanced architecture
         layers = []
         d_in = in_dim
-        for _li in range(num_layers):
+        for li in range(num_layers):
+            # Progressive hidden dimension reduction for better feature compression
+            layer_hidden = hidden_dim if li < num_layers - 1 else max(hidden_dim // 2, 32)
+
             block = GATBlock(
                 in_dim=d_in,
-                out_dim=hidden_dim,
+                out_dim=layer_hidden,
                 heads=heads,
                 dropout=dropout,
                 use_gatv2=use_gatv2,
                 use_edge_attr=use_edge_attr,
-                edge_dim=1,  # we standardize to 1-d edge weight
+                edge_dim=3,  # Enhanced for [rho, |rho|, sign] edge attributes
                 residual=residual,
             )
             layers.append(block)
-            d_in = hidden_dim
+            d_in = layer_hidden
         self.gnn = nn.ModuleList(layers)
 
-        self.head_in_dim = hidden_dim
+        self.head_in_dim = d_in  # Updated to use final layer dimension
         self.heads = heads
 
-        # Readout: simple MLP on top of the last block output
-        self.readout = nn.Sequential(
-            nn.Linear(self.head_in_dim, self.head_in_dim),
-            nn.ReLU(inplace=True),
-            nn.Dropout(dropout),
-            nn.Linear(self.head_in_dim, 1),
-        )
+        # Enhanced readout with portfolio-specific layers
+        if constraint_aware and head == "direct":
+            # Portfolio-aware readout for direct weight prediction
+            self.readout = nn.Sequential(
+                nn.Linear(self.head_in_dim, self.head_in_dim * 2),
+                nn.BatchNorm1d(self.head_in_dim * 2),
+                nn.ReLU(inplace=True),
+                nn.Dropout(dropout),
+                nn.Linear(self.head_in_dim * 2, hidden_dim),
+                nn.ReLU(inplace=True),
+                nn.Dropout(dropout * 0.5),  # Reduced dropout for final layer
+                nn.Linear(hidden_dim, 1),
+            )
+        else:
+            # Standard readout for Markowitz head
+            self.readout = nn.Sequential(
+                nn.Linear(self.head_in_dim, self.head_in_dim),
+                nn.ReLU(inplace=True),
+                nn.Dropout(dropout),
+                nn.Linear(self.head_in_dim, 1),
+            )
+
+        # Portfolio constraint layer for direct weight prediction
+        if constraint_aware and head == "direct":
+            self.constraint_layer = PortfolioConstraintLayer(
+                temperature=portfolio_temperature
+            )
+        else:
+            self.constraint_layer = None
 
         # Node-wise temporal memory (if enabled)
         self._mem_dim = int(mem_hidden) if mem_hidden is not None else 0
@@ -197,6 +351,9 @@ class GATPortfolio(nn.Module):
         else:
             self.mem_gru = None
             self.mem_fuse = None
+
+        # Portfolio-specific regularization
+        self.portfolio_reg = PortfolioRegularization() if constraint_aware else None
 
         self.reset_parameters()
 
@@ -220,7 +377,8 @@ class GATPortfolio(nn.Module):
         mask_valid: torch.Tensor,  # [N] bool
         edge_attr: torch.Tensor | None = None,  # [E, d_e] optional
         prev_mem: torch.Tensor | None = None,  # [N, mem_dim] optional
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+        prev_weights: torch.Tensor | None = None,  # [N] for regularization
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]:
         # Backbone
         h = x
         for block in self.gnn:
@@ -236,20 +394,62 @@ class GATPortfolio(nn.Module):
         else:
             m_new = torch.zeros(h.size(0), 0, device=h.device, dtype=h.dtype)
 
-        # Head
+        # Head with enhanced processing
+        if h.dim() == 2 and h.size(0) > 1:
+            # Apply batch normalization if we have multiple samples
+            h = F.layer_norm(h, h.shape[-1:])
+
         scores = self.readout(h).squeeze(-1)  # [N]
+        reg_loss = None
 
         if self.head_mode == "direct":
-            # Nonnegative weights that sum to 1 over valid nodes
-            if self.head_activation.lower() == "softmax":
-                w = masked_softmax(scores, mask_valid.bool(), dim=-1)
-            else:
-                w = masked_sparsemax(scores, mask_valid.bool(), dim=-1)
-            return w, m_new
+            # Enhanced direct weight prediction with constraint layer
+            if self.constraint_layer is not None:
+                # Use constraint-aware layer for better weight prediction
+                if scores.dim() == 1:
+                    scores = scores.unsqueeze(0)
+                    mask_valid = mask_valid.unsqueeze(0)
+                    unsqueeze_output = True
+                else:
+                    unsqueeze_output = False
 
-        # markowitz head: return µ̂ (scores). Invalid nodes -> 0
+                w = self.constraint_layer(scores, mask_valid, self.head_activation)
+
+                if unsqueeze_output:
+                    w = w.squeeze(0)
+
+                # Compute portfolio regularization if enabled
+                if self.portfolio_reg is not None:
+                    if prev_weights is not None:
+                        reg_loss = self.portfolio_reg(
+                            w.unsqueeze(0) if w.dim() == 1 else w,
+                            prev_weights.unsqueeze(0) if prev_weights.dim() == 1 else prev_weights
+                        )
+                    else:
+                        reg_loss = self.portfolio_reg(
+                            w.unsqueeze(0) if w.dim() == 1 else w
+                        )
+            else:
+                # Fallback to original implementation
+                if self.head_activation.lower() == "softmax":
+                    w = masked_softmax(scores, mask_valid.bool(), dim=-1)
+                else:
+                    w = masked_sparsemax(scores, mask_valid.bool(), dim=-1)
+
+            return w, m_new, reg_loss
+
+        # Enhanced markowitz head with additional processing
         mu_hat = torch.where(mask_valid.bool(), scores, torch.zeros_like(scores))
-        return mu_hat, m_new
+
+        # Apply additional normalization for Markowitz scores
+        if self.constraint_aware:
+            # Center the expected returns around zero for better optimization
+            valid_mu = mu_hat[mask_valid.bool()]
+            if len(valid_mu) > 0:
+                mu_mean = valid_mu.mean()
+                mu_hat = torch.where(mask_valid.bool(), mu_hat - mu_mean, torch.zeros_like(mu_hat))
+
+        return mu_hat, m_new, reg_loss
 
 
 def count_parameters(model: nn.Module) -> int:

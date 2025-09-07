@@ -330,22 +330,55 @@ class HRPAllocation:
         if weights.empty:
             return weights
 
-        # Apply minimum/maximum allocation constraints
-        constrained = weights.clip(
-            lower=self.config.min_allocation, upper=self.config.max_allocation
-        )
-
-        # Remove tiny allocations
-        constrained = constrained.where(constrained >= self.config.min_allocation, 0.0)
-
-        # Normalize to sum to 1.0
-        weight_sum = constrained.sum()
-        if weight_sum > 0:
+        # Iteratively enforce constraints to handle normalization issues
+        constrained = weights.copy()
+        max_iters = 10
+        
+        for iteration in range(max_iters):
+            # Apply minimum/maximum allocation constraints
+            constrained = constrained.clip(
+                lower=self.config.min_allocation, upper=self.config.max_allocation
+            )
+            # Remove tiny allocations
+            constrained = constrained.where(constrained >= self.config.min_allocation, 0.0)
+            
+            # Normalize to sum to 1.0
+            weight_sum = constrained.sum()
+            if weight_sum <= 0:
+                # Equal weights fallback
+                constrained = pd.Series(1.0 / len(constrained), index=constrained.index)
+                break
+                
             constrained = constrained / weight_sum
-        else:
-            # Equal weights fallback
-            constrained = pd.Series(1.0 / len(constrained), index=constrained.index)
-
+            
+            # Check if constraints are satisfied after normalization (with small tolerance)
+            if (constrained <= self.config.max_allocation + 1e-8).all():
+                break
+                
+            # If normalization re-violated max constraints, redistribute excess
+            violating_mask = constrained > self.config.max_allocation
+            if violating_mask.any():
+                excess_weight = (constrained[violating_mask] - self.config.max_allocation).sum()
+                constrained[violating_mask] = self.config.max_allocation
+                
+                # Redistribute excess to non-violating assets proportionally
+                non_violating_mask = ~violating_mask
+                if non_violating_mask.any():
+                    redistribution_base = constrained[non_violating_mask]
+                    if redistribution_base.sum() > 0:
+                        redistribution_weights = redistribution_base / redistribution_base.sum()
+                        constrained[non_violating_mask] += excess_weight * redistribution_weights
+        
+        # Final constraint enforcement with precise clipping
+        constrained = constrained.clip(upper=self.config.max_allocation)
+        
+        # Final normalization
+        final_sum = constrained.sum()
+        if final_sum > 0:
+            constrained = constrained / final_sum
+            # Ensure no constraint violations remain after final normalization
+            constrained = constrained.clip(upper=self.config.max_allocation)
+        
         # Round to specified precision
         constrained = constrained.round(self.config.allocation_precision)
 

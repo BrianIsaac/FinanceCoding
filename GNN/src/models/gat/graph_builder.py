@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import hashlib
 import math
+import os
+import pickle
 from dataclasses import dataclass
 from typing import Literal
 
@@ -37,6 +40,22 @@ class GraphBuildConfig:
     knn_k: int = 8
     threshold_abs_corr: float = 0.30  # used for threshold mode
     use_edge_attr: bool = True  # include [rho, |rho|, sign] if True
+
+    # Enhanced parameters for dynamic universe handling
+    enable_caching: bool = True  # Enable graph snapshot caching
+    cache_ttl_days: int = 30  # Time-to-live for cached graphs
+    adaptive_knn: bool = True  # Adaptive k based on universe size
+    min_knn_k: int = 5  # Minimum k for small universes
+    max_knn_k: int = 50  # Maximum k for large universes
+    universe_stability_threshold: float = 0.05  # Threshold for universe change detection
+
+    # Memory optimization parameters
+    max_edges_per_node: int = 50  # Maximum edges per node for memory efficiency
+    edge_pruning_threshold: float = 0.01  # Minimum edge weight to keep
+
+    # Multiple graph construction support
+    multi_graph_methods: list[str] | None = None  # ['knn', 'mst', 'tmfg'] for ensemble
+    ensemble_weights: list[float] | None = None  # Weights for ensemble combination
 
 
 # ----------------------------- helpers -----------------------------
@@ -259,6 +278,321 @@ def _edge_attr_from_corr(C: np.ndarray, E: list[tuple[int, int]]) -> np.ndarray:
     return np.asarray(attrs, dtype=np.float32)
 
 
+# --------------------------- dynamic universe helpers ----------------------------
+
+
+def _compute_adaptive_knn_k(universe_size: int, cfg: GraphBuildConfig) -> int:
+    """
+    Compute adaptive k-NN parameter based on universe size.
+    
+    Args:
+        universe_size: Number of assets in universe
+        cfg: Graph build configuration
+        
+    Returns:
+        Optimal k for k-NN graph construction
+    """
+    if not cfg.adaptive_knn:
+        return cfg.knn_k
+
+    # Scale k based on universe size with logarithmic scaling
+    base_k = max(cfg.min_knn_k, int(np.sqrt(universe_size)))
+    scaled_k = min(cfg.max_knn_k, base_k)
+
+    # Ensure we don't exceed universe constraints
+    max_possible_k = max(1, universe_size - 1)
+    return min(scaled_k, max_possible_k)
+
+
+def _prune_edges_by_weight(
+    edges: list[tuple[int, int]],
+    edge_attrs: np.ndarray,
+    cfg: GraphBuildConfig
+) -> tuple[list[tuple[int, int]], np.ndarray]:
+    """
+    Prune edges based on correlation strength and memory constraints.
+    
+    Args:
+        edges: List of edge tuples
+        edge_attrs: Edge attributes array
+        cfg: Graph build configuration
+        
+    Returns:
+        Pruned edges and attributes
+    """
+    if not edges or cfg.edge_pruning_threshold <= 0:
+        return edges, edge_attrs
+
+    # Calculate edge strengths (absolute correlation)
+    edge_strengths = np.abs(edge_attrs[:, 0])  # Use correlation magnitude
+
+    # Keep edges above threshold
+    keep_mask = edge_strengths >= cfg.edge_pruning_threshold
+
+    if keep_mask.sum() == 0:
+        # If no edges pass threshold, keep the strongest ones
+        n_keep = min(len(edges), len(edges) // 2)
+        top_indices = np.argsort(edge_strengths)[-n_keep:]
+        keep_mask = np.zeros(len(edges), dtype=bool)
+        keep_mask[top_indices] = True
+
+    pruned_edges = [edges[i] for i in range(len(edges)) if keep_mask[i]]
+    pruned_attrs = edge_attrs[keep_mask]
+
+    return pruned_edges, pruned_attrs
+
+
+def _enforce_max_edges_per_node(
+    edges: list[tuple[int, int]],
+    edge_attrs: np.ndarray,
+    n_nodes: int,
+    max_edges: int
+) -> tuple[list[tuple[int, int]], np.ndarray]:
+    """
+    Enforce maximum edges per node constraint for memory efficiency.
+    
+    Args:
+        edges: List of edge tuples
+        edge_attrs: Edge attributes array  
+        n_nodes: Number of nodes
+        max_edges: Maximum edges per node
+        
+    Returns:
+        Filtered edges and attributes
+    """
+    if max_edges <= 0 or not edges:
+        return edges, edge_attrs
+
+    # Count edges per node
+    edge_counts = [0] * n_nodes
+    node_edges = [[] for _ in range(n_nodes)]
+
+    for idx, (i, j) in enumerate(edges):
+        edge_counts[i] += 1
+        edge_counts[j] += 1
+        node_edges[i].append((idx, j, np.abs(edge_attrs[idx, 0])))  # Store strength
+        node_edges[j].append((idx, i, np.abs(edge_attrs[idx, 0])))
+
+    # Keep strongest edges for each overconnected node
+    keep_indices = set()
+
+    for node in range(n_nodes):
+        if edge_counts[node] <= max_edges:
+            # Add all edges for this node
+            for edge_idx, _, _ in node_edges[node]:
+                keep_indices.add(edge_idx)
+        else:
+            # Keep only the strongest edges
+            sorted_edges = sorted(node_edges[node], key=lambda x: x[2], reverse=True)
+            for edge_idx, _, _ in sorted_edges[:max_edges]:
+                keep_indices.add(edge_idx)
+
+    # Filter edges and attributes
+    filtered_edges = [edges[i] for i in sorted(keep_indices)]
+    filtered_attrs = edge_attrs[sorted(keep_indices)]
+
+    return filtered_edges, filtered_attrs
+
+
+def _build_ensemble_graph(
+    C: np.ndarray,
+    methods: list[str],
+    weights: list[float] | None,
+    cfg: GraphBuildConfig
+) -> tuple[list[tuple[int, int]], np.ndarray]:
+    """
+    Build ensemble graph combining multiple construction methods.
+    
+    Args:
+        C: Correlation matrix
+        methods: List of graph construction methods
+        weights: Weights for combining methods (None for equal weights)
+        cfg: Graph build configuration
+        
+    Returns:
+        Combined edges and attributes
+    """
+    if not methods:
+        methods = ["mst"]
+
+    if weights is None:
+        weights = [1.0 / len(methods)] * len(methods)
+    elif len(weights) != len(methods):
+        raise ValueError("Number of weights must match number of methods")
+
+    # Normalize weights
+    total_weight = sum(weights)
+    weights = [w / total_weight for w in weights]
+
+    all_edges: set[tuple[int, int]] = set()
+    edge_scores: dict[tuple[int, int], float] = {}
+
+    # Build graphs with different methods
+    for method, weight in zip(methods, weights):
+        if method == "mst":
+            edges = _mst_edges_from_corr(C)
+        elif method == "tmfg":
+            edges = _tmfg_edges_from_corr(C)
+        elif method == "knn":
+            k = _compute_adaptive_knn_k(C.shape[0], cfg)
+            edges = _knn_edges_from_corr(C, k)
+        elif method == "threshold":
+            edges = _threshold_edges_from_corr(C, cfg.threshold_abs_corr)
+        else:
+            continue
+
+        # Add edges with weighted scores
+        for edge in edges:
+            all_edges.add(edge)
+            if edge in edge_scores:
+                edge_scores[edge] += weight
+            else:
+                edge_scores[edge] = weight
+
+    # Sort edges by combined score
+    sorted_edges = sorted(all_edges, key=lambda e: edge_scores[e], reverse=True)
+
+    # Build attributes
+    edge_attrs = _edge_attr_from_corr(C, sorted_edges)
+
+    return sorted_edges, edge_attrs
+
+
+# --------------------------- graph caching ----------------------------
+
+
+class GraphCache:
+    """Graph snapshot caching for efficient monthly rebalancing."""
+
+    def __init__(self, cache_dir: str = ".cache/graphs", ttl_days: int = 30):
+        """
+        Initialize graph cache.
+        
+        Args:
+            cache_dir: Directory to store cached graphs
+            ttl_days: Time-to-live for cached graphs in days
+        """
+        self.cache_dir = cache_dir
+        self.ttl_days = ttl_days
+        os.makedirs(cache_dir, exist_ok=True)
+
+    def _get_cache_key(
+        self,
+        tickers: list[str],
+        ts: pd.Timestamp,
+        cfg: GraphBuildConfig,
+        returns_hash: str
+    ) -> str:
+        """Generate cache key for graph configuration."""
+        # Create deterministic hash from configuration
+        config_str = (
+            f"{sorted(tickers)}-{ts.strftime('%Y%m%d')}-{cfg.lookback_days}-"
+            f"{cfg.filter_method}-{cfg.knn_k}-{cfg.threshold_abs_corr}-"
+            f"{cfg.cov_method}-{cfg.shrink_to}-{returns_hash}"
+        )
+        return hashlib.md5(config_str.encode()).hexdigest()
+
+    def _get_cache_path(self, cache_key: str) -> str:
+        """Get file path for cached graph."""
+        return os.path.join(self.cache_dir, f"graph_{cache_key}.pkl")
+
+    def _is_cache_valid(self, cache_path: str) -> bool:
+        """Check if cached graph is still valid based on TTL."""
+        if not os.path.exists(cache_path):
+            return False
+
+        # Check file age
+        file_age_days = (pd.Timestamp.now() - pd.Timestamp.fromtimestamp(os.path.getmtime(cache_path))).days
+        return file_age_days < self.ttl_days
+
+    def _hash_returns_window(self, returns_window: pd.DataFrame) -> str:
+        """Create hash of returns data for cache validation."""
+        # Use a small sample of the returns data to create hash
+        sample_data = returns_window.iloc[::max(1, len(returns_window)//100)].values  # Sample every 100th row
+        return hashlib.md5(sample_data.tobytes()).hexdigest()[:16]
+
+    def get_cached_graph(
+        self,
+        returns_window: pd.DataFrame,
+        tickers: list[str],
+        ts: pd.Timestamp,
+        cfg: GraphBuildConfig
+    ) -> Data | None:
+        """Retrieve cached graph if available and valid."""
+        if not cfg.enable_caching:
+            return None
+
+        returns_hash = self._hash_returns_window(returns_window)
+        cache_key = self._get_cache_key(tickers, ts, cfg, returns_hash)
+        cache_path = self._get_cache_path(cache_key)
+
+        if not self._is_cache_valid(cache_path):
+            return None
+
+        try:
+            with open(cache_path, 'rb') as f:
+                cached_data = pickle.load(f)
+                # Validate that cached data matches current request
+                if (cached_data.get('tickers') == tickers and
+                    cached_data.get('timestamp') == ts):
+                    return cached_data['graph']
+        except Exception:
+            # If cache is corrupted, ignore and rebuild
+            pass
+
+        return None
+
+    def cache_graph(
+        self,
+        graph: Data,
+        returns_window: pd.DataFrame,
+        tickers: list[str],
+        ts: pd.Timestamp,
+        cfg: GraphBuildConfig
+    ) -> None:
+        """Cache graph for future use."""
+        if not cfg.enable_caching:
+            return
+
+        returns_hash = self._hash_returns_window(returns_window)
+        cache_key = self._get_cache_key(tickers, ts, cfg, returns_hash)
+        cache_path = self._get_cache_path(cache_key)
+
+        cache_data = {
+            'graph': graph,
+            'tickers': tickers,
+            'timestamp': ts,
+            'config_hash': cache_key
+        }
+
+        try:
+            with open(cache_path, 'wb') as f:
+                pickle.dump(cache_data, f)
+        except Exception:
+            # Fail silently if caching doesn't work
+            pass
+
+    def clear_expired_cache(self) -> int:
+        """Clear expired cache entries and return number of files removed."""
+        removed_count = 0
+
+        try:
+            for filename in os.listdir(self.cache_dir):
+                if filename.startswith("graph_") and filename.endswith(".pkl"):
+                    file_path = os.path.join(self.cache_dir, filename)
+                    if not self._is_cache_valid(file_path):
+                        os.remove(file_path)
+                        removed_count += 1
+        except Exception:
+            pass
+
+        return removed_count
+
+
+# Global cache instance
+_graph_cache = GraphCache()
+
+
 # --------------------------- main entry ----------------------------
 
 
@@ -270,6 +604,8 @@ def build_graph_from_returns(
     cfg: GraphBuildConfig,
 ) -> Data:
     """
+    Build graph from returns data with enhanced dynamic universe handling and caching.
+    
     Parameters
     ----------
     returns_window : (T x N) DataFrame
@@ -281,33 +617,58 @@ def build_graph_from_returns(
     ts : pd.Timestamp
         The snapshot date for this graph (rebalance date).
     cfg : GraphBuildConfig
-        Rolling-corr & filtering options.
+        Enhanced configuration with dynamic universe and caching options.
 
     Returns
     -------
     torch_geometric.data.Data
         Data(x, edge_index, edge_attr?, tickers=<list[str]>, ts=<timestamp>)
+        Enhanced with dynamic universe handling and caching support.
     """
+    # Check cache first
+    if cfg.enable_caching:
+        cached_graph = _graph_cache.get_cached_graph(returns_window, tickers, ts, cfg)
+        if cached_graph is not None:
+            return cached_graph
     # Align and clean
     rets = returns_window.reindex(columns=tickers, fill_value=np.nan).astype(float)
     rets = rets.fillna(0.0)  # conservative fill
     X = rets.values  # (T, N)
+    N = X.shape[1]  # Number of assets
 
     # Robust covariance -> correlation
     S = robust_covariance(X, method=cfg.cov_method, shrink_to=cfg.shrink_to, min_var=cfg.min_var)
     C = to_correlation(S)
 
-    # Filtering -> edge list
-    if cfg.filter_method == "mst":
-        E = _mst_edges_from_corr(C)
-    elif cfg.filter_method == "tmfg":
-        E = _tmfg_edges_from_corr(C)
-    elif cfg.filter_method == "knn":
-        E = _knn_edges_from_corr(C, k=int(cfg.knn_k))
-    elif cfg.filter_method == "threshold":
-        E = _threshold_edges_from_corr(C, thr=float(cfg.threshold_abs_corr))
+    # Enhanced filtering with dynamic universe handling
+    if cfg.multi_graph_methods is not None:
+        # Use ensemble graph construction
+        E, edge_attr = _build_ensemble_graph(C, cfg.multi_graph_methods, cfg.ensemble_weights, cfg)
     else:
-        raise ValueError(f"Unknown filter_method={cfg.filter_method}")
+        # Single method graph construction with adaptive parameters
+        if cfg.filter_method == "mst":
+            E = _mst_edges_from_corr(C)
+        elif cfg.filter_method == "tmfg":
+            E = _tmfg_edges_from_corr(C)
+        elif cfg.filter_method == "knn":
+            k = _compute_adaptive_knn_k(N, cfg)  # Use adaptive k
+            E = _knn_edges_from_corr(C, k=k)
+        elif cfg.filter_method == "threshold":
+            E = _threshold_edges_from_corr(C, thr=float(cfg.threshold_abs_corr))
+        else:
+            raise ValueError(f"Unknown filter_method={cfg.filter_method}")
+
+        # Build edge attributes
+        edge_attr = _edge_attr_from_corr(C, E) if cfg.use_edge_attr else None
+
+    # Apply edge pruning and memory constraints
+    if E and cfg.use_edge_attr and edge_attr is not None:
+        # Prune weak edges
+        E, edge_attr = _prune_edges_by_weight(E, edge_attr, cfg)
+
+        # Enforce memory constraints
+        if cfg.max_edges_per_node > 0:
+            E, edge_attr = _enforce_max_edges_per_node(E, edge_attr, N, cfg.max_edges_per_node)
 
     # Edge index & attributes
     if len(E) == 0:
@@ -315,8 +676,7 @@ def build_graph_from_returns(
         edge_attr_t = None
     else:
         edge_index = torch.tensor(np.array(E, dtype=np.int64).T, dtype=torch.long)
-        if cfg.use_edge_attr:
-            edge_attr = _edge_attr_from_corr(C, E)
+        if cfg.use_edge_attr and edge_attr is not None:
             edge_attr_t = torch.tensor(edge_attr, dtype=torch.float32)
         else:
             edge_attr_t = None
@@ -340,6 +700,10 @@ def build_graph_from_returns(
     # helpful metadata for downstream code
     data.tickers = tickers
     data.ts = ts.to_pydatetime()
+
+    # Cache the graph for future use
+    if cfg.enable_caching:
+        _graph_cache.cache_graph(data, returns_window, tickers, ts, cfg)
 
     return data
 
