@@ -204,3 +204,9 @@ NLP/financial_news.txt
 GNN/interim/
 GNN/outputs/
 GNN/processed
+
+#bmad with gnn
+GNN/docs
+GNN/claude-processing-needs
+GNN/.claude
+GNN/.bmad-core
