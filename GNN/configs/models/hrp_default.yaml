@@ -1,51 +1,37 @@
-# Hierarchical Risk Parity (HRP) model configuration
+# Hierarchical Risk Parity (HRP) Model Configuration
 
-model_type: hrp
+name: hrp
+description: "Hierarchical Risk Parity portfolio optimization using correlation distance clustering"
 
-# Base model parameters
-learning_rate: 0.001      # Not used for HRP but kept for interface consistency
-batch_size: 32           # Portfolio batch size for evaluation
-max_epochs: 1            # Single calculation per rebalance
-early_stopping_patience: 1
-validation_split: 0.0    # No training/validation split needed
+# Core HRP Parameters
+lookback_days: 756  # 3 years of daily returns data
+min_observations: 252  # Minimum observations required (1 year)
+rebalance_frequency: monthly
 
-# HRP-specific parameters
+# Clustering Configuration  
 clustering:
-  linkage_method: ward         # Clustering linkage method
-  distance_metric: euclidean   # Distance metric for clustering
-  min_clusters: 2             # Minimum number of clusters
-  max_clusters: null          # Auto-determine based on data
+  linkage_method: single  # single, complete, average, ward
+  correlation_method: pearson  # pearson, spearman, kendall
+  min_correlation_threshold: null  # Optional minimum correlation for edge filtering
+  
+# Allocation Configuration
+allocation:
+  risk_measure: variance  # variance, vol, equal
+  min_allocation: 0.001   # 0.1% minimum position size
+  max_allocation: 0.10    # 10% maximum position size (overridden by constraints)
+  allocation_precision: 6 # Decimal places for weight precision
 
-# Portfolio constraints
+# Portfolio Constraints
 constraints:
-  min_weight: 0.01       # 1% minimum position
-  max_weight: 0.1        # 10% maximum position  
-  max_leverage: 1.0      # Long-only portfolio
-  turnover_limit: 0.5    # Maximum 50% turnover per rebalance
+  long_only: true
+  top_k_positions: 50
+  max_position_weight: 0.10  # 10% maximum single position
+  max_monthly_turnover: 0.20 # 20% monthly turnover limit  
+  transaction_cost_bps: 10.0 # 0.10% transaction cost
+  min_weight_threshold: 0.01 # 1% minimum weight threshold
 
-# Risk management
-risk:
-  target_volatility: 0.12     # 12% annual volatility target
-  risk_budget_method: equal    # Equal risk contribution
-  correlation_threshold: 0.8   # Threshold for highly correlated assets
-  volatility_lookback: 252     # 1 year volatility estimation
-
-# Rebalancing
-rebalancing:
-  frequency: 21              # Monthly rebalancing (21 trading days)
-  min_rebalance_threshold: 0.05  # 5% drift threshold
-  transaction_costs: 0.001   # 10 bps transaction cost assumption
-
-# Performance attribution
-attribution:
-  benchmark: "SPY"           # S&P 500 benchmark
-  risk_free_rate: 0.02      # 2% risk-free rate assumption
-  calculate_alpha: true
-  calculate_information_ratio: true
-
-# Optimization settings
-optimization:
-  method: analytical         # Analytical HRP solution (no numerical optimization)
-  tolerance: 1e-6           # Convergence tolerance
-  max_iterations: 100       # Maximum iterations (fallback)
-  regularization: 1e-8      # Covariance matrix regularization
+# Model Metadata
+model_type: risk_parity
+expected_universe_size: 400
+computational_complexity: medium
+memory_usage: medium
