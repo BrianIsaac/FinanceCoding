@@ -395,11 +395,11 @@ class ParquetManager:
             Dictionary with data information
         """
         data_dir = self.base_path / data_type
-        info = {
+        info: dict[str, Any] = {
             "data_type": data_type,
             "exists": data_dir.exists(),
             "files": [],
-            "total_size_mb": 0,
+            "total_size_mb": 0.0,
             "date_range": (None, None),
             "total_rows": 0,
             "partition_strategy": "unknown",

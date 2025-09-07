@@ -64,12 +64,12 @@ except Exception:
         pass
 
 # import utilities from your training module
-from src.train import _annualized_sharpe_from_series  # noqa: F401
-from src.train import evaluate_daily_compound  # for consistency # noqa: F401
-from src.train import load_label_vec  # noqa: F401
 from src.train import (  # noqa: E402
+    _annualized_sharpe_from_series,  # noqa: F401
+    evaluate_daily_compound,  # for consistency # noqa: F401
     list_samples,
     load_graph,
+    load_label_vec,  # noqa: F401
     split_samples,
 )
 

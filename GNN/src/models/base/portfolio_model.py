@@ -8,7 +8,7 @@ ensuring consistent APIs across different ML approaches (HRP, LSTM, GAT).
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, Optional
+from typing import Any
 
 import pandas as pd
 
@@ -104,9 +104,9 @@ class PortfolioModel(ABC):
     def validate_weights(
         self,
         weights: pd.Series,
-        previous_weights: Optional[pd.Series] = None,
-        model_scores: Optional[pd.Series] = None,
-        date: Optional[pd.Timestamp] = None,
+        previous_weights: pd.Series | None = None,
+        model_scores: pd.Series | None = None,
+        date: pd.Timestamp | None = None,
     ) -> pd.Series:
         """
         Validate and enforce portfolio constraints using unified constraint engine.
@@ -145,7 +145,7 @@ class PortfolioModel(ABC):
         return getattr(self, "_latest_cost_analysis", {})
 
     def validate_portfolio_feasibility(
-        self, weights: pd.Series, previous_weights: Optional[pd.Series] = None
+        self, weights: pd.Series, previous_weights: pd.Series | None = None
     ):
         """
         Validate overall portfolio feasibility using unified constraint engine.
@@ -160,7 +160,7 @@ class PortfolioModel(ABC):
         return self.constraint_engine.validate_portfolio_feasibility(weights, previous_weights)
 
     def create_constraint_report(
-        self, weights: pd.Series, previous_weights: Optional[pd.Series] = None
+        self, weights: pd.Series, previous_weights: pd.Series | None = None
     ):
         """
         Create comprehensive constraint enforcement report.

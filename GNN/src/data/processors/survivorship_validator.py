@@ -42,7 +42,7 @@ class SurvivorshipValidator:
         Returns:
             Dictionary with validation metrics and survivorship analysis
         """
-        validation_results = {}
+        validation_results: dict[str, Any] = {}
 
         # Basic interval validation
         validation_results["total_intervals"] = len(membership_df)
@@ -88,7 +88,7 @@ class SurvivorshipValidator:
         Returns:
             Dictionary with delisting analysis
         """
-        delisted_analysis = {}
+        delisted_analysis: dict[str, Any] = {}
 
         # Find tickers with end dates (delisted)
         delisted_mask = membership_df["end"].notna()
@@ -128,7 +128,7 @@ class SurvivorshipValidator:
         Returns:
             Dictionary with survivor bias analysis
         """
-        survivor_analysis = {}
+        survivor_analysis: dict[str, Any] = {}
 
         # Current survivors (no end date)
         current_survivors = membership_df[membership_df["end"].isna()]
@@ -156,7 +156,7 @@ class SurvivorshipValidator:
 
             # Count active companies at different time points
             sample_dates = pd.date_range(earliest_date, latest_date, periods=5)
-            temporal_counts = {}
+            temporal_counts: dict[str, int] = {}
 
             for sample_date in sample_dates:
                 active_mask = (membership_df["start"] <= sample_date) & (
@@ -178,7 +178,7 @@ class SurvivorshipValidator:
         Returns:
             Dictionary with calendar-specific survivorship validation
         """
-        calendar_validation = {}
+        calendar_validation: dict[str, Any] = {}
 
         if universe_calendar.empty:
             calendar_validation["error"] = "Empty universe calendar"
@@ -236,7 +236,7 @@ class SurvivorshipValidator:
         Returns:
             Dictionary with turnover analysis
         """
-        turnover_analysis = {}
+        turnover_analysis: dict[str, Any] = {}
 
         # Get unique dates sorted
         unique_dates = sorted(universe_calendar["date"].unique())

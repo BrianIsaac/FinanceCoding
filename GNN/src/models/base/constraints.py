@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -54,7 +54,7 @@ class PortfolioConstraints:
 
     # Basic constraints
     long_only: bool = True
-    top_k_positions: Optional[int] = None
+    top_k_positions: int | None = None
     max_position_weight: float = 0.10
     min_weight_threshold: float = 0.01
 
@@ -70,14 +70,14 @@ class PortfolioConstraints:
     enable_turnover_penalty: bool = True
 
     # Risk-based constraints (for future use)
-    max_portfolio_volatility: Optional[float] = None
-    max_asset_correlation: Optional[float] = None
-    min_diversification_ratio: Optional[float] = None
+    max_portfolio_volatility: float | None = None
+    max_asset_correlation: float | None = None
+    min_diversification_ratio: float | None = None
 
     # Regulatory constraints
-    max_sector_concentration: Optional[float] = None
+    max_sector_concentration: float | None = None
     max_single_issuer_weight: float = 0.10
-    min_liquidity_threshold: Optional[float] = None
+    min_liquidity_threshold: float | None = None
 
 
 class ConstraintEngine:
@@ -98,16 +98,16 @@ class ConstraintEngine:
             constraints: Unified portfolio constraints configuration
         """
         self.constraints = constraints
-        self.violation_log: List[Dict[str, Any]] = []
-        self.turnover_history: Dict[str, List[float]] = {}
+        self.violation_log: list[dict[str, Any]] = []
+        self.turnover_history: dict[str, list[float]] = {}
 
     def enforce_constraints(
         self,
         weights: pd.Series,
-        previous_weights: Optional[pd.Series] = None,
-        model_scores: Optional[pd.Series] = None,
-        date: Optional[pd.Timestamp] = None,
-    ) -> Tuple[pd.Series, List[ConstraintViolation]]:
+        previous_weights: pd.Series | None = None,
+        model_scores: pd.Series | None = None,
+        date: pd.Timestamp | None = None,
+    ) -> tuple[pd.Series, list[ConstraintViolation]]:
         """
         Apply all constraints to portfolio weights with comprehensive violation tracking.
 
@@ -158,8 +158,8 @@ class ConstraintEngine:
         return constrained_weights, violations
 
     def check_violations(
-        self, weights: pd.Series, previous_weights: Optional[pd.Series] = None
-    ) -> List[ConstraintViolation]:
+        self, weights: pd.Series, previous_weights: pd.Series | None = None
+    ) -> list[ConstraintViolation]:
         """
         Check for constraint violations without applying adjustments.
 
@@ -235,7 +235,7 @@ class ConstraintEngine:
         return violations
 
     def _apply_long_only_constraint(
-        self, weights: pd.Series, violations: List[ConstraintViolation]
+        self, weights: pd.Series, violations: list[ConstraintViolation]
     ) -> pd.Series:
         """Apply long-only constraint by clipping negative weights."""
         if not self.constraints.long_only:
@@ -245,7 +245,7 @@ class ConstraintEngine:
         return weights.clip(lower=0.0)
 
     def _apply_weight_threshold_constraint(
-        self, weights: pd.Series, violations: List[ConstraintViolation]
+        self, weights: pd.Series, violations: list[ConstraintViolation]
     ) -> pd.Series:
         """Apply minimum weight threshold constraint."""
         return weights.where(weights >= self.constraints.min_weight_threshold, 0.0)
@@ -253,8 +253,8 @@ class ConstraintEngine:
     def _apply_top_k_constraint(
         self,
         weights: pd.Series,
-        model_scores: Optional[pd.Series],
-        violations: List[ConstraintViolation],
+        model_scores: pd.Series | None,
+        violations: list[ConstraintViolation],
     ) -> pd.Series:
         """Apply top-k positions constraint based on ranking method."""
         if self.constraints.top_k_positions is None:
@@ -284,7 +284,7 @@ class ConstraintEngine:
         return weights
 
     def _apply_max_weight_constraint(
-        self, weights: pd.Series, violations: List[ConstraintViolation]
+        self, weights: pd.Series, violations: list[ConstraintViolation]
     ) -> pd.Series:
         """Apply maximum position weight constraint with redistribution."""
         max_weight = self.constraints.max_position_weight
@@ -297,7 +297,7 @@ class ConstraintEngine:
 
         # Iterative adjustment to handle cascading violations
         max_iters = 10
-        for iteration in range(max_iters):
+        for _iteration in range(max_iters):
             violating_mask = weights > max_weight
             if not violating_mask.any():
                 break
@@ -329,8 +329,8 @@ class ConstraintEngine:
     def _apply_turnover_constraint(
         self,
         weights: pd.Series,
-        previous_weights: Optional[pd.Series],
-        violations: List[ConstraintViolation],
+        previous_weights: pd.Series | None,
+        violations: list[ConstraintViolation],
     ) -> pd.Series:
         """Apply turnover constraint by blending with previous weights."""
         if previous_weights is None or not self.constraints.enable_turnover_penalty:
@@ -375,7 +375,7 @@ class ConstraintEngine:
         # Calculate one-way turnover
         return np.abs(current_aligned - previous_aligned).sum()
 
-    def _log_violations(self, date: pd.Timestamp, violations: List[ConstraintViolation]) -> None:
+    def _log_violations(self, date: pd.Timestamp, violations: list[ConstraintViolation]) -> None:
         """Log constraint violations with timestamps."""
         for violation in violations:
             violation_record = {
@@ -389,7 +389,7 @@ class ConstraintEngine:
             }
             self.violation_log.append(violation_record)
 
-    def get_violation_summary(self) -> Dict[str, Any]:
+    def get_violation_summary(self) -> dict[str, Any]:
         """Get summary of all recorded constraint violations."""
         if not self.violation_log:
             return {"total_violations": 0, "by_type": {}, "by_severity": {}}
@@ -413,8 +413,8 @@ class ConstraintEngine:
         }
 
     def calculate_constraint_metrics(
-        self, weights: pd.Series, previous_weights: Optional[pd.Series] = None
-    ) -> Dict[str, Any]:
+        self, weights: pd.Series, previous_weights: pd.Series | None = None
+    ) -> dict[str, Any]:
         """
         Calculate comprehensive constraint adherence metrics.
 
@@ -478,7 +478,7 @@ class ConstraintEngine:
 
         return max(0.0, gini)  # Ensure non-negative
 
-    def create_constraint_report(self) -> Dict[str, Any]:
+    def create_constraint_report(self) -> dict[str, Any]:
         """Create comprehensive constraint system report."""
         return {
             "constraint_config": {

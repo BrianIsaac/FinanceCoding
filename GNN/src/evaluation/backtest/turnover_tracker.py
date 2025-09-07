@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from collections import defaultdict, deque
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -21,7 +21,7 @@ class TurnoverBudget:
     """Turnover budget allocation for assets."""
 
     total_budget: float
-    allocated: Dict[str, float]
+    allocated: dict[str, float]
     remaining: float
 
     def allocate(self, asset: str, amount: float) -> bool:
@@ -75,18 +75,18 @@ class TurnoverTracker:
         self.enable_budgeting = enable_budgeting
 
         # Turnover history storage
-        self.turnover_history: List[Dict[str, Any]] = []
+        self.turnover_history: list[dict[str, Any]] = []
         self.rolling_turnovers: deque = deque(maxlen=lookback_months)
 
         # Asset-level tracking
-        self.asset_turnovers: Dict[str, List[float]] = defaultdict(list)
+        self.asset_turnovers: dict[str, list[float]] = defaultdict(list)
 
         # Budgeting system
-        self.current_budget: Optional[TurnoverBudget] = None
+        self.current_budget: TurnoverBudget | None = None
 
     def calculate_turnover(
         self, current_weights: pd.Series, previous_weights: pd.Series, method: str = "one_way"
-    ) -> Dict[str, float]:
+    ) -> dict[str, float]:
         """
         Calculate comprehensive turnover metrics.
 
@@ -136,7 +136,7 @@ class TurnoverTracker:
         current_weights: pd.Series,
         previous_weights: pd.Series,
         portfolio_value: float = 1.0,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Track a rebalancing event with comprehensive metrics.
 
@@ -191,7 +191,7 @@ class TurnoverTracker:
         current_weights: pd.Series,
         previous_weights: pd.Series,
         method: str = "proportional_blend",
-    ) -> Tuple[pd.Series, Dict[str, Any]]:
+    ) -> tuple[pd.Series, dict[str, Any]]:
         """
         Enforce turnover constraint by adjusting weights.
 
@@ -327,7 +327,7 @@ class TurnoverTracker:
             remaining=self.max_monthly_turnover,
         )
 
-    def _update_budget_tracking(self, turnover_metrics: Dict[str, Any]) -> Dict[str, Any]:
+    def _update_budget_tracking(self, turnover_metrics: dict[str, Any]) -> dict[str, Any]:
         """Update budget tracking with current turnover usage."""
         if self.current_budget is None:
             return {}
@@ -345,7 +345,7 @@ class TurnoverTracker:
             "over_budget": total_used > self.current_budget.total_budget,
         }
 
-    def get_rolling_average_turnover(self, periods: Optional[int] = None) -> float:
+    def get_rolling_average_turnover(self, periods: int | None = None) -> float:
         """Get rolling average turnover over specified periods."""
         if not self.rolling_turnovers:
             return 0.0
@@ -354,7 +354,7 @@ class TurnoverTracker:
         recent_turnovers = list(self.rolling_turnovers)[-periods:]
         return np.mean(recent_turnovers) if recent_turnovers else 0.0
 
-    def get_turnover_statistics(self) -> Dict[str, Any]:
+    def get_turnover_statistics(self) -> dict[str, Any]:
         """Get comprehensive turnover statistics."""
         if not self.turnover_history:
             return {"error": "No turnover history available"}
@@ -384,7 +384,7 @@ class TurnoverTracker:
         self.asset_turnovers.clear()
         self.current_budget = None
 
-    def create_turnover_report(self) -> Dict[str, Any]:
+    def create_turnover_report(self) -> dict[str, Any]:
         """Create comprehensive turnover tracking report."""
         statistics = self.get_turnover_statistics()
 

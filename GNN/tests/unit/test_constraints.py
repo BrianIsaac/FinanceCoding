@@ -213,7 +213,7 @@ class TestConstraintEngine:
     def test_risk_constraints_stub(self, default_engine, sample_weights):
         """Test that risk constraints are currently a stub implementation."""
         # Create mock returns data
-        returns_data = pd.DataFrame(
+        pd.DataFrame(
             np.random.normal(0.001, 0.02, (100, len(sample_weights))), columns=sample_weights.index
         )
 

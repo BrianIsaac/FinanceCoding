@@ -22,7 +22,7 @@ try:
     HAS_PLOTTING = True
 except ImportError:
     HAS_PLOTTING = False
-    warnings.warn("Matplotlib/Seaborn not available. Visualization features disabled.")
+    warnings.warn("Matplotlib/Seaborn not available. Visualization features disabled.", stacklevel=2)
 
 try:
     import networkx as nx
@@ -30,7 +30,7 @@ try:
     HAS_NETWORKX = True
 except ImportError:
     HAS_NETWORKX = False
-    warnings.warn("NetworkX not available. Graph visualization features disabled.")
+    warnings.warn("NetworkX not available. Graph visualization features disabled.", stacklevel=2)
 
 from .gat_model import GATPortfolio
 
@@ -381,7 +381,7 @@ class PortfolioAttribution:
         )
 
         # Compute portfolio returns and contributions
-        portfolio_return = (portfolio_weights * returns).sum()
+        (portfolio_weights * returns).sum()
         individual_contributions = portfolio_weights * returns
 
         # Aggregate attention by asset
@@ -490,7 +490,7 @@ class InteractiveVizDashboard:
 
             return True
         except ImportError:
-            warnings.warn("Plotly not available. Interactive features disabled.")
+            warnings.warn("Plotly not available. Interactive features disabled.", stacklevel=2)
             return False
 
     def create_interactive_heatmap(
@@ -529,7 +529,7 @@ class InteractiveVizDashboard:
                 x=heatmap_data.columns,
                 y=heatmap_data.index,
                 colorscale="Viridis",
-                colorbar=dict(title="Attention Weight"),
+                colorbar={"title": "Attention Weight"},
             )
         )
 
@@ -581,7 +581,7 @@ class InteractiveVizDashboard:
             mode="markers+text",
             text=[],
             textposition="middle center",
-            marker=dict(size=10, color="lightblue", line=dict(width=1, color="black")),
+            marker={"size": 10, "color": "lightblue", "line": {"width": 1, "color": "black"}},
         )
 
         edge_traces = []
@@ -589,9 +589,9 @@ class InteractiveVizDashboard:
         # Add nodes
         for node in G.nodes():
             x, y = pos[node]
-            node_trace["x"] += tuple([x])
-            node_trace["y"] += tuple([y])
-            node_trace["text"] += tuple([node])
+            node_trace["x"] += (x,)
+            node_trace["y"] += (y,)
+            node_trace["text"] += (node,)
 
         # Add edges
         for edge in G.edges():
@@ -603,7 +603,7 @@ class InteractiveVizDashboard:
                 x=[x0, x1, None],
                 y=[y0, y1, None],
                 mode="lines",
-                line=dict(width=weight * 10, color="gray"),
+                line={"width": weight * 10, "color": "gray"},
                 hoverinfo="none",
             )
             edge_traces.append(edge_trace)
@@ -613,8 +613,8 @@ class InteractiveVizDashboard:
         fig.update_layout(
             title="Interactive Attention Network",
             showlegend=False,
-            xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
-            yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+            xaxis={"showgrid": False, "zeroline": False, "showticklabels": False},
+            yaxis={"showgrid": False, "zeroline": False, "showticklabels": False},
         )
 
         return fig

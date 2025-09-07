@@ -467,7 +467,6 @@ class GATTrainer:
 
             except RuntimeError as e:
                 if "out of memory" in str(e):
-                    print(f"OOM error in batch {batch_idx}, clearing cache and skipping")
                     self.memory_manager.clear_cache()
                     self.optimizer.zero_grad()
                     continue
@@ -553,8 +552,6 @@ class GATTrainer:
         best_metric = float("inf")
         patience_counter = 0
 
-        print(f"Starting training on {self.device}")
-        print(f"Model parameters: {sum(p.numel() for p in self.model.parameters()):,}")
 
         for epoch in range(self.config.max_epochs):
             # Training
@@ -596,18 +593,10 @@ class GATTrainer:
 
             # Progress logging
             if epoch % 10 == 0:
-                print(
-                    f"Epoch {epoch:3d}: "
-                    f"Train Loss: {train_metrics['loss']:.6f}, "
-                    f"Val Loss: {val_metrics['loss']:.6f}, "
-                    f"Train Sharpe: {train_metrics['sharpe']:.4f}, "
-                    f"LR: {current_lr:.2e}, "
-                    f"Memory: {memory_info['allocated']:.1f}GB"
-                )
+                pass
 
             # Early stopping check
             if patience_counter >= self.config.patience:
-                print(f"Early stopping at epoch {epoch}")
                 break
 
         # Load best model if available

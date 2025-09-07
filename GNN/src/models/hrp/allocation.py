@@ -337,7 +337,7 @@ class HRPAllocation:
         # For single-asset portfolios, allow allocation up to 1.0
         effective_max_allocation = 1.0 if len(weights) == 1 else self.config.max_allocation
 
-        for iteration in range(max_iters):
+        for _iteration in range(max_iters):
             # Apply minimum/maximum allocation constraints
             constrained = constrained.clip(
                 lower=self.config.min_allocation, upper=effective_max_allocation

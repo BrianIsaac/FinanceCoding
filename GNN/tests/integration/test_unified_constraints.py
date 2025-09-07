@@ -198,7 +198,7 @@ class TestUnifiedConstraintIntegration:
 
         model = MockPortfolioModel(constraints, high_turnover_weights)
 
-        constrained_weights = model.validate_weights(
+        model.validate_weights(
             high_turnover_weights,
             previous_weights=previous_weights,
             date=pd.Timestamp("2023-06-01"),
@@ -217,7 +217,7 @@ class TestUnifiedConstraintIntegration:
         model = MockPortfolioModel(test_constraints, problematic_weights)
 
         # Apply constraints - should generate violations
-        constrained_weights = model.validate_weights(
+        model.validate_weights(
             problematic_weights, date=pd.Timestamp("2023-06-01")
         )
 

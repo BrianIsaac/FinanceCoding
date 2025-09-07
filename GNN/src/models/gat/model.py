@@ -246,8 +246,7 @@ class GATPortfolioModel(PortfolioModel):
                 training_graphs.append(graph_data)
                 training_labels.append(forward_returns.values)
 
-            except Exception as e:
-                print(f"Skipping date {date} due to error: {e}")
+            except Exception:
                 continue
 
         if not training_graphs:
@@ -260,7 +259,7 @@ class GATPortfolioModel(PortfolioModel):
         for epoch in range(self.config.max_epochs):
             epoch_losses = []
 
-            for i, (graph_data, labels) in enumerate(zip(training_graphs, training_labels)):
+            for _i, (graph_data, labels) in enumerate(zip(training_graphs, training_labels)):
                 self.optimizer.zero_grad()
 
                 # Move data to device
@@ -311,14 +310,12 @@ class GATPortfolioModel(PortfolioModel):
             if len(self.training_history["loss"]) > self.config.patience:
                 recent_losses = self.training_history["loss"][-self.config.patience :]
                 if all(loss >= min(recent_losses) for loss in recent_losses[-5:]):
-                    print(f"Early stopping at epoch {epoch}")
                     break
 
             if epoch % 20 == 0:
-                print(f"Epoch {epoch}: Loss = {avg_loss:.6f}")
+                pass
 
         self.is_fitted = True
-        print("GAT model training completed")
 
     def predict_weights(self, date: pd.Timestamp, universe: list[str]) -> pd.Series:
         """

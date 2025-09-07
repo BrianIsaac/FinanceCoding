@@ -8,7 +8,7 @@ across all portfolio models (HRP, LSTM, GAT, baselines).
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import pandas as pd
 
@@ -29,7 +29,7 @@ class UnifiedConstraintEngine:
     def __init__(
         self,
         constraints: PortfolioConstraints,
-        transaction_cost_calculator: Optional[TransactionCostCalculator] = None,
+        transaction_cost_calculator: TransactionCostCalculator | None = None,
     ):
         """
         Initialize unified constraint engine.
@@ -45,11 +45,11 @@ class UnifiedConstraintEngine:
     def enforce_all_constraints(
         self,
         weights: pd.Series,
-        previous_weights: Optional[pd.Series] = None,
-        model_scores: Optional[pd.Series] = None,
-        date: Optional[pd.Timestamp] = None,
+        previous_weights: pd.Series | None = None,
+        model_scores: pd.Series | None = None,
+        date: pd.Timestamp | None = None,
         portfolio_value: float = 1.0,
-    ) -> Tuple[pd.Series, List[ConstraintViolation], Dict[str, Any]]:
+    ) -> tuple[pd.Series, list[ConstraintViolation], dict[str, Any]]:
         """
         Apply all constraints including transaction cost optimization.
 
@@ -91,8 +91,8 @@ class UnifiedConstraintEngine:
         self,
         weights: pd.Series,
         previous_weights: pd.Series,
-        cost_analysis: Dict[str, Any],
-        violations: List[ConstraintViolation],
+        cost_analysis: dict[str, Any],
+        violations: list[ConstraintViolation],
     ) -> pd.Series:
         """
         Apply cost-aware adjustments to reduce transaction costs.
@@ -137,8 +137,8 @@ class UnifiedConstraintEngine:
         return weights
 
     def validate_portfolio_feasibility(
-        self, weights: pd.Series, previous_weights: Optional[pd.Series] = None
-    ) -> Dict[str, Any]:
+        self, weights: pd.Series, previous_weights: pd.Series | None = None
+    ) -> dict[str, Any]:
         """
         Validate overall portfolio feasibility and constraint adherence.
 
@@ -198,7 +198,7 @@ class UnifiedConstraintEngine:
             "recommendations": recommendations,
         }
 
-    def get_constraint_configuration(self) -> Dict[str, Any]:
+    def get_constraint_configuration(self) -> dict[str, Any]:
         """Get current constraint configuration for reporting."""
         return {
             "basic_constraints": {
@@ -223,8 +223,8 @@ class UnifiedConstraintEngine:
         }
 
     def create_enforcement_report(
-        self, weights: pd.Series, previous_weights: Optional[pd.Series] = None
-    ) -> Dict[str, Any]:
+        self, weights: pd.Series, previous_weights: pd.Series | None = None
+    ) -> dict[str, Any]:
         """
         Create comprehensive constraint enforcement report.
 

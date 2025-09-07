@@ -112,16 +112,16 @@ def get_model_config(model_type: str, config_dict: Optional[dict[str, Any]] = No
     config_class = model_configs[model_type]
 
     if config_dict is None:
-        return config_class()
+        return config_class()  # type: ignore[no-any-return]
 
     # Create config with overrides
     # Filter to only include valid fields for this dataclass
     if hasattr(config_class, "__dataclass_fields__"):
         valid_fields = config_class.__dataclass_fields__
         filtered_dict = {k: v for k, v in config_dict.items() if k in valid_fields}
-        return config_class(**filtered_dict)
+        return config_class(**filtered_dict)  # type: ignore[no-any-return]
     else:
-        return config_class(**config_dict)
+        return config_class(**config_dict)  # type: ignore[no-any-return]
 
 
 def validate_model_config(config: ModelConfig, model_type: str) -> bool:

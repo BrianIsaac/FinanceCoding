@@ -115,7 +115,7 @@ class TestGraphConstruction:
         correlations = np.array([0.8, 0.6, 0.4, 0.3, 0.2])
 
         returns_data = []
-        for i, corr in enumerate(correlations):
+        for _i, corr in enumerate(correlations):
             noise = np.random.normal(0, 0.01, size=(len(dates), 1))
             asset_returns = corr * base_returns + (1 - corr) * noise
             returns_data.append(asset_returns.flatten())
@@ -362,7 +362,6 @@ class TestEnsembleGraphBuilder:
 
     def test_ensemble_graph_weighted(self):
         """Test ensemble graph with custom weights."""
-        n_assets = 4
         C = np.array(
             [[1.0, 0.8, 0.3, 0.1], [0.8, 1.0, 0.4, 0.2], [0.3, 0.4, 1.0, 0.6], [0.1, 0.2, 0.6, 1.0]]
         )

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import pandas as pd
 
@@ -32,7 +32,7 @@ class RemediationAction:
 
     strategy: RemediationStrategy
     description: str
-    adjustments_made: Dict[str, Any]
+    adjustments_made: dict[str, Any]
     success: bool
     fallback_used: bool = False
 
@@ -48,7 +48,7 @@ class ViolationHandler:
     def __init__(
         self,
         default_strategy: RemediationStrategy = RemediationStrategy.ADJUST,
-        severity_strategies: Optional[Dict[ViolationSeverity, RemediationStrategy]] = None,
+        severity_strategies: dict[ViolationSeverity, RemediationStrategy] | None = None,
         enable_fallbacks: bool = True,
     ):
         """
@@ -69,14 +69,14 @@ class ViolationHandler:
         self.enable_fallbacks = enable_fallbacks
 
         # Tracking
-        self.remediation_history: List[Dict[str, Any]] = []
+        self.remediation_history: list[dict[str, Any]] = []
 
     def handle_violations(
         self,
-        violations: List[ConstraintViolation],
+        violations: list[ConstraintViolation],
         weights: pd.Series,
-        previous_weights: Optional[pd.Series] = None,
-    ) -> Tuple[pd.Series, List[RemediationAction]]:
+        previous_weights: pd.Series | None = None,
+    ) -> tuple[pd.Series, list[RemediationAction]]:
         """
         Handle all violations with appropriate remediation strategies.
 
@@ -166,8 +166,8 @@ class ViolationHandler:
         self,
         violation: ConstraintViolation,
         weights: pd.Series,
-        previous_weights: Optional[pd.Series],
-    ) -> Tuple[pd.Series, RemediationAction]:
+        previous_weights: pd.Series | None,
+    ) -> tuple[pd.Series, RemediationAction]:
         """Apply adjustment for specific violation type."""
         if violation.violation_type == ConstraintViolationType.LONG_ONLY:
             return self._adjust_long_only_violation(violation, weights)
@@ -183,7 +183,7 @@ class ViolationHandler:
 
     def _adjust_long_only_violation(
         self, violation: ConstraintViolation, weights: pd.Series
-    ) -> Tuple[pd.Series, RemediationAction]:
+    ) -> tuple[pd.Series, RemediationAction]:
         """Adjust long-only constraint violation."""
         negative_mask = weights < 0
         negative_weight = weights[negative_mask].sum()
@@ -211,7 +211,7 @@ class ViolationHandler:
 
     def _adjust_top_k_violation(
         self, violation: ConstraintViolation, weights: pd.Series
-    ) -> Tuple[pd.Series, RemediationAction]:
+    ) -> tuple[pd.Series, RemediationAction]:
         """Adjust top-k positions violation."""
         k = int(violation.constraint_value)
 
@@ -251,7 +251,7 @@ class ViolationHandler:
 
     def _adjust_max_weight_violation(
         self, violation: ConstraintViolation, weights: pd.Series
-    ) -> Tuple[pd.Series, RemediationAction]:
+    ) -> tuple[pd.Series, RemediationAction]:
         """Adjust maximum position weight violation."""
         max_weight = violation.constraint_value
         violating_mask = weights > max_weight
@@ -298,8 +298,8 @@ class ViolationHandler:
         self,
         violation: ConstraintViolation,
         weights: pd.Series,
-        previous_weights: Optional[pd.Series],
-    ) -> Tuple[pd.Series, RemediationAction]:
+        previous_weights: pd.Series | None,
+    ) -> tuple[pd.Series, RemediationAction]:
         """Adjust turnover constraint violation."""
         if previous_weights is None:
             action = RemediationAction(
@@ -346,7 +346,7 @@ class ViolationHandler:
 
     def _generic_adjustment(
         self, violation: ConstraintViolation, weights: pd.Series
-    ) -> Tuple[pd.Series, RemediationAction]:
+    ) -> tuple[pd.Series, RemediationAction]:
         """Apply generic weight normalization adjustment."""
         # Simple normalization
         weight_sum = weights.sum()
@@ -373,7 +373,7 @@ class ViolationHandler:
             return weights
 
     def _log_remediation(
-        self, violations: List[ConstraintViolation], actions: List[RemediationAction]
+        self, violations: list[ConstraintViolation], actions: list[RemediationAction]
     ) -> None:
         """Log remediation actions for tracking and analysis."""
         remediation_record = {
@@ -388,7 +388,7 @@ class ViolationHandler:
         }
         self.remediation_history.append(remediation_record)
 
-    def get_remediation_statistics(self) -> Dict[str, Any]:
+    def get_remediation_statistics(self) -> dict[str, Any]:
         """Get statistics about remediation actions."""
         if not self.remediation_history:
             return {"total_remediations": 0}
@@ -425,7 +425,7 @@ class ViolationHandler:
             "avg_violations_per_remediation": total_violations / len(self.remediation_history),
         }
 
-    def create_remediation_report(self) -> Dict[str, Any]:
+    def create_remediation_report(self) -> dict[str, Any]:
         """Create comprehensive remediation report."""
         statistics = self.get_remediation_statistics()
 
