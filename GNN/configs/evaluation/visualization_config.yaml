@@ -1,0 +1,220 @@
+# Visualization Configuration for Portfolio Performance Analysis
+# This file contains comprehensive configuration for all visualization components
+
+# Global visualization settings
+global:
+  figsize: [12, 8]
+  dpi: 300
+  style: "whitegrid"
+  color_palette: "husl"
+  export_formats: ["png", "html", "pdf"]
+  interactive_default: true
+  font_family: "Arial"
+  font_size: 12
+  title_font_size: 16
+
+# Chart-specific configurations
+charts:
+  # Time series charts configuration
+  time_series:
+    figsize: [12, 8]
+    confidence_level: 0.95
+    line_width: 2
+    marker_size: 4
+    alpha_confidence: 0.2
+    range_selector: true
+    rangeslider: true
+    hover_mode: "x unified"
+    
+  # Risk-return analysis configuration
+  risk_return:
+    figsize: [10, 8]
+    confidence_level: 0.95
+    sharpe_isolines: [0.5, 1.0, 1.5, 2.0]
+    efficient_frontier_points: 100
+    marker_size: 12
+    scatter_alpha: 0.7
+    ellipse_alpha: 0.7
+    benchmark_marker_size: 15
+    
+  # Heat maps configuration
+  heatmaps:
+    figsize: [12, 8]
+    colormap: "RdBu_r"
+    center_value: 0.0
+    annotation_fontsize: 8
+    title_fontsize: 14
+    significance_symbols: true
+    regime_border_width: 3
+    
+  # Operational analysis configuration  
+  operational:
+    figsize: [12, 8]
+    transaction_cost_basis_points: 5.0
+    compliance_threshold: 0.05
+    turnover_bins: 20
+    cost_display_unit: "bps"  # basis points
+    
+# Table configurations
+tables:
+  decimal_places: 4
+  significance_levels: [0.001, 0.01, 0.05]
+  include_confidence_intervals: true
+  include_rankings: true
+  sortable: true
+  export_formats: ["html", "latex", "csv"]
+  
+  # HTML table styling
+  html_style:
+    border_collapse: "collapse"
+    width: "100%"
+    margin: "20px 0"
+    font_family: "Arial, sans-serif"
+    header_background: "#f2f2f2"
+    row_alternate_background: "#f9f9f9"
+    hover_background: "#f5f5f5"
+    
+  # LaTeX table configuration
+  latex:
+    column_format: "|c|"
+    use_booktabs: true
+    escape_special_chars: false
+
+# Interactive dashboard configuration
+dashboard:
+  height: 800
+  width: 1200
+  subplot_spacing:
+    vertical: 0.08
+    horizontal: 0.1
+  update_menu_position: [0.1, 0.02]
+  slider_length: 0.9
+  slider_position: [0.1, 0.02]
+  
+  # Animation settings
+  animation:
+    frame_duration: 1000  # milliseconds
+    transition_duration: 300
+    easing: "cubic-in-out"
+
+# Regime analysis configuration
+regime_analysis:
+  figsize: [12, 8]
+  detection_method: "hmm"  # 'hmm', 'kmeans', 'threshold'
+  n_regimes: 3
+  lookback_window: 252  # Trading days
+  
+  # Regime color mapping
+  regime_colors:
+    bull: "#2E7D32"      # Green
+    bear: "#C62828"      # Red
+    sideways: "#F57C00"  # Orange
+    neutral: "#6A6B6A"   # Gray
+    
+  # Transition analysis
+  transition:
+    adaptation_window: 10  # Days before/after transition
+    min_regime_duration: 5  # Minimum days to consider regime
+
+# Export settings
+export:
+  default_formats: ["png", "html"]
+  image_formats: ["png", "pdf", "svg"]
+  web_formats: ["html"]
+  
+  # Quality settings
+  png:
+    dpi: 300
+    bbox_inches: "tight"
+    transparent: false
+    
+  pdf:
+    dpi: 300
+    bbox_inches: "tight"
+    
+  html:
+    include_plotlyjs: "cdn"
+    div_id: "visualization"
+    
+# Performance thresholds and benchmarks
+benchmarks:
+  significance_levels: [0.05, 0.01, 0.001]
+  confidence_levels: [0.90, 0.95, 0.99]
+  
+  # Risk-adjusted performance thresholds
+  sharpe_ratio:
+    excellent: 2.0
+    good: 1.0
+    acceptable: 0.5
+    
+  information_ratio:
+    excellent: 1.0
+    good: 0.5
+    acceptable: 0.25
+    
+  max_drawdown:
+    excellent: -0.05  # -5%
+    good: -0.10       # -10%
+    acceptable: -0.20 # -20%
+
+# Color schemes and themes
+color_schemes:
+  default: "husl"
+  qualitative: "Set2"
+  sequential: "viridis"
+  diverging: "RdBu_r"
+  
+  # Custom color palettes
+  approaches:
+    HRP: "#1f77b4"      # Blue
+    LSTM: "#ff7f0e"     # Orange
+    GAT: "#2ca02c"      # Green
+    EqualWeight: "#d62728"  # Red
+    MeanVariance: "#9467bd"  # Purple
+    
+  regimes:
+    bull: "#2E7D32"
+    bear: "#C62828"
+    sideways: "#F57C00"
+    neutral: "#6A6B6A"
+
+# Validation and testing
+validation:
+  chart_regression_tolerance: 0.01
+  performance_test_timeout: 30  # seconds
+  memory_limit_mb: 1000
+  
+  # Test data parameters
+  test_data:
+    n_approaches: 5
+    n_periods: 252
+    return_range: [-0.1, 0.1]
+    volatility_range: [0.05, 0.5]
+
+# Integration settings
+integration:
+  # Statistical validation integration
+  statistical_validation:
+    enabled: true
+    bootstrap_iterations: 1000
+    confidence_intervals: true
+    
+  # Performance analytics integration
+  performance_analytics:
+    enabled: true
+    include_all_metrics: true
+    rolling_windows: [30, 60, 90, 252]
+    
+  # Data sources
+  data_sources:
+    returns_path: "data/returns"
+    performance_path: "data/performance"
+    regime_path: "data/regimes"
+    
+# Logging and debugging
+logging:
+  level: "INFO"
+  log_performance_metrics: true
+  log_memory_usage: true
+  save_debug_plots: false
+  debug_plot_path: "debug/plots"
