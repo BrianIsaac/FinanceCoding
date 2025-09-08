@@ -128,29 +128,29 @@ def _baseline_weight_ew(n: int, cap: float) -> np.ndarray:
     return w.detach().cpu().numpy()
 
 
-def _ivp_weights(S: np.ndarray) -> np.ndarray:
-    v = np.clip(np.diag(S), 1e-12, None)
+def _ivp_weights(s: np.ndarray) -> np.ndarray:
+    v = np.clip(np.diag(s), 1e-12, None)
     w = 1.0 / v
     w /= w.sum()
     return w
 
 
-def _corr_from_cov(S: np.ndarray) -> np.ndarray:
-    d = np.sqrt(np.clip(np.diag(S), 1e-12, None))
+def _corr_from_cov(s: np.ndarray) -> np.ndarray:
+    d = np.sqrt(np.clip(np.diag(s), 1e-12, None))
     invd = np.where(d > 0, 1.0 / d, 0.0)
-    return (S * invd).T * invd
+    return (s * invd).T * invd
 
 
-def _hrp_weights(S: np.ndarray) -> np.ndarray:
-    n = S.shape[0]
+def _hrp_weights(s: np.ndarray) -> np.ndarray:
+    n = s.shape[0]
     if linkage is None or leaves_list is None or squareform is None or n < 2:
-        return _ivp_weights(S)
+        return _ivp_weights(s)
 
-    C = np.clip(_corr_from_cov(S), -0.9999, 0.9999)
-    D = np.sqrt(0.5 * (1.0 - C))
-    z = linkage(squareform(D, checks=False), method="single")
+    c = np.clip(_corr_from_cov(s), -0.9999, 0.9999)
+    d = np.sqrt(0.5 * (1.0 - c))
+    z = linkage(squareform(d, checks=False), method="single")
     order = leaves_list(z)
-    S_ = S[np.ix_(order, order)]
+    s_ = s[np.ix_(order, order)]
 
     w = np.ones(n)
     clusters = [np.arange(n)]
@@ -162,9 +162,9 @@ def _hrp_weights(S: np.ndarray) -> np.ndarray:
         c1, c2 = cl[:split], cl[split:]
 
         def _cluster_var(idxs):
-            Sc = S_[np.ix_(idxs, idxs)]
-            wc = _ivp_weights(Sc)
-            return float(wc @ Sc @ wc)
+            sc = s_[np.ix_(idxs, idxs)]
+            wc = _ivp_weights(sc)
+            return float(wc @ sc @ wc)
 
         v1, v2 = _cluster_var(c1), _cluster_var(c2)
         a2 = v1 / (v1 + v2 + 1e-12)
@@ -176,7 +176,7 @@ def _hrp_weights(S: np.ndarray) -> np.ndarray:
     w_ord = np.zeros(n)
     w_ord[order] = w
     s = w_ord.sum()
-    return (w_ord / s) if s > 0 else _ivp_weights(S)
+    return (w_ord / s) if s > 0 else _ivp_weights(s_)
 
 
 def _project_cap_and_sum_to_one(w_np: np.ndarray, cap: float) -> np.ndarray:
@@ -189,37 +189,37 @@ def _project_cap_and_sum_to_one(w_np: np.ndarray, cap: float) -> np.ndarray:
 
 
 def _pgd_markowitz(
-    mu: np.ndarray, S: np.ndarray, cap: float, gamma: float, mode: str = "diag", steps: int = 60
+    mu: np.ndarray, s: np.ndarray, cap: float, gamma: float, mode: str = "diag", steps: int = 60
 ) -> np.ndarray:
     """
     minimize  gamma * w' S w - mu' w
     s.t.      0 <= w <= cap, sum w = 1
     """
     mu_t = torch.from_numpy(mu.astype(np.float32))
-    N = mu_t.numel()
-    cap_eff = _auto_feasible_cap(cap, int(N))
-    w = torch.full_like(mu_t, 1.0 / max(int(N), 1))
+    n = mu_t.numel()
+    cap_eff = _auto_feasible_cap(cap, int(n))
+    w = torch.full_like(mu_t, 1.0 / max(int(n), 1))
 
     if mode == "diag":
-        sdiag = np.clip(np.diag(S), 1e-10, None)
-        S_diag = torch.from_numpy(sdiag).to(dtype=mu_t.dtype)
-        L = (2.0 * gamma * S_diag.max()).clamp_min(1e-8)
-        eta = 1.0 / float(L)
+        sdiag = np.clip(np.diag(s), 1e-10, None)
+        s_diag = torch.from_numpy(sdiag).to(dtype=mu_t.dtype)
+        l_val = (2.0 * gamma * s_diag.max()).clamp_min(1e-8)
+        eta = 1.0 / float(l_val)
         for _ in range(steps):
-            grad = 2.0 * gamma * (S_diag * w) - mu_t
+            grad = 2.0 * gamma * (s_diag * w) - mu_t
             w = _project_capped_simplex(w - eta * grad, cap_eff, s=1.0)
         return w.detach().cpu().numpy()
 
     # full SPD
-    St = torch.from_numpy(S.astype(np.float32))
+    st = torch.from_numpy(s.astype(np.float32))
     v = torch.randn_like(mu_t)
     for _ in range(8):
-        v = St @ v
+        v = st @ v
         v = v / (v.norm() + 1e-12)
-    L = (2.0 * gamma * (v @ (St @ v))).clamp_min(1e-8)
-    eta = 1.0 / float(L)
+    l_val = (2.0 * gamma * (v @ (st @ v))).clamp_min(1e-8)
+    eta = 1.0 / float(l_val)
     for _ in range(steps):
-        grad = 2.0 * gamma * (St @ w) - mu_t
+        grad = 2.0 * gamma * (st @ w) - mu_t
         w = _project_capped_simplex(w - eta * grad, cap_eff, s=1.0)
     return w.detach().cpu().numpy()
 
@@ -267,7 +267,7 @@ def _compute_window_weights(
     topk_risk_scale: bool,
 ) -> np.ndarray:
 
-    X = hist.reindex(columns=tickers, fill_value=0.0).values
+    x = hist.reindex(columns=tickers, fill_value=0.0).values
     n = len(tickers)
 
     if strategy == "EW":
@@ -276,13 +276,13 @@ def _compute_window_weights(
     # Covariance for MV/MinVar/HRP and for TopK_EW risk-scaling
     if build_cov_estimator is None:
         # fallback: simple linear shrinkage if src.cov is unavailable
-        def _linear_shrink(S, alpha=0.1, ridge=1e-6):
-            D = np.diag(np.diag(S))
-            return (1.0 - alpha) * S + alpha * D + ridge * np.eye(S.shape[0], dtype=S.dtype)
+        def _linear_shrink(s, alpha=0.1, ridge=1e-6):
+            d = np.diag(np.diag(s))
+            return (1.0 - alpha) * s + alpha * d + ridge * np.eye(s.shape[0], dtype=s.dtype)
 
-        S = np.cov(X, rowvar=False)
-        S = _linear_shrink(
-            S, alpha=float(cov_kwargs.get("alpha", 0.1)), ridge=float(cov_kwargs.get("ridge", 1e-6))
+        s = np.cov(x, rowvar=False)
+        s = _linear_shrink(
+            s, alpha=float(cov_kwargs.get("alpha", 0.1)), ridge=float(cov_kwargs.get("ridge", 1e-6))
         )
     else:
         est = build_cov_estimator(
@@ -291,26 +291,26 @@ def _compute_window_weights(
             ridge=float(cov_kwargs.get("ridge", 1e-6)),
             lw_shrink=float(cov_kwargs.get("lw_shrink", 0.0)),
         )
-        S = est.fit(X).get()
+        s = est.fit(x).get()
 
     if strategy == "HRP":
-        w = _hrp_weights(S)
+        w = _hrp_weights(s)
         return _project_cap_and_sum_to_one(w, cap)
 
     if strategy == "MinVar":
         mu0 = np.zeros(n, dtype=np.float32)
-        w = _pgd_markowitz(mu0, S, cap=cap, gamma=mv_gamma, mode=mode, steps=60)
+        w = _pgd_markowitz(mu0, s, cap=cap, gamma=mv_gamma, mode=mode, steps=60)
         return w
 
     if strategy == "MV":
-        mu = X.mean(axis=0).astype(np.float32)
+        mu = x.mean(axis=0).astype(np.float32)
         # optional top-k on mean returns
         if topk is not None and 0 < topk < n:
             idx = np.argsort(mu)[-topk:]
-            S_sub = S[np.ix_(idx, idx)]
+            s_sub = s[np.ix_(idx, idx)]
             w_sub = _pgd_markowitz(
                 mu[idx],
-                S_sub,
+                s_sub,
                 cap=_auto_feasible_cap(cap, len(idx)),
                 gamma=mv_gamma,
                 mode=mode,
@@ -319,7 +319,7 @@ def _compute_window_weights(
             w = np.zeros(n, dtype=np.float32)
             w[idx] = w_sub
             return w
-        return _pgd_markowitz(mu, S, cap=cap, gamma=mv_gamma, mode=mode, steps=60)
+        return _pgd_markowitz(mu, s, cap=cap, gamma=mv_gamma, mode=mode, steps=60)
 
     if strategy == "TopK_EW":
         scores = _momentum_score(hist, lookback=topk_lookback, method=topk_method)

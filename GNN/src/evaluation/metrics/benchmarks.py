@@ -95,7 +95,7 @@ class BenchmarkComparator:
             # Get available assets for this date
             available_assets = universe_aligned.loc[date]
             if isinstance(available_assets, pd.Series):
-                available_assets = available_assets[available_assets == True]
+                available_assets = available_assets[available_assets]
             else:
                 available_assets = available_assets.dropna()
 
@@ -540,7 +540,7 @@ class BenchmarkComparator:
         # Overall risk-adjusted score (average of normalized ranks)
         if rankings:
             overall_scores = {}
-            num_metrics = len(rankings)
+            len(rankings)
 
             for name in performance_data.keys():
                 total_score = 0

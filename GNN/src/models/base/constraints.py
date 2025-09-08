@@ -139,17 +139,8 @@ class ConstraintEngine:
             constrained_weights, previous_weights, violations
         )
 
-        # Step 3: Final normalization and validation
-        weight_sum = constrained_weights.sum()
-
-        if weight_sum > 0:
-            # Check if we can normalize without violating max weight constraint
-            max_weight_after_norm = (constrained_weights / weight_sum).max()
-
-            if max_weight_after_norm <= self.constraints.max_position_weight + 1e-10:
-                # Safe to normalize - won't violate max weight constraint
-                constrained_weights = self._normalize_weights(constrained_weights)
-            # Otherwise, leave as partial investment (cash position implied)
+        # Step 3: Final normalization - always normalize to 1.0
+        constrained_weights = self._normalize_weights(constrained_weights)
 
         # Step 4: Log violations if date provided
         if date is not None and violations:
@@ -289,11 +280,9 @@ class ConstraintEngine:
         """Apply maximum position weight constraint with redistribution."""
         max_weight = self.constraints.max_position_weight
 
-        # Check if constraint can be satisfied at all
-        if len(weights) * max_weight < 1.0:
-            # Not enough capacity even with max weights - return as much as possible
-            # This represents a cash position being held
-            return pd.Series(max_weight, index=weights.index)
+        # Only apply constraint if there are actual violations
+        if not (weights > max_weight).any():
+            return weights
 
         # Iterative adjustment to handle cascading violations
         max_iters = 10

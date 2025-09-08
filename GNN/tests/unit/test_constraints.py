@@ -100,7 +100,7 @@ class TestConstraintEngine:
         """Test turnover constraint when turnover is within limits."""
         # Calculate expected turnover
         turnover = np.abs(sample_weights - previous_weights).sum()
-        max_turnover = default_engine.turnover_constraints.max_monthly_turnover
+        max_turnover = default_engine.constraints.max_monthly_turnover
 
         if turnover <= max_turnover:
             # Should return weights unchanged (after basic constraints)
@@ -191,8 +191,8 @@ class TestConstraintEngine:
             current_weights, previous_weights=previous_weights
         )
 
-        # Should indicate complete turnover
-        assert metrics["turnover"] == 1.0  # Complete portfolio change
+        # Should indicate complete turnover (sell all old + buy all new = 2.0)
+        assert metrics["turnover"] == 2.0  # Complete portfolio change
 
     def test_portfolio_constraints_configuration(self):
         """Test PortfolioConstraints configuration."""
