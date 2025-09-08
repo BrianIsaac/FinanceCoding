@@ -297,40 +297,38 @@ class GapFiller:
                 continue
 
             gap_mask = (series.index >= gap["start"]) & (series.index < gap["end"])
-            gap_series = series.copy()
-            gap_series.loc[~gap_mask] = np.nan  # Isolate this gap
 
             if gap["method"] == "spline":
                 filled_gap = self.spline_interpolate(
-                    gap_series,
+                    filled,
                     gap["days"],
                     volume_series=volume_series,
                     min_volume=volume_threshold,
                 )
             elif gap["method"] == "linear":
                 filled_gap = self.linear_interpolate(
-                    gap_series,
+                    filled,
                     gap["days"],
                     volume_series=volume_series,
                     min_volume=volume_threshold,
                 )
             elif gap["method"] == "forward":
                 filled_gap = self.forward_fill(
-                    gap_series,
+                    filled,
                     limit=gap["days"],
                     volume_series=volume_series,
                     min_volume=volume_threshold,
                 )
             else:  # backward
                 filled_gap = self.backward_fill(
-                    gap_series,
+                    filled,
                     limit=gap["days"],
                     volume_series=volume_series,
                     min_volume=volume_threshold,
                 )
 
-            # Merge filled gap back
-            filled.update(filled_gap.dropna())
+            # Update only the gap portion
+            filled.loc[gap_mask] = filled_gap.loc[gap_mask]
 
         return filled
 

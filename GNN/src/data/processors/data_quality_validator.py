@@ -72,7 +72,9 @@ class DataQualityValidator:
         }
 
         # Primary data validation (prices/close)
-        primary_data = data_dict.get("close") or data_dict.get("prices")
+        primary_data = data_dict.get("close")
+        if primary_data is None:
+            primary_data = data_dict.get("prices")
         if primary_data is not None and not primary_data.empty:
             primary_results = self.validate_price_data(primary_data, universe_tickers)
             validation_summary["component_scores"]["prices"] = primary_results
