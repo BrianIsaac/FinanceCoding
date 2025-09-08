@@ -59,30 +59,30 @@ class CheckpointMetadata:
     def to_dict(self) -> dict[str, Any]:
         """Convert metadata to dictionary."""
         return {
-            'model_name': self.model_name,
-            'model_type': self.model_type,
-            'version': self.version,
-            'created_at': self.created_at.isoformat(),
-            'hyperparameters': self.hyperparameters,
-            'training_config': self.training_config,
-            'training_metrics': self.training_metrics,
-            'validation_metrics': self.validation_metrics,
-            'training_period': self.training_period,
-            'validation_period': self.validation_period,
-            'data_hash': self.data_hash,
-            'model_hash': self.model_hash,
-            'file_size_mb': self.file_size_mb,
-            'pytorch_version': self.pytorch_version,
-            'python_version': self.python_version,
-            'tags': self.tags,
-            'notes': self.notes
+            "model_name": self.model_name,
+            "model_type": self.model_type,
+            "version": self.version,
+            "created_at": self.created_at.isoformat(),
+            "hyperparameters": self.hyperparameters,
+            "training_config": self.training_config,
+            "training_metrics": self.training_metrics,
+            "validation_metrics": self.validation_metrics,
+            "training_period": self.training_period,
+            "validation_period": self.validation_period,
+            "data_hash": self.data_hash,
+            "model_hash": self.model_hash,
+            "file_size_mb": self.file_size_mb,
+            "pytorch_version": self.pytorch_version,
+            "python_version": self.python_version,
+            "tags": self.tags,
+            "notes": self.notes,
         }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> CheckpointMetadata:
         """Create metadata from dictionary."""
         data = data.copy()
-        data['created_at'] = pd.Timestamp(data['created_at'])
+        data["created_at"] = pd.Timestamp(data["created_at"])
         return cls(**data)
 
 
@@ -94,11 +94,13 @@ class ModelCheckpointManager:
     and integrity validation for consistent backtesting and reproducibility.
     """
 
-    def __init__(self,
-                 checkpoint_dir: str | Path,
-                 enable_versioning: bool = True,
-                 max_versions_per_model: int = 10,
-                 compression_level: int = 6):
+    def __init__(
+        self,
+        checkpoint_dir: str | Path,
+        enable_versioning: bool = True,
+        max_versions_per_model: int = 10,
+        compression_level: int = 6,
+    ):
         """
         Initialize checkpoint manager.
 
@@ -122,20 +124,22 @@ class ModelCheckpointManager:
         self._model_registry: dict[str, list[str]] = {}
         self._load_registry()
 
-    def save_checkpoint(self,
-                       model: Any,
-                       model_name: str,
-                       model_type: str,
-                       hyperparameters: dict[str, Any],
-                       training_config: dict[str, Any],
-                       training_metrics: dict[str, float] | None = None,
-                       validation_metrics: dict[str, float] | None = None,
-                       training_period: tuple[str, str] | None = None,
-                       validation_period: tuple[str, str] | None = None,
-                       data_hash: str | None = None,
-                       tags: list[str] | None = None,
-                       notes: str | None = None,
-                       version: str | None = None) -> str:
+    def save_checkpoint(
+        self,
+        model: Any,
+        model_name: str,
+        model_type: str,
+        hyperparameters: dict[str, Any],
+        training_config: dict[str, Any],
+        training_metrics: dict[str, float] | None = None,
+        validation_metrics: dict[str, float] | None = None,
+        training_period: tuple[str, str] | None = None,
+        validation_period: tuple[str, str] | None = None,
+        data_hash: str | None = None,
+        tags: list[str] | None = None,
+        notes: str | None = None,
+        version: str | None = None,
+    ) -> str:
         """
         Save model checkpoint with comprehensive metadata.
 
@@ -185,7 +189,7 @@ class ModelCheckpointManager:
             pytorch_version=torch.__version__,
             python_version=self._get_python_version(),
             tags=tags or [],
-            notes=notes
+            notes=notes,
         )
 
         # Save model
@@ -213,10 +217,9 @@ class ModelCheckpointManager:
         logger.info(f"Saved checkpoint: {model_name} v{version} ({metadata.file_size_mb:.2f}MB)")
         return version
 
-    def load_checkpoint(self,
-                       model_name: str,
-                       version: str | None = None,
-                       validate_integrity: bool = True) -> tuple[Any, CheckpointMetadata]:
+    def load_checkpoint(
+        self, model_name: str, version: str | None = None, validate_integrity: bool = True
+    ) -> tuple[Any, CheckpointMetadata]:
         """
         Load model checkpoint with metadata.
 
@@ -278,15 +281,15 @@ class ModelCheckpointManager:
                         metadata = self._load_metadata(metadata_path)
 
                         checkpoint_info = {
-                            'model_name': metadata.model_name,
-                            'model_type': metadata.model_type,
-                            'version': metadata.version,
-                            'created_at': metadata.created_at,
-                            'file_size_mb': metadata.file_size_mb,
-                            'training_sharpe': metadata.training_metrics.get('sharpe_ratio'),
-                            'validation_sharpe': metadata.validation_metrics.get('sharpe_ratio'),
-                            'tags': ', '.join(metadata.tags),
-                            'notes': metadata.notes
+                            "model_name": metadata.model_name,
+                            "model_type": metadata.model_type,
+                            "version": metadata.version,
+                            "created_at": metadata.created_at,
+                            "file_size_mb": metadata.file_size_mb,
+                            "training_sharpe": metadata.training_metrics.get("sharpe_ratio"),
+                            "validation_sharpe": metadata.validation_metrics.get("sharpe_ratio"),
+                            "tags": ", ".join(metadata.tags),
+                            "notes": metadata.notes,
                         }
                         checkpoints.append(checkpoint_info)
 
@@ -297,7 +300,7 @@ class ModelCheckpointManager:
             return pd.DataFrame()
 
         df = pd.DataFrame(checkpoints)
-        return df.sort_values(['model_name', 'created_at'], ascending=[True, False])
+        return df.sort_values(["model_name", "created_at"], ascending=[True, False])
 
     def delete_checkpoint(self, model_name: str, version: str) -> bool:
         """
@@ -352,10 +355,7 @@ class ModelCheckpointManager:
 
         return self._load_metadata(metadata_path)
 
-    def export_checkpoint(self,
-                         model_name: str,
-                         version: str,
-                         export_path: str | Path) -> None:
+    def export_checkpoint(self, model_name: str, version: str, export_path: str | Path) -> None:
         """
         Export checkpoint to external location.
 
@@ -396,8 +396,7 @@ class ModelCheckpointManager:
         counter = 1
         version = base_version
 
-        while (model_name in self._model_registry and
-               version in self._model_registry[model_name]):
+        while model_name in self._model_registry and version in self._model_registry[model_name]:
             version = f"{base_version}_{counter:02d}"
             counter += 1
 
@@ -405,7 +404,7 @@ class ModelCheckpointManager:
 
     def _calculate_model_hash(self, model: Any) -> str:
         """Calculate hash of model parameters."""
-        if hasattr(model, 'state_dict'):
+        if hasattr(model, "state_dict"):
             # PyTorch model
             state_dict = model.state_dict()
             model_bytes = pickle.dumps({k: v.cpu().numpy() for k, v in state_dict.items()})
@@ -418,12 +417,12 @@ class ModelCheckpointManager:
     def _save_model(self, model: Any, model_path: Path) -> None:
         """Save model to file."""
         try:
-            if hasattr(model, 'state_dict'):
+            if hasattr(model, "state_dict"):
                 # PyTorch model - save state dict
                 torch.save(model.state_dict(), model_path)
             else:
                 # Other model types - use pickle
-                with open(model_path, 'wb') as f:
+                with open(model_path, "wb") as f:
                     pickle.dump(model, f, protocol=pickle.HIGHEST_PROTOCOL)
         except Exception as e:
             logger.error(f"Error saving model to {model_path}: {e}")
@@ -434,10 +433,10 @@ class ModelCheckpointManager:
         try:
             # Try PyTorch format first
             try:
-                return torch.load(model_path, map_location='cpu')
+                return torch.load(model_path, map_location="cpu")
             except Exception:
                 # Fall back to pickle
-                with open(model_path, 'rb') as f:
+                with open(model_path, "rb") as f:
                     return pickle.load(f)
         except Exception as e:
             logger.error(f"Error loading model from {model_path}: {e}")
@@ -445,7 +444,7 @@ class ModelCheckpointManager:
 
     def _save_metadata(self, metadata: CheckpointMetadata, metadata_path: Path) -> None:
         """Save metadata to file."""
-        with open(metadata_path, 'w') as f:
+        with open(metadata_path, "w") as f:
             json.dump(metadata.to_dict(), f, indent=2, default=str)
 
     def _load_metadata(self, metadata_path: Path) -> CheckpointMetadata:
@@ -462,10 +461,9 @@ class ModelCheckpointManager:
         """Save configuration to YAML file."""
         OmegaConf.save(config, path)
 
-    def _validate_checkpoint_integrity(self,
-                                     model: Any,
-                                     metadata: CheckpointMetadata,
-                                     checkpoint_path: Path) -> None:
+    def _validate_checkpoint_integrity(
+        self, model: Any, metadata: CheckpointMetadata, checkpoint_path: Path
+    ) -> None:
         """Validate checkpoint integrity."""
         # Verify model hash
         current_hash = self._calculate_model_hash(model)
@@ -474,7 +472,10 @@ class ModelCheckpointManager:
 
         # Verify required files exist
         required_files = [
-            'metadata.json', 'model.pkl', 'hyperparameters.yaml', 'training_config.yaml'
+            "metadata.json",
+            "model.pkl",
+            "hyperparameters.yaml",
+            "training_config.yaml",
         ]
         for file_name in required_files:
             file_path = checkpoint_path / file_name
@@ -504,7 +505,7 @@ class ModelCheckpointManager:
 
         # Sort versions and keep only the most recent ones
         sorted_versions = sorted(versions, key=self._version_sort_key, reverse=True)
-        versions_to_delete = sorted_versions[self.max_versions_per_model:]
+        versions_to_delete = sorted_versions[self.max_versions_per_model :]
 
         for version in versions_to_delete:
             try:
@@ -516,11 +517,11 @@ class ModelCheckpointManager:
     def _version_sort_key(self, version: str) -> str:
         """Generate sort key for version strings."""
         # Handle 'latest' version
-        if version == 'latest':
-            return '9999999999_999999'
+        if version == "latest":
+            return "9999999999_999999"
 
         # Extract timestamp for sorting
-        if version.startswith('v'):
+        if version.startswith("v"):
             version = version[1:]  # Remove 'v' prefix
 
         return version
@@ -544,7 +545,7 @@ class ModelCheckpointManager:
         registry_path = self.checkpoint_dir / "registry.json"
 
         try:
-            with open(registry_path, 'w') as f:
+            with open(registry_path, "w") as f:
                 json.dump(self._model_registry, f, indent=2)
         except Exception as e:
             logger.error(f"Error saving registry: {e}")
@@ -552,6 +553,7 @@ class ModelCheckpointManager:
     def _get_python_version(self) -> str:
         """Get current Python version."""
         import sys
+
         return f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
 
 
@@ -574,16 +576,18 @@ class ModelStatePreserver:
         self.checkpoint_manager = checkpoint_manager
         self._preserved_states: dict[str, dict[str, Any]] = {}
 
-    def preserve_training_state(self,
-                               model_name: str,
-                               model: Any,
-                               optimizer_state: dict[str, Any] | None = None,
-                               scheduler_state: dict[str, Any] | None = None,
-                               random_states: dict[str, Any] | None = None,
-                               data_preprocessing_params: dict[str, Any] | None = None,
-                               feature_transformations: dict[str, Any] | None = None,
-                               training_step: int = 0,
-                               epoch: int = 0) -> str:
+    def preserve_training_state(
+        self,
+        model_name: str,
+        model: Any,
+        optimizer_state: dict[str, Any] | None = None,
+        scheduler_state: dict[str, Any] | None = None,
+        random_states: dict[str, Any] | None = None,
+        data_preprocessing_params: dict[str, Any] | None = None,
+        feature_transformations: dict[str, Any] | None = None,
+        training_step: int = 0,
+        epoch: int = 0,
+    ) -> str:
         """
         Preserve complete training state for reproducible backtesting.
 
@@ -606,19 +610,19 @@ class ModelStatePreserver:
 
         # Collect comprehensive state information
         complete_state = {
-            'model_state': self._extract_model_state(model),
-            'optimizer_state': optimizer_state,
-            'scheduler_state': scheduler_state,
-            'random_states': random_states or self._capture_random_states(),
-            'data_preprocessing_params': data_preprocessing_params,
-            'feature_transformations': feature_transformations,
-            'training_metadata': {
-                'training_step': training_step,
-                'epoch': epoch,
-                'preservation_timestamp': pd.Timestamp.now().isoformat(),
-                'model_name': model_name
+            "model_state": self._extract_model_state(model),
+            "optimizer_state": optimizer_state,
+            "scheduler_state": scheduler_state,
+            "random_states": random_states or self._capture_random_states(),
+            "data_preprocessing_params": data_preprocessing_params,
+            "feature_transformations": feature_transformations,
+            "training_metadata": {
+                "training_step": training_step,
+                "epoch": epoch,
+                "preservation_timestamp": pd.Timestamp.now().isoformat(),
+                "model_name": model_name,
             },
-            'environment_info': self._capture_environment_info()
+            "environment_info": self._capture_environment_info(),
         }
 
         # Store state
@@ -630,12 +634,14 @@ class ModelStatePreserver:
         logger.info(f"Preserved training state: {state_id}")
         return state_id
 
-    def restore_training_state(self,
-                              state_id: str,
-                              model: Any,
-                              optimizer: Any | None = None,
-                              scheduler: Any | None = None,
-                              restore_random_states: bool = True) -> dict[str, Any]:
+    def restore_training_state(
+        self,
+        state_id: str,
+        model: Any,
+        optimizer: Any | None = None,
+        scheduler: Any | None = None,
+        restore_random_states: bool = True,
+    ) -> dict[str, Any]:
         """
         Restore complete training state for consistent backtesting.
 
@@ -660,54 +666,58 @@ class ModelStatePreserver:
         restoration_info = {}
 
         # Restore model state
-        self._restore_model_state(model, state['model_state'])
-        restoration_info['model_restored'] = True
+        self._restore_model_state(model, state["model_state"])
+        restoration_info["model_restored"] = True
 
         # Restore optimizer state
-        if optimizer and state['optimizer_state']:
+        if optimizer and state["optimizer_state"]:
             try:
-                optimizer.load_state_dict(state['optimizer_state'])
-                restoration_info['optimizer_restored'] = True
+                optimizer.load_state_dict(state["optimizer_state"])
+                restoration_info["optimizer_restored"] = True
             except Exception as e:
                 logger.warning(f"Could not restore optimizer state: {e}")
-                restoration_info['optimizer_restored'] = False
+                restoration_info["optimizer_restored"] = False
 
         # Restore scheduler state
-        if scheduler and state['scheduler_state']:
+        if scheduler and state["scheduler_state"]:
             try:
-                scheduler.load_state_dict(state['scheduler_state'])
-                restoration_info['scheduler_restored'] = True
+                scheduler.load_state_dict(state["scheduler_state"])
+                restoration_info["scheduler_restored"] = True
             except Exception as e:
                 logger.warning(f"Could not restore scheduler state: {e}")
-                restoration_info['scheduler_restored'] = False
+                restoration_info["scheduler_restored"] = False
 
         # Restore random states
-        if restore_random_states and state['random_states']:
-            self._restore_random_states(state['random_states'])
-            restoration_info['random_states_restored'] = True
+        if restore_random_states and state["random_states"]:
+            self._restore_random_states(state["random_states"])
+            restoration_info["random_states_restored"] = True
 
         # Return metadata for verification
-        restoration_info.update({
-            'state_id': state_id,
-            'original_timestamp': state['training_metadata']['preservation_timestamp'],
-            'restoration_timestamp': pd.Timestamp.now().isoformat(),
-            'training_step': state['training_metadata']['training_step'],
-            'epoch': state['training_metadata']['epoch'],
-            'data_preprocessing_params': state['data_preprocessing_params'],
-            'feature_transformations': state['feature_transformations']
-        })
+        restoration_info.update(
+            {
+                "state_id": state_id,
+                "original_timestamp": state["training_metadata"]["preservation_timestamp"],
+                "restoration_timestamp": pd.Timestamp.now().isoformat(),
+                "training_step": state["training_metadata"]["training_step"],
+                "epoch": state["training_metadata"]["epoch"],
+                "data_preprocessing_params": state["data_preprocessing_params"],
+                "feature_transformations": state["feature_transformations"],
+            }
+        )
 
         logger.info(f"Restored training state: {state_id}")
         return restoration_info
 
-    def create_backtest_snapshot(self,
-                                model_name: str,
-                                model: Any,
-                                validation_period: tuple[str, str],
-                                training_data_hash: str,
-                                performance_metrics: dict[str, float],
-                                hyperparameters: dict[str, Any],
-                                preprocessing_pipeline: Any | None = None) -> str:
+    def create_backtest_snapshot(
+        self,
+        model_name: str,
+        model: Any,
+        validation_period: tuple[str, str],
+        training_data_hash: str,
+        performance_metrics: dict[str, float],
+        hyperparameters: dict[str, Any],
+        preprocessing_pipeline: Any | None = None,
+    ) -> str:
         """
         Create a complete snapshot for backtesting reproducibility.
 
@@ -727,22 +737,22 @@ class ModelStatePreserver:
 
         # Create comprehensive snapshot
         snapshot = {
-            'model_state': self._extract_model_state(model),
-            'validation_period': validation_period,
-            'training_data_hash': training_data_hash,
-            'performance_metrics': performance_metrics,
-            'hyperparameters': hyperparameters,
-            'preprocessing_pipeline': self._serialize_preprocessing_pipeline(
+            "model_state": self._extract_model_state(model),
+            "validation_period": validation_period,
+            "training_data_hash": training_data_hash,
+            "performance_metrics": performance_metrics,
+            "hyperparameters": hyperparameters,
+            "preprocessing_pipeline": self._serialize_preprocessing_pipeline(
                 preprocessing_pipeline
             ),
-            'random_states': self._capture_random_states(),
-            'environment_info': self._capture_environment_info(),
-            'snapshot_metadata': {
-                'snapshot_id': snapshot_id,
-                'model_name': model_name,
-                'created_at': pd.Timestamp.now().isoformat(),
-                'snapshot_type': 'backtest'
-            }
+            "random_states": self._capture_random_states(),
+            "environment_info": self._capture_environment_info(),
+            "snapshot_metadata": {
+                "snapshot_id": snapshot_id,
+                "model_name": model_name,
+                "created_at": pd.Timestamp.now().isoformat(),
+                "snapshot_type": "backtest",
+            },
         }
 
         # Store snapshot
@@ -752,11 +762,9 @@ class ModelStatePreserver:
         logger.info(f"Created backtest snapshot: {snapshot_id}")
         return snapshot_id
 
-    def validate_backtest_consistency(self,
-                                    snapshot_id: str,
-                                    current_model: Any,
-                                    current_data_hash: str,
-                                    tolerance: float = 1e-6) -> dict[str, Any]:
+    def validate_backtest_consistency(
+        self, snapshot_id: str, current_model: Any, current_data_hash: str, tolerance: float = 1e-6
+    ) -> dict[str, Any]:
         """
         Validate consistency between current state and backtest snapshot.
 
@@ -777,62 +785,58 @@ class ModelStatePreserver:
 
         snapshot = self._preserved_states[snapshot_id]
         validation_results = {
-            'snapshot_id': snapshot_id,
-            'validation_timestamp': pd.Timestamp.now().isoformat(),
-            'consistent': True,
-            'issues': []
+            "snapshot_id": snapshot_id,
+            "validation_timestamp": pd.Timestamp.now().isoformat(),
+            "consistent": True,
+            "issues": [],
         }
 
         # Validate model state consistency
         model_consistent = self._validate_model_state_consistency(
-            current_model, snapshot['model_state'], tolerance
+            current_model, snapshot["model_state"], tolerance
         )
-        validation_results['model_consistent'] = model_consistent
+        validation_results["model_consistent"] = model_consistent
         if not model_consistent:
-            validation_results['consistent'] = False
-            validation_results['issues'].append('Model state mismatch')
+            validation_results["consistent"] = False
+            validation_results["issues"].append("Model state mismatch")
 
         # Validate data consistency
-        data_consistent = current_data_hash == snapshot['training_data_hash']
-        validation_results['data_consistent'] = data_consistent
+        data_consistent = current_data_hash == snapshot["training_data_hash"]
+        validation_results["data_consistent"] = data_consistent
         if not data_consistent:
-            validation_results['consistent'] = False
-            validation_results['issues'].append('Training data mismatch')
+            validation_results["consistent"] = False
+            validation_results["issues"].append("Training data mismatch")
 
         # Validate environment consistency
-        env_consistent = self._validate_environment_consistency(snapshot['environment_info'])
-        validation_results['environment_consistent'] = env_consistent
+        env_consistent = self._validate_environment_consistency(snapshot["environment_info"])
+        validation_results["environment_consistent"] = env_consistent
         if not env_consistent:
-            validation_results['consistent'] = False
-            validation_results['issues'].append('Environment differences detected')
+            validation_results["consistent"] = False
+            validation_results["issues"].append("Environment differences detected")
 
         return validation_results
 
     def _extract_model_state(self, model: Any) -> dict[str, Any]:
         """Extract complete model state."""
-        if hasattr(model, 'state_dict'):
+        if hasattr(model, "state_dict"):
             # PyTorch model
             state_dict = model.state_dict()
             return {
-                'type': 'pytorch',
-                'state_dict': {k: v.cpu().numpy() for k, v in state_dict.items()},
-                'model_class': model.__class__.__name__
+                "type": "pytorch",
+                "state_dict": {k: v.cpu().numpy() for k, v in state_dict.items()},
+                "model_class": model.__class__.__name__,
             }
         else:
             # Scikit-learn or other model
-            return {
-                'type': 'sklearn',
-                'model': model,
-                'model_class': model.__class__.__name__
-            }
+            return {"type": "sklearn", "model": model, "model_class": model.__class__.__name__}
 
     def _restore_model_state(self, model: Any, model_state: dict[str, Any]) -> None:
         """Restore model state."""
-        if model_state['type'] == 'pytorch' and hasattr(model, 'load_state_dict'):
+        if model_state["type"] == "pytorch" and hasattr(model, "load_state_dict"):
             # Convert numpy arrays back to tensors
-            state_dict = {k: torch.from_numpy(v) for k, v in model_state['state_dict'].items()}
+            state_dict = {k: torch.from_numpy(v) for k, v in model_state["state_dict"].items()}
             model.load_state_dict(state_dict)
-        elif model_state['type'] == 'sklearn':
+        elif model_state["type"] == "sklearn":
             # For sklearn models, we would need to replace the entire model
             # This is a limitation of the current approach
             logger.warning("Cannot restore sklearn model state in-place")
@@ -840,16 +844,14 @@ class ModelStatePreserver:
     def _capture_random_states(self) -> dict[str, Any]:
         """Capture all random number generator states."""
         import random
-        random_states = {
-            'python_random': random.getstate(),
-            'numpy_random': np.random.get_state()
-        }
+
+        random_states = {"python_random": random.getstate(), "numpy_random": np.random.get_state()}
 
         if torch.cuda.is_available():
-            random_states['torch_cuda_random'] = torch.cuda.get_rng_state_all()
+            random_states["torch_cuda_random"] = torch.cuda.get_rng_state_all()
 
-        if hasattr(torch, 'get_rng_state'):
-            random_states['torch_random'] = torch.get_rng_state()
+        if hasattr(torch, "get_rng_state"):
+            random_states["torch_random"] = torch.get_rng_state()
 
         return random_states
 
@@ -857,17 +859,17 @@ class ModelStatePreserver:
         """Restore random number generator states."""
         import random
 
-        if 'python_random' in random_states:
-            random.setstate(random_states['python_random'])
+        if "python_random" in random_states:
+            random.setstate(random_states["python_random"])
 
-        if 'numpy_random' in random_states:
-            np.random.set_state(random_states['numpy_random'])
+        if "numpy_random" in random_states:
+            np.random.set_state(random_states["numpy_random"])
 
-        if 'torch_random' in random_states:
-            torch.set_rng_state(random_states['torch_random'])
+        if "torch_random" in random_states:
+            torch.set_rng_state(random_states["torch_random"])
 
-        if 'torch_cuda_random' in random_states and torch.cuda.is_available():
-            torch.cuda.set_rng_state_all(random_states['torch_cuda_random'])
+        if "torch_cuda_random" in random_states and torch.cuda.is_available():
+            torch.cuda.set_rng_state_all(random_states["torch_cuda_random"])
 
     def _capture_environment_info(self) -> dict[str, Any]:
         """Capture environment information."""
@@ -875,17 +877,15 @@ class ModelStatePreserver:
         import sys
 
         return {
-            'python_version': sys.version,
-            'platform': platform.platform(),
-            'pytorch_version': torch.__version__ if 'torch' in sys.modules else None,
-            'numpy_version': np.__version__,
-            'pandas_version': pd.__version__,
-            'cuda_available': torch.cuda.is_available() if 'torch' in sys.modules else False,
-            'cuda_version': (
-                torch.version.cuda
-                if 'torch' in sys.modules and torch.cuda.is_available()
-                else None
-            )
+            "python_version": sys.version,
+            "platform": platform.platform(),
+            "pytorch_version": torch.__version__ if "torch" in sys.modules else None,
+            "numpy_version": np.__version__,
+            "pandas_version": pd.__version__,
+            "cuda_available": torch.cuda.is_available() if "torch" in sys.modules else False,
+            "cuda_version": (
+                torch.version.cuda if "torch" in sys.modules and torch.cuda.is_available() else None
+            ),
         }
 
     def _serialize_preprocessing_pipeline(self, pipeline: Any) -> dict[str, Any] | None:
@@ -894,29 +894,25 @@ class ModelStatePreserver:
             return None
 
         try:
-            return {
-                'pipeline': pickle.dumps(pipeline).hex(),
-                'type': pipeline.__class__.__name__
-            }
+            return {"pipeline": pickle.dumps(pipeline).hex(), "type": pipeline.__class__.__name__}
         except Exception as e:
             logger.warning(f"Could not serialize preprocessing pipeline: {e}")
             return None
 
-    def _validate_model_state_consistency(self,
-                                        current_model: Any,
-                                        preserved_state: dict[str, Any],
-                                        tolerance: float) -> bool:
+    def _validate_model_state_consistency(
+        self, current_model: Any, preserved_state: dict[str, Any], tolerance: float
+    ) -> bool:
         """Validate model state consistency."""
         try:
             current_state = self._extract_model_state(current_model)
 
-            if current_state['type'] != preserved_state['type']:
+            if current_state["type"] != preserved_state["type"]:
                 return False
 
-            if current_state['type'] == 'pytorch':
+            if current_state["type"] == "pytorch":
                 # Compare state dicts numerically
-                current_dict = current_state['state_dict']
-                preserved_dict = preserved_state['state_dict']
+                current_dict = current_state["state_dict"]
+                preserved_dict = preserved_state["state_dict"]
 
                 if set(current_dict.keys()) != set(preserved_dict.keys()):
                     return False
@@ -936,7 +932,7 @@ class ModelStatePreserver:
         current_env = self._capture_environment_info()
 
         # Check critical environment components
-        critical_components = ['python_version', 'pytorch_version', 'numpy_version']
+        critical_components = ["python_version", "pytorch_version", "numpy_version"]
 
         for component in critical_components:
             if current_env.get(component) != preserved_env.get(component):
@@ -951,7 +947,7 @@ class ModelStatePreserver:
         state_path.parent.mkdir(parents=True, exist_ok=True)
 
         try:
-            with open(state_path, 'wb') as f:
+            with open(state_path, "wb") as f:
                 pickle.dump(state, f, protocol=pickle.HIGHEST_PROTOCOL)
         except Exception as e:
             logger.error(f"Error saving preserved state {state_id}: {e}")
@@ -965,7 +961,7 @@ class ModelStatePreserver:
             return
 
         try:
-            with open(state_path, 'rb') as f:
+            with open(state_path, "rb") as f:
                 state = pickle.load(f)
             self._preserved_states[state_id] = state
         except Exception as e:

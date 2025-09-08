@@ -28,11 +28,7 @@ class TestRollingWindowGenerator:
     @pytest.fixture
     def sample_timestamps(self) -> list[pd.Timestamp]:
         """Generate sample timestamps for testing."""
-        return pd.date_range(
-            start="2020-01-01",
-            end="2024-12-31",
-            freq="D"
-        ).tolist()
+        return pd.date_range(start="2020-01-01", end="2024-12-31", freq="D").tolist()
 
     @pytest.fixture
     def config(self) -> WindowGenerationConfig:
@@ -59,9 +55,7 @@ class TestRollingWindowGenerator:
         assert generator._generation_stats == {}
 
     def test_generate_basic_windows(
-        self,
-        generator: RollingWindowGenerator,
-        sample_timestamps: list[pd.Timestamp]
+        self, generator: RollingWindowGenerator, sample_timestamps: list[pd.Timestamp]
     ):
         """Test basic window generation."""
         windows = generator.generate_rolling_windows(sample_timestamps)
@@ -76,9 +70,7 @@ class TestRollingWindowGenerator:
         assert isinstance(first_window.test_period, ValidationPeriod)
 
     def test_temporal_ordering(
-        self,
-        generator: RollingWindowGenerator,
-        sample_timestamps: list[pd.Timestamp]
+        self, generator: RollingWindowGenerator, sample_timestamps: list[pd.Timestamp]
     ):
         """Test that windows maintain proper temporal ordering."""
         windows = generator.generate_rolling_windows(sample_timestamps)
@@ -94,9 +86,7 @@ class TestRollingWindowGenerator:
             assert window.validation_period.end_date <= window.test_period.start_date
 
     def test_no_look_ahead_bias(
-        self,
-        generator: RollingWindowGenerator,
-        sample_timestamps: list[pd.Timestamp]
+        self, generator: RollingWindowGenerator, sample_timestamps: list[pd.Timestamp]
     ):
         """Test that windows prevent look-ahead bias."""
         windows = generator.generate_rolling_windows(sample_timestamps)
@@ -109,16 +99,14 @@ class TestRollingWindowGenerator:
             assert window.validation_period.end_date <= window.test_period.start_date
 
     def test_window_progression(
-        self,
-        generator: RollingWindowGenerator,
-        sample_timestamps: list[pd.Timestamp]
+        self, generator: RollingWindowGenerator, sample_timestamps: list[pd.Timestamp]
     ):
         """Test proper window progression."""
         windows = generator.generate_rolling_windows(sample_timestamps)
 
         if len(windows) > 1:
             for i in range(1, len(windows)):
-                prev_window = windows[i-1]
+                prev_window = windows[i - 1]
                 curr_window = windows[i]
 
                 # Current window should start after previous
@@ -137,9 +125,7 @@ class TestRollingWindowGenerator:
         """Test data sufficiency validation."""
         # Create sparse timestamps
         sparse_timestamps = pd.date_range(
-            start="2020-01-01",
-            end="2020-06-30",
-            freq="10D"  # Every 10 days - insufficient
+            start="2020-01-01", end="2020-06-30", freq="10D"  # Every 10 days - insufficient
         ).tolist()
 
         generator = RollingWindowGenerator(config)
@@ -150,25 +136,20 @@ class TestRollingWindowGenerator:
         # Verify that remaining windows (if any) have sufficient data
         for window in windows:
             train_samples = sum(
-                1 for ts in sparse_timestamps
-                if window.train_period.contains_date(ts)
+                1 for ts in sparse_timestamps if window.train_period.contains_date(ts)
             )
             # If window exists, it should have been validated for sufficiency
             assert train_samples > 0  # At least some data should be present
 
     def test_date_range_constraints(
-        self,
-        generator: RollingWindowGenerator,
-        sample_timestamps: list[pd.Timestamp]
+        self, generator: RollingWindowGenerator, sample_timestamps: list[pd.Timestamp]
     ):
         """Test date range constraints."""
         start_date = pd.Timestamp("2021-01-01")
         end_date = pd.Timestamp("2023-12-31")
 
         windows = generator.generate_rolling_windows(
-            sample_timestamps,
-            start_date=start_date,
-            end_date=end_date
+            sample_timestamps, start_date=start_date, end_date=end_date
         )
 
         for window in windows:
@@ -216,19 +197,13 @@ class TestRollingWindowGenerator:
 
     def test_insufficient_timestamps(self, generator: RollingWindowGenerator):
         """Test handling of insufficient timestamps."""
-        few_timestamps = pd.date_range(
-            start="2020-01-01",
-            end="2020-01-10",
-            freq="D"
-        ).tolist()
+        few_timestamps = pd.date_range(start="2020-01-01", end="2020-01-10", freq="D").tolist()
 
         with pytest.raises(ValueError, match="Insufficient timestamps"):
             generator.generate_rolling_windows(few_timestamps)
 
     def test_generation_statistics(
-        self,
-        generator: RollingWindowGenerator,
-        sample_timestamps: list[pd.Timestamp]
+        self, generator: RollingWindowGenerator, sample_timestamps: list[pd.Timestamp]
     ):
         """Test generation statistics collection."""
         windows = generator.generate_rolling_windows(sample_timestamps)
@@ -284,11 +259,7 @@ class TestWalkForwardAnalyzer:
     @pytest.fixture
     def sample_timestamps(self) -> list[pd.Timestamp]:
         """Generate sample timestamps."""
-        return pd.date_range(
-            start="2020-01-01",
-            end="2024-12-31",
-            freq="D"
-        ).tolist()
+        return pd.date_range(start="2020-01-01", end="2024-12-31", freq="D").tolist()
 
     @pytest.fixture
     def analyzer(self) -> WalkForwardAnalyzer:
@@ -341,9 +312,7 @@ class TestWalkForwardAnalyzer:
         sample_timestamps: list[pd.Timestamp],
     ):
         """Test temporal coverage analysis."""
-        analysis = analyzer.analyze_walk_forward_progression(
-            sample_windows, sample_timestamps
-        )
+        analysis = analyzer.analyze_walk_forward_progression(sample_windows, sample_timestamps)
 
         coverage = analysis["temporal_coverage"]
         assert "total_data_range_days" in coverage
@@ -359,9 +328,7 @@ class TestWalkForwardAnalyzer:
         sample_timestamps: list[pd.Timestamp],
     ):
         """Test bias detection analysis."""
-        analysis = analyzer.analyze_walk_forward_progression(
-            sample_windows, sample_timestamps
-        )
+        analysis = analyzer.analyze_walk_forward_progression(sample_windows, sample_timestamps)
 
         bias_detection = analysis["bias_detection"]
         assert "overall_bias_free" in bias_detection
@@ -379,9 +346,7 @@ class TestWalkForwardAnalyzer:
         sample_timestamps: list[pd.Timestamp],
     ):
         """Test consistency metrics calculation."""
-        analysis = analyzer.analyze_walk_forward_progression(
-            sample_windows, sample_timestamps
-        )
+        analysis = analyzer.analyze_walk_forward_progression(sample_windows, sample_timestamps)
 
         consistency = analysis["consistency_metrics"]
         assert "train_period_consistency" in consistency
@@ -406,9 +371,7 @@ class TestWalkForwardAnalyzer:
             )
         ]
 
-        analysis = analyzer.analyze_walk_forward_progression(
-            single_window, sample_timestamps
-        )
+        analysis = analyzer.analyze_walk_forward_progression(single_window, sample_timestamps)
 
         # Should handle gracefully but note insufficient data
         assert "error" in analysis or "progression_validation" in analysis
@@ -418,7 +381,9 @@ class TestWalkForwardAnalyzer:
         # Create windows with overlapping periods (bias)
         biased_windows = [
             RollSplit(
-                ValidationPeriod(pd.Timestamp("2020-01-01"), pd.Timestamp("2023-02-01")),  # Overlap!
+                ValidationPeriod(
+                    pd.Timestamp("2020-01-01"), pd.Timestamp("2023-02-01")
+                ),  # Overlap!
                 ValidationPeriod(pd.Timestamp("2023-01-01"), pd.Timestamp("2024-01-01")),
                 ValidationPeriod(pd.Timestamp("2024-01-01"), pd.Timestamp("2025-01-01")),
             )
@@ -446,11 +411,13 @@ class TestWalkForwardAnalyzer:
             test_start = val_end
             test_end = test_start + pd.DateOffset(months=12)
 
-            overlapping_windows.append(RollSplit(
-                ValidationPeriod(start_date, train_end),
-                ValidationPeriod(val_start, val_end),
-                ValidationPeriod(test_start, test_end),
-            ))
+            overlapping_windows.append(
+                RollSplit(
+                    ValidationPeriod(start_date, train_end),
+                    ValidationPeriod(val_start, val_end),
+                    ValidationPeriod(test_start, test_end),
+                )
+            )
 
         timestamps = pd.date_range("2020-01-01", "2025-12-31", freq="D").tolist()
 

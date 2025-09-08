@@ -36,20 +36,24 @@ class MockPortfolioModel(PortfolioModel):
     def fit(self, returns: pd.DataFrame, universe: list[str], fit_period: tuple = None):
         """Mock fit method."""
         self.fitted = True
-        self.fit_calls.append({
-            "returns_shape": returns.shape,
-            "universe_size": len(universe),
-            "fit_period": fit_period,
-            "timestamp": pd.Timestamp.now(),
-        })
+        self.fit_calls.append(
+            {
+                "returns_shape": returns.shape,
+                "universe_size": len(universe),
+                "fit_period": fit_period,
+                "timestamp": pd.Timestamp.now(),
+            }
+        )
 
     def predict_weights(self, date: pd.Timestamp, universe: list[str]) -> pd.Series:
         """Mock weight prediction."""
-        self.predict_calls.append({
-            "date": date,
-            "universe_size": len(universe),
-            "timestamp": pd.Timestamp.now(),
-        })
+        self.predict_calls.append(
+            {
+                "date": date,
+                "universe_size": len(universe),
+                "timestamp": pd.Timestamp.now(),
+            }
+        )
 
         # Return random weights that sum to 1
         np.random.seed(42)  # For reproducibility
@@ -72,10 +76,10 @@ class TestRollingBacktestIntegration:
             np.random.multivariate_normal(
                 mean=np.array([0.0008] * len(assets)),  # Daily returns ~20% annualized
                 cov=np.eye(len(assets)) * 0.0004 + 0.0001,  # Correlated returns
-                size=len(dates)
+                size=len(dates),
             ),
             index=dates,
-            columns=assets
+            columns=assets,
         )
 
         # Generate universe data (dynamic membership)
@@ -84,7 +88,7 @@ class TestRollingBacktestIntegration:
 
         # Simulate some assets leaving/joining the universe
         universe_data.loc["2021-01-01":, "TSLA"] = False  # TSLA leaves in 2021
-        universe_data.loc["2022-01-01":, "TSLA"] = True   # TSLA returns in 2022
+        universe_data.loc["2022-01-01":, "TSLA"] = True  # TSLA returns in 2022
 
         return {
             "returns": returns,
@@ -101,9 +105,7 @@ class TestRollingBacktestIntegration:
         }
 
     def test_end_to_end_backtest_integration(
-        self,
-        sample_data: dict[str, pd.DataFrame],
-        mock_models: dict[str, MockPortfolioModel]
+        self, sample_data: dict[str, pd.DataFrame], mock_models: dict[str, MockPortfolioModel]
     ):
         """Test complete end-to-end backtest integration."""
 
@@ -133,7 +135,7 @@ class TestRollingBacktestIntegration:
             )
 
             # Verify results structure
-            assert isinstance(results, type(engine).__annotations__.get('return', object))
+            assert isinstance(results, type(engine).__annotations__.get("return", object))
             assert len(results.splits) > 0
             assert len(results.portfolio_returns) == len(mock_models)
             assert len(results.portfolio_weights) == len(mock_models)
@@ -154,9 +156,7 @@ class TestRollingBacktestIntegration:
             assert "models_tested" in summary
 
     def test_model_retraining_integration(
-        self,
-        sample_data: dict[str, pd.DataFrame],
-        mock_models: dict[str, MockPortfolioModel]
+        self, sample_data: dict[str, pd.DataFrame], mock_models: dict[str, MockPortfolioModel]
     ):
         """Test model retraining integration."""
 
@@ -209,9 +209,7 @@ class TestRollingBacktestIntegration:
             assert stats["total_retrains"] == len(mock_models)
 
     def test_backtest_execution_integration(
-        self,
-        sample_data: dict[str, pd.DataFrame],
-        mock_models: dict[str, MockPortfolioModel]
+        self, sample_data: dict[str, pd.DataFrame], mock_models: dict[str, MockPortfolioModel]
     ):
         """Test backtest execution engine integration."""
 
@@ -231,9 +229,7 @@ class TestRollingBacktestIntegration:
 
             # Generate rebalancing dates
             rebalance_dates = pd.date_range(
-                start="2021-01-01",
-                end="2023-12-31",
-                freq="MS"
+                start="2021-01-01", end="2023-12-31", freq="MS"
             ).tolist()
 
             # Test execution with first model
@@ -262,10 +258,7 @@ class TestRollingBacktestIntegration:
             assert summary["total_rebalances"] > 0
             assert summary["final_portfolio_value"] > 0
 
-    def test_memory_management_integration(
-        self,
-        sample_data: dict[str, pd.DataFrame]
-    ):
+    def test_memory_management_integration(self, sample_data: dict[str, pd.DataFrame]):
         """Test memory management integration."""
 
         # Configure memory manager
@@ -315,9 +308,7 @@ class TestRollingBacktestIntegration:
         assert all(isinstance(result, (int, float)) for result in batch_results)
 
     def test_model_training_pipeline_integration(
-        self,
-        sample_data: dict[str, pd.DataFrame],
-        mock_models: dict[str, MockPortfolioModel]
+        self, sample_data: dict[str, pd.DataFrame], mock_models: dict[str, MockPortfolioModel]
     ):
         """Test integration with model training pipeline."""
 
@@ -384,9 +375,7 @@ class TestRollingBacktestIntegration:
                     assert all(cp.checkpoint_path.exists() for cp in checkpoints)
 
     def test_temporal_integrity_across_integration(
-        self,
-        sample_data: dict[str, pd.DataFrame],
-        mock_models: dict[str, MockPortfolioModel]
+        self, sample_data: dict[str, pd.DataFrame], mock_models: dict[str, MockPortfolioModel]
     ):
         """Test temporal integrity is maintained across all integration components."""
 
@@ -415,13 +404,15 @@ class TestRollingBacktestIntegration:
 
         # If splits_monitored > 0, verify no critical violations
         if integrity_report.get("total_splits_monitored", 0) > 0:
-            assert integrity_report.get("splits_failed", 0) == 0, "Temporal integrity violations detected"
-            assert integrity_report.get("success_rate", 0) == 100, "Not all splits passed integrity checks"
+            assert (
+                integrity_report.get("splits_failed", 0) == 0
+            ), "Temporal integrity violations detected"
+            assert (
+                integrity_report.get("success_rate", 0) == 100
+            ), "Not all splits passed integrity checks"
 
     def test_performance_under_memory_constraints(
-        self,
-        sample_data: dict[str, pd.DataFrame],
-        mock_models: dict[str, MockPortfolioModel]
+        self, sample_data: dict[str, pd.DataFrame], mock_models: dict[str, MockPortfolioModel]
     ):
         """Test system performance under memory constraints."""
 
@@ -434,7 +425,7 @@ class TestRollingBacktestIntegration:
         large_returns = pd.DataFrame(
             np.random.normal(0.0005, 0.015, (len(large_dates), len(large_assets))),
             index=large_dates,
-            columns=large_assets
+            columns=large_assets,
         )
 
         large_data = {"returns": large_returns}
@@ -474,10 +465,7 @@ class TestRollingBacktestIntegration:
         except MemoryError:
             pytest.skip("Insufficient memory for large dataset test")
 
-    def test_error_handling_and_recovery(
-        self,
-        sample_data: dict[str, pd.DataFrame]
-    ):
+    def test_error_handling_and_recovery(self, sample_data: dict[str, pd.DataFrame]):
         """Test error handling and recovery across integration components."""
 
         # Create a failing model to test error handling
@@ -526,7 +514,13 @@ class TestRollingBacktestIntegration:
 
         # Failing models should have empty or error results
         if "fail_fit" in results.portfolio_returns:
-            assert len(results.portfolio_returns["fail_fit"]) == 0 or pd.isna(results.portfolio_returns["fail_fit"]).all()
+            assert (
+                len(results.portfolio_returns["fail_fit"]) == 0
+                or pd.isna(results.portfolio_returns["fail_fit"]).all()
+            )
 
         if "fail_predict" in results.portfolio_returns:
-            assert len(results.portfolio_returns["fail_predict"]) == 0 or pd.isna(results.portfolio_returns["fail_predict"]).all()
+            assert (
+                len(results.portfolio_returns["fail_predict"]) == 0
+                or pd.isna(results.portfolio_returns["fail_predict"]).all()
+            )

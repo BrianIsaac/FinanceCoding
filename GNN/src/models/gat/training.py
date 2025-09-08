@@ -552,7 +552,6 @@ class GATTrainer:
         best_metric = float("inf")
         patience_counter = 0
 
-
         for epoch in range(self.config.max_epochs):
             # Training
             train_metrics = self.train_epoch(train_data_list)

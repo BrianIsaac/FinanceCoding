@@ -139,7 +139,9 @@ class BacktestExecutor:
         self.transaction_cost_calculator = TransactionCostCalculator(
             TransactionCostConfig(
                 linear_cost_bps=config.transaction_cost_bps,
-                market_impact_coefficient=config.market_impact_factor if config.enable_realistic_costs else 0.0,
+                market_impact_coefficient=(
+                    config.market_impact_factor if config.enable_realistic_costs else 0.0
+                ),
                 bid_ask_spread_bps=5.0,
             )
         )
@@ -210,7 +212,9 @@ class BacktestExecutor:
         if self.config.save_detailed_logs:
             self._save_execution_logs()
 
-        logger.info(f"Backtest execution completed: {self.rebalance_count} rebalances, {len(self.trade_log)} trades")
+        logger.info(
+            f"Backtest execution completed: {self.rebalance_count} rebalances, {len(self.trade_log)} trades"
+        )
 
         return results
 
@@ -237,9 +241,7 @@ class BacktestExecutor:
         """Execute portfolio rebalancing for given date."""
 
         # Get current universe
-        current_universe = self._get_current_universe(
-            rebalance_date, returns_data, universe_data
-        )
+        current_universe = self._get_current_universe(rebalance_date, returns_data, universe_data)
 
         if not current_universe:
             logger.warning(f"No universe available for {rebalance_date}")
@@ -318,13 +320,18 @@ class BacktestExecutor:
             excess_weight = constrained_weights > self.config.max_position_weight
             if excess_weight.any():
                 # Cap weights and redistribute excess
-                excess_total = (constrained_weights[excess_weight] - self.config.max_position_weight).sum()
+                excess_total = (
+                    constrained_weights[excess_weight] - self.config.max_position_weight
+                ).sum()
                 constrained_weights[excess_weight] = self.config.max_position_weight
 
                 # Redistribute excess weight proportionally to uncapped assets
                 uncapped_assets = ~excess_weight
                 if uncapped_assets.any():
-                    redistribution = excess_total * (constrained_weights[uncapped_assets] / constrained_weights[uncapped_assets].sum())
+                    redistribution = excess_total * (
+                        constrained_weights[uncapped_assets]
+                        / constrained_weights[uncapped_assets].sum()
+                    )
                     constrained_weights[uncapped_assets] += redistribution
 
         # Normalize weights
@@ -346,7 +353,9 @@ class BacktestExecutor:
             return RebalanceReason.SCHEDULED
 
         # Check for significant weight changes
-        current_weights_aligned = pd.Series(self.current_weights).reindex(target_weights.index, fill_value=0)
+        current_weights_aligned = pd.Series(self.current_weights).reindex(
+            target_weights.index, fill_value=0
+        )
         weight_changes = abs(target_weights - current_weights_aligned)
         max_change = weight_changes.max()
 
@@ -378,7 +387,11 @@ class BacktestExecutor:
 
         # Calculate target quantities
         target_values = target_weights * portfolio_value
-        prices = returns_data.loc[current_date] if current_date in returns_data.index else returns_data.iloc[-1]
+        prices = (
+            returns_data.loc[current_date]
+            if current_date in returns_data.index
+            else returns_data.iloc[-1]
+        )
 
         for asset in target_weights.index:
             if asset not in prices or pd.isna(prices[asset]):
@@ -399,11 +412,21 @@ class BacktestExecutor:
                 trade_value = abs(quantity_change * price)
 
                 # Calculate transaction cost
-                transaction_cost = self.transaction_cost_calculator.calculate_transaction_costs(
-                    target_weights.to_frame().T,
-                    pd.Series(self.current_weights, name="current").to_frame().T if self.current_weights else pd.DataFrame(),
-                    prices.to_frame().T,
-                ) * trade_value / portfolio_value if portfolio_value > 0 else 0.0
+                transaction_cost = (
+                    self.transaction_cost_calculator.calculate_transaction_costs(
+                        target_weights.to_frame().T,
+                        (
+                            pd.Series(self.current_weights, name="current").to_frame().T
+                            if self.current_weights
+                            else pd.DataFrame()
+                        ),
+                        prices.to_frame().T,
+                    )
+                    * trade_value
+                    / portfolio_value
+                    if portfolio_value > 0
+                    else 0.0
+                )
 
                 # Create trade record
                 trade = TradeRecord(
@@ -579,7 +602,9 @@ class BacktestExecutor:
         # Performance metrics
         performance_metrics = {}
         if not portfolio_returns.empty:
-            performance_metrics = self.performance_analytics.calculate_portfolio_metrics(portfolio_returns)
+            performance_metrics = self.performance_analytics.calculate_portfolio_metrics(
+                portfolio_returns
+            )
 
         # Trade analysis
         trade_analysis = self._analyze_trades()
@@ -596,7 +621,11 @@ class BacktestExecutor:
                 "total_rebalances": self.rebalance_count,
                 "total_trades": len(self.trade_log),
                 "total_transaction_costs": self.total_transaction_costs,
-                "final_portfolio_value": self.performance_history[-1].portfolio_value if self.performance_history else self.config.initial_capital,
+                "final_portfolio_value": (
+                    self.performance_history[-1].portfolio_value
+                    if self.performance_history
+                    else self.config.initial_capital
+                ),
             },
             "detailed_logs": {
                 "trades": self.trade_log,
@@ -615,7 +644,7 @@ class BacktestExecutor:
         dates = []
 
         for i in range(1, len(self.performance_history)):
-            prev_value = self.performance_history[i-1].portfolio_value
+            prev_value = self.performance_history[i - 1].portfolio_value
             curr_value = self.performance_history[i].portfolio_value
 
             if prev_value > 0:
@@ -631,17 +660,19 @@ class BacktestExecutor:
         if not self.trade_log:
             return {"message": "No trades executed"}
 
-        trade_df = pd.DataFrame([
-            {
-                "timestamp": trade.timestamp,
-                "asset": trade.asset,
-                "side": trade.side,
-                "value": trade.value,
-                "transaction_cost": trade.transaction_cost,
-                "reason": trade.reason.value,
-            }
-            for trade in self.trade_log
-        ])
+        trade_df = pd.DataFrame(
+            [
+                {
+                    "timestamp": trade.timestamp,
+                    "asset": trade.asset,
+                    "side": trade.side,
+                    "value": trade.value,
+                    "transaction_cost": trade.transaction_cost,
+                    "reason": trade.reason.value,
+                }
+                for trade in self.trade_log
+            ]
+        )
 
         return {
             "total_trades": len(self.trade_log),
@@ -659,16 +690,18 @@ class BacktestExecutor:
         if not self.position_history:
             return {"message": "No position history available"}
 
-        position_df = pd.DataFrame([
-            {
-                "timestamp": pos.timestamp,
-                "portfolio_value": pos.portfolio_value,
-                "leverage": pos.leverage,
-                "turnover": pos.turnover,
-                "num_positions": len(pos.positions),
-            }
-            for pos in self.position_history
-        ])
+        position_df = pd.DataFrame(
+            [
+                {
+                    "timestamp": pos.timestamp,
+                    "portfolio_value": pos.portfolio_value,
+                    "leverage": pos.leverage,
+                    "turnover": pos.turnover,
+                    "num_positions": len(pos.positions),
+                }
+                for pos in self.position_history
+            ]
+        )
 
         return {
             "avg_num_positions": position_df["num_positions"].mean(),
@@ -691,53 +724,59 @@ class BacktestExecutor:
 
         # Save trades
         if self.trade_log:
-            trades_df = pd.DataFrame([
-                {
-                    "timestamp": trade.timestamp,
-                    "asset": trade.asset,
-                    "side": trade.side,
-                    "quantity": trade.quantity,
-                    "price": trade.price,
-                    "value": trade.value,
-                    "transaction_cost": trade.transaction_cost,
-                    "reason": trade.reason.value,
-                    "weight_before": trade.portfolio_weight_before,
-                    "weight_after": trade.portfolio_weight_after,
-                    "notes": trade.notes,
-                }
-                for trade in self.trade_log
-            ])
+            trades_df = pd.DataFrame(
+                [
+                    {
+                        "timestamp": trade.timestamp,
+                        "asset": trade.asset,
+                        "side": trade.side,
+                        "quantity": trade.quantity,
+                        "price": trade.price,
+                        "value": trade.value,
+                        "transaction_cost": trade.transaction_cost,
+                        "reason": trade.reason.value,
+                        "weight_before": trade.portfolio_weight_before,
+                        "weight_after": trade.portfolio_weight_after,
+                        "notes": trade.notes,
+                    }
+                    for trade in self.trade_log
+                ]
+            )
             trades_df.to_csv(output_dir / "trade_log.csv", index=False)
 
         # Save positions
         if self.position_history:
-            positions_df = pd.DataFrame([
-                {
-                    "timestamp": pos.timestamp,
-                    "portfolio_value": pos.portfolio_value,
-                    "cash": pos.cash,
-                    "leverage": pos.leverage,
-                    "turnover": pos.turnover,
-                    "num_positions": len(pos.positions),
-                }
-                for pos in self.position_history
-            ])
+            positions_df = pd.DataFrame(
+                [
+                    {
+                        "timestamp": pos.timestamp,
+                        "portfolio_value": pos.portfolio_value,
+                        "cash": pos.cash,
+                        "leverage": pos.leverage,
+                        "turnover": pos.turnover,
+                        "num_positions": len(pos.positions),
+                    }
+                    for pos in self.position_history
+                ]
+            )
             positions_df.to_csv(output_dir / "position_history.csv", index=False)
 
         # Save performance
         if self.performance_history:
-            performance_df = pd.DataFrame([
-                {
-                    "timestamp": perf.timestamp,
-                    "portfolio_value": perf.portfolio_value,
-                    "total_return": perf.total_return,
-                    "period_return": perf.period_return,
-                    "trade_count": perf.trade_count,
-                    "turnover": perf.turnover,
-                    "transaction_costs": perf.transaction_costs,
-                }
-                for perf in self.performance_history
-            ])
+            performance_df = pd.DataFrame(
+                [
+                    {
+                        "timestamp": perf.timestamp,
+                        "portfolio_value": perf.portfolio_value,
+                        "total_return": perf.total_return,
+                        "period_return": perf.period_return,
+                        "trade_count": perf.trade_count,
+                        "turnover": perf.turnover,
+                        "transaction_costs": perf.transaction_costs,
+                    }
+                    for perf in self.performance_history
+                ]
+            )
             performance_df.to_csv(output_dir / "performance_history.csv", index=False)
 
         logger.info(f"Execution logs saved to {output_dir}")

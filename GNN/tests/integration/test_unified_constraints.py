@@ -217,9 +217,7 @@ class TestUnifiedConstraintIntegration:
         model = MockPortfolioModel(test_constraints, problematic_weights)
 
         # Apply constraints - should generate violations
-        model.validate_weights(
-            problematic_weights, date=pd.Timestamp("2023-06-01")
-        )
+        model.validate_weights(problematic_weights, date=pd.Timestamp("2023-06-01"))
 
         # Check that violations were recorded
         violations = model.get_constraint_violations()

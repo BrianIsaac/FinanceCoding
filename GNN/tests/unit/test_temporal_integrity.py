@@ -39,18 +39,9 @@ class TestTemporalIntegrityValidator:
     @pytest.fixture
     def valid_split(self) -> RollSplit:
         """Valid rolling split for testing."""
-        train_period = ValidationPeriod(
-            pd.Timestamp("2020-01-01"),
-            pd.Timestamp("2023-01-01")
-        )
-        val_period = ValidationPeriod(
-            pd.Timestamp("2023-01-01"),
-            pd.Timestamp("2024-01-01")
-        )
-        test_period = ValidationPeriod(
-            pd.Timestamp("2024-01-01"),
-            pd.Timestamp("2025-01-01")
-        )
+        train_period = ValidationPeriod(pd.Timestamp("2020-01-01"), pd.Timestamp("2023-01-01"))
+        val_period = ValidationPeriod(pd.Timestamp("2023-01-01"), pd.Timestamp("2024-01-01"))
+        test_period = ValidationPeriod(pd.Timestamp("2024-01-01"), pd.Timestamp("2025-01-01"))
 
         return RollSplit(train_period, val_period, test_period)
 
@@ -58,28 +49,17 @@ class TestTemporalIntegrityValidator:
     def invalid_split(self) -> RollSplit:
         """Invalid rolling split with overlapping periods."""
         train_period = ValidationPeriod(
-            pd.Timestamp("2020-01-01"),
-            pd.Timestamp("2023-06-01")  # Overlaps with validation!
+            pd.Timestamp("2020-01-01"), pd.Timestamp("2023-06-01")  # Overlaps with validation!
         )
-        val_period = ValidationPeriod(
-            pd.Timestamp("2023-01-01"),
-            pd.Timestamp("2024-01-01")
-        )
-        test_period = ValidationPeriod(
-            pd.Timestamp("2024-01-01"),
-            pd.Timestamp("2025-01-01")
-        )
+        val_period = ValidationPeriod(pd.Timestamp("2023-01-01"), pd.Timestamp("2024-01-01"))
+        test_period = ValidationPeriod(pd.Timestamp("2024-01-01"), pd.Timestamp("2025-01-01"))
 
         return RollSplit(train_period, val_period, test_period)
 
     @pytest.fixture
     def sample_timestamps(self) -> list[pd.Timestamp]:
         """Sample timestamps for testing."""
-        return pd.date_range(
-            start="2020-01-01",
-            end="2025-12-31",
-            freq="D"
-        ).tolist()
+        return pd.date_range(start="2020-01-01", end="2025-12-31", freq="D").tolist()
 
     def test_initialization(self):
         """Test validator initialization."""
@@ -92,12 +72,10 @@ class TestTemporalIntegrityValidator:
         self,
         validator: TemporalIntegrityValidator,
         valid_split: RollSplit,
-        sample_timestamps: list[pd.Timestamp]
+        sample_timestamps: list[pd.Timestamp],
     ):
         """Test that valid split passes all integrity checks."""
-        result = validator.validate_split_integrity(
-            valid_split, sample_timestamps, "test_model"
-        )
+        result = validator.validate_split_integrity(valid_split, sample_timestamps, "test_model")
 
         assert isinstance(result, IntegrityCheckResult)
         assert result.passed is True
@@ -108,28 +86,23 @@ class TestTemporalIntegrityValidator:
         self,
         validator: TemporalIntegrityValidator,
         invalid_split: RollSplit,
-        sample_timestamps: list[pd.Timestamp]
+        sample_timestamps: list[pd.Timestamp],
     ):
         """Test that invalid split fails integrity checks."""
-        result = validator.validate_split_integrity(
-            invalid_split, sample_timestamps, "test_model"
-        )
+        result = validator.validate_split_integrity(invalid_split, sample_timestamps, "test_model")
 
         assert result.passed is False
         assert len(result.violations) > 0
 
         # Should detect period overlap violation
-        overlap_violations = [
-            v for v in result.violations
-            if v.violation_type == "period_overlap"
-        ]
+        overlap_violations = [v for v in result.violations if v.violation_type == "period_overlap"]
         assert len(overlap_violations) > 0
 
     def test_strict_mode_raises_exception(
         self,
         strict_validator: TemporalIntegrityValidator,
         invalid_split: RollSplit,
-        sample_timestamps: list[pd.Timestamp]
+        sample_timestamps: list[pd.Timestamp],
     ):
         """Test that strict mode raises exceptions on critical violations."""
         with pytest.raises(ValueError, match="Critical temporal integrity violations"):
@@ -158,7 +131,9 @@ class TestTemporalIntegrityValidator:
         # Create split with wrong temporal order
         wrong_order_split = RollSplit(
             ValidationPeriod(pd.Timestamp("2020-01-01"), pd.Timestamp("2023-01-01")),
-            ValidationPeriod(pd.Timestamp("2024-01-01"), pd.Timestamp("2025-01-01")),  # Wrong order!
+            ValidationPeriod(
+                pd.Timestamp("2024-01-01"), pd.Timestamp("2025-01-01")
+            ),  # Wrong order!
             ValidationPeriod(pd.Timestamp("2023-01-01"), pd.Timestamp("2024-01-01")),
         )
 
@@ -169,9 +144,7 @@ class TestTemporalIntegrityValidator:
         assert result.violations[0].violation_type == "temporal_ordering"
 
     def test_data_leakage_detection(
-        self,
-        validator: TemporalIntegrityValidator,
-        valid_split: RollSplit
+        self, validator: TemporalIntegrityValidator, valid_split: RollSplit
     ):
         """Test data leakage detection."""
         # Create timestamps that would cause leakage
@@ -186,10 +159,7 @@ class TestTemporalIntegrityValidator:
         # Should pass because timestamps are properly separated
         assert result.passed is True
 
-    def test_future_information_access_detection(
-        self,
-        validator: TemporalIntegrityValidator
-    ):
+    def test_future_information_access_detection(self, validator: TemporalIntegrityValidator):
         """Test future information access detection."""
         split = RollSplit(
             ValidationPeriod(pd.Timestamp("2020-01-01"), pd.Timestamp("2023-01-01")),
@@ -210,9 +180,7 @@ class TestTemporalIntegrityValidator:
         assert result.passed is True
 
     def test_data_sufficiency_check(
-        self,
-        validator: TemporalIntegrityValidator,
-        valid_split: RollSplit
+        self, validator: TemporalIntegrityValidator, valid_split: RollSplit
     ):
         """Test data sufficiency checking."""
         # Create insufficient timestamps
@@ -224,36 +192,33 @@ class TestTemporalIntegrityValidator:
         ]
 
         result = validator._check_data_sufficiency(
-            valid_split, sparse_timestamps,
-            min_train_samples=10, min_val_samples=1, min_test_samples=1
+            valid_split,
+            sparse_timestamps,
+            min_train_samples=10,
+            min_val_samples=1,
+            min_test_samples=1,
         )
 
         # Should detect insufficient training data
         insufficient_violations = [
-            v for v in result.violations
+            v
+            for v in result.violations
             if v.violation_type == "insufficient_data" and "training" in v.description
         ]
         assert len(insufficient_violations) > 0
 
-    def test_boundary_check(
-        self,
-        validator: TemporalIntegrityValidator,
-        valid_split: RollSplit
-    ):
+    def test_boundary_check(self, validator: TemporalIntegrityValidator, valid_split: RollSplit):
         """Test period boundary checking."""
         # Create timestamps that don't cover the full split range
         limited_timestamps = pd.date_range(
-            start="2021-01-01",  # After split start
-            end="2024-06-01",    # Before split end
-            freq="D"
+            start="2021-01-01", end="2024-06-01", freq="D"  # After split start  # Before split end
         ).tolist()
 
         result = validator._check_period_boundaries(valid_split, limited_timestamps)
 
         # Should warn about boundary mismatches
         boundary_violations = [
-            v for v in result.violations
-            if v.violation_type == "boundary_mismatch"
+            v for v in result.violations if v.violation_type == "boundary_mismatch"
         ]
         assert len(boundary_violations) > 0
 
@@ -261,7 +226,7 @@ class TestTemporalIntegrityValidator:
         self,
         validator: TemporalIntegrityValidator,
         invalid_split: RollSplit,
-        sample_timestamps: list[pd.Timestamp]
+        sample_timestamps: list[pd.Timestamp],
     ):
         """Test violation summary generation."""
         # Generate some violations
@@ -279,7 +244,7 @@ class TestTemporalIntegrityValidator:
         self,
         validator: TemporalIntegrityValidator,
         invalid_split: RollSplit,
-        sample_timestamps: list[pd.Timestamp]
+        sample_timestamps: list[pd.Timestamp],
     ):
         """Test integrity report export."""
         # Generate violations
@@ -304,7 +269,7 @@ class TestTemporalIntegrityValidator:
         self,
         validator: TemporalIntegrityValidator,
         invalid_split: RollSplit,
-        sample_timestamps: list[pd.Timestamp]
+        sample_timestamps: list[pd.Timestamp],
     ):
         """Test clearing violation history."""
         # Generate violations
@@ -322,7 +287,7 @@ class TestTemporalIntegrityValidator:
         self,
         validator: TemporalIntegrityValidator,
         invalid_split: RollSplit,
-        sample_timestamps: list[pd.Timestamp]
+        sample_timestamps: list[pd.Timestamp],
     ):
         """Test raising exception on critical violations."""
         # Generate critical violations
@@ -372,7 +337,7 @@ class TestContinuousIntegrityMonitor:
         valid_access = monitor.monitor_data_access(
             access_timestamp=pd.Timestamp("2023-01-01"),
             data_timestamp=pd.Timestamp("2022-01-01"),
-            operation="training"
+            operation="training",
         )
         assert valid_access is True
 
@@ -380,7 +345,7 @@ class TestContinuousIntegrityMonitor:
         invalid_access = monitor.monitor_data_access(
             access_timestamp=pd.Timestamp("2022-01-01"),
             data_timestamp=pd.Timestamp("2023-01-01"),
-            operation="training"
+            operation="training",
         )
         assert invalid_access is False
         assert monitor.violation_count == 1
@@ -390,32 +355,26 @@ class TestContinuousIntegrityMonitor:
         monitor.start_monitoring()
 
         # Valid training data
-        training_timestamps = pd.date_range(
-            start="2020-01-01",
-            end="2022-12-31",
-            freq="D"
-        ).tolist()
+        training_timestamps = pd.date_range(start="2020-01-01", end="2022-12-31", freq="D").tolist()
 
         valid_training = monitor.monitor_model_training(
             training_start=pd.Timestamp("2020-01-01"),
             training_end=pd.Timestamp("2023-01-01"),
             data_timestamps=training_timestamps,
-            model_name="test_model"
+            model_name="test_model",
         )
         assert valid_training is True
 
         # Invalid training data (future data included)
         future_training_timestamps = pd.date_range(
-            start="2020-01-01",
-            end="2024-12-31",  # Beyond training end
-            freq="D"
+            start="2020-01-01", end="2024-12-31", freq="D"  # Beyond training end
         ).tolist()
 
         invalid_training = monitor.monitor_model_training(
             training_start=pd.Timestamp("2020-01-01"),
             training_end=pd.Timestamp("2023-01-01"),
             data_timestamps=future_training_timestamps,
-            model_name="test_model"
+            model_name="test_model",
         )
         assert invalid_training is False
         assert monitor.violation_count == 1
@@ -428,7 +387,7 @@ class TestContinuousIntegrityMonitor:
         valid_prediction = monitor.monitor_prediction_generation(
             prediction_time=pd.Timestamp("2023-01-01"),
             data_cutoff=pd.Timestamp("2022-12-31"),
-            model_name="test_model"
+            model_name="test_model",
         )
         assert valid_prediction is True
 
@@ -436,7 +395,7 @@ class TestContinuousIntegrityMonitor:
         invalid_prediction = monitor.monitor_prediction_generation(
             prediction_time=pd.Timestamp("2022-01-01"),
             data_cutoff=pd.Timestamp("2023-01-01"),
-            model_name="test_model"
+            model_name="test_model",
         )
         assert invalid_prediction is False
         assert monitor.violation_count == 1
@@ -454,7 +413,7 @@ class TestContinuousIntegrityMonitor:
             monitor.monitor_data_access(
                 access_timestamp=pd.Timestamp("2022-01-01"),
                 data_timestamp=pd.Timestamp(f"2023-0{i+1}-01"),
-                operation="test"
+                operation="test",
             )
 
         # Alert should be triggered
@@ -472,7 +431,7 @@ class TestContinuousIntegrityMonitor:
             monitor.monitor_data_access(
                 access_timestamp=pd.Timestamp("2022-01-01"),
                 data_timestamp=pd.Timestamp("2023-01-01"),
-                operation="training"
+                operation="training",
             )
 
     def test_monitoring_stats(self, monitor: ContinuousIntegrityMonitor):
@@ -497,7 +456,7 @@ class TestContinuousIntegrityMonitor:
         result = monitor.monitor_data_access(
             access_timestamp=pd.Timestamp("2022-01-01"),
             data_timestamp=pd.Timestamp("2023-01-01"),  # Future data - would normally fail
-            operation="test"
+            operation="test",
         )
 
         assert result is True

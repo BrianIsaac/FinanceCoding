@@ -36,24 +36,26 @@ class MockPortfolioModel(PortfolioModel):
     def fit(self, returns: pd.DataFrame, universe: list[str], fit_period: tuple = None):
         """Mock fit method."""
         self.fitted = True
-        self.fit_calls.append({
-            "returns_shape": returns.shape,
-            "universe_size": len(universe),
-            "fit_period": fit_period,
-        })
+        self.fit_calls.append(
+            {
+                "returns_shape": returns.shape,
+                "universe_size": len(universe),
+                "fit_period": fit_period,
+            }
+        )
 
     def predict_weights(self, date: pd.Timestamp, universe: list[str]) -> pd.Series:
         """Mock weight prediction."""
-        self.predict_calls.append({
-            "date": date,
-            "universe_size": len(universe),
-        })
+        self.predict_calls.append(
+            {
+                "date": date,
+                "universe_size": len(universe),
+            }
+        )
 
         # Return equal weights
         weights = pd.Series(
-            1.0 / len(universe),
-            index=universe,
-            name=f"weights_{date.strftime('%Y%m%d')}"
+            1.0 / len(universe), index=universe, name=f"weights_{date.strftime('%Y%m%d')}"
         )
         return weights
 
@@ -161,9 +163,7 @@ class TestRollingBacktestEngine:
         assert engine.model_states == {}
 
     def test_input_validation(
-        self,
-        engine: RollingBacktestEngine,
-        mock_models: dict[str, MockPortfolioModel]
+        self, engine: RollingBacktestEngine, mock_models: dict[str, MockPortfolioModel]
     ):
         """Test input validation."""
         # Test empty models
@@ -230,7 +230,7 @@ class TestRollingBacktestEngine:
         assert isinstance(integrity_report, dict)
         assert "total_splits_monitored" in integrity_report
 
-    @patch('src.evaluation.backtest.rolling_engine.RollingBacktestEngine._save_results')
+    @patch("src.evaluation.backtest.rolling_engine.RollingBacktestEngine._save_results")
     def test_result_saving(
         self,
         mock_save: Mock,
@@ -285,9 +285,7 @@ class TestRollingBacktestEngine:
         universe_data = pd.DataFrame(index=dates, columns=assets, data=True)
         universe_data.loc["2022-01-01":, "TSLA"] = False  # Remove TSLA from 2022
 
-        results = engine.run_rolling_backtest(
-            mock_models, sample_data, universe_data=universe_data
-        )
+        results = engine.run_rolling_backtest(mock_models, sample_data, universe_data=universe_data)
 
         assert isinstance(results, RollingBacktestResults)
         assert len(results.portfolio_returns) == len(mock_models)
@@ -298,6 +296,7 @@ class TestRollingBacktestEngine:
         sample_data: dict[str, pd.DataFrame],
     ):
         """Test error handling during backtest execution."""
+
         # Create a model that raises exceptions
         class FailingModel(MockPortfolioModel):
             def fit(self, returns, universe, fit_period=None):
@@ -408,9 +407,7 @@ class TestRollingBacktestEngine:
         split_data = engine._prepare_split_data(split, sample_data, universe_data=None)
 
         model = mock_models["equal_weight"]
-        results = engine._retrain_model_on_split(
-            model, split, split_data, "equal_weight"
-        )
+        results = engine._retrain_model_on_split(model, split, split_data, "equal_weight")
 
         assert isinstance(results, dict)
         assert "training_success" in results

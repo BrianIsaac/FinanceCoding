@@ -60,7 +60,9 @@ class IntegrationConfig:
 
     # Validation integration
     enable_validation_metrics: bool = True
-    validation_metrics: list[str] = field(default_factory=lambda: ["sharpe_ratio", "total_return", "volatility"])
+    validation_metrics: list[str] = field(
+        default_factory=lambda: ["sharpe_ratio", "total_return", "volatility"]
+    )
 
     # Performance analytics
     enable_performance_attribution: bool = True
@@ -218,8 +220,7 @@ class ModelTrainingIntegrator:
                 model_results["validation_results"].append(validation_result)
 
                 # Save checkpoint if configured
-                if (self.config.enable_checkpointing and
-                    i % self.config.checkpoint_frequency == 0):
+                if self.config.enable_checkpointing and i % self.config.checkpoint_frequency == 0:
 
                     checkpoint_info = self._save_model_checkpoint(
                         adapted_model, model_name, split, training_result, validation_result
@@ -251,7 +252,9 @@ class ModelTrainingIntegrator:
 
         return "UNKNOWN"
 
-    def _adapt_model_for_integration(self, model: PortfolioModel, model_name: str) -> PortfolioModel:
+    def _adapt_model_for_integration(
+        self, model: PortfolioModel, model_name: str
+    ) -> PortfolioModel:
         """Adapt model for integration with backtest pipeline."""
 
         model_type = self._detect_model_type(model)
@@ -339,7 +342,10 @@ class ModelTrainingIntegrator:
                 return ValidationResult(
                     model_name=model_name,
                     split_index=split_index,
-                    validation_period=(split.validation_period.start_date, split.validation_period.end_date),
+                    validation_period=(
+                        split.validation_period.start_date,
+                        split.validation_period.end_date,
+                    ),
                     metrics={},
                     validation_success=False,
                     error_message="No validation data available",
@@ -355,14 +361,19 @@ class ModelTrainingIntegrator:
                 return ValidationResult(
                     model_name=model_name,
                     split_index=split_index,
-                    validation_period=(split.validation_period.start_date, split.validation_period.end_date),
+                    validation_period=(
+                        split.validation_period.start_date,
+                        split.validation_period.end_date,
+                    ),
                     metrics={},
                     validation_success=False,
                     error_message="Model generated empty predictions",
                 )
 
             # Calculate portfolio returns
-            aligned_data = validation_data.loc[:, predictions.index.intersection(validation_data.columns)]
+            aligned_data = validation_data.loc[
+                :, predictions.index.intersection(validation_data.columns)
+            ]
             aligned_weights = predictions.reindex(aligned_data.columns, fill_value=0)
             portfolio_returns = (aligned_data * aligned_weights).sum(axis=1)
 
@@ -374,7 +385,10 @@ class ModelTrainingIntegrator:
             return ValidationResult(
                 model_name=model_name,
                 split_index=split_index,
-                validation_period=(split.validation_period.start_date, split.validation_period.end_date),
+                validation_period=(
+                    split.validation_period.start_date,
+                    split.validation_period.end_date,
+                ),
                 metrics=metrics,
                 predictions=predictions,
                 validation_success=True,
@@ -384,7 +398,10 @@ class ModelTrainingIntegrator:
             return ValidationResult(
                 model_name=model_name,
                 split_index=split_index,
-                validation_period=(split.validation_period.start_date, split.validation_period.end_date),
+                validation_period=(
+                    split.validation_period.start_date,
+                    split.validation_period.end_date,
+                ),
                 metrics={},
                 validation_success=False,
                 error_message=str(e),
@@ -426,11 +443,15 @@ class ModelTrainingIntegrator:
         # Save checkpoint (simplified - would use pickle or model-specific serialization)
         try:
             import pickle
-            with open(checkpoint_path, 'wb') as f:
-                pickle.dump({
-                    'model': model,
-                    'checkpoint_info': checkpoint_info,
-                }, f)
+
+            with open(checkpoint_path, "wb") as f:
+                pickle.dump(
+                    {
+                        "model": model,
+                        "checkpoint_info": checkpoint_info,
+                    },
+                    f,
+                )
 
             # Register checkpoint
             if model_name not in self.checkpoint_registry:
@@ -444,7 +465,9 @@ class ModelTrainingIntegrator:
 
         return checkpoint_info
 
-    def _aggregate_validation_metrics(self, validation_results: list[ValidationResult]) -> dict[str, float]:
+    def _aggregate_validation_metrics(
+        self, validation_results: list[ValidationResult]
+    ) -> dict[str, float]:
         """Aggregate validation metrics across splits."""
 
         successful_results = [r for r in validation_results if r.validation_success]
@@ -500,8 +523,7 @@ class ModelTrainingIntegrator:
         # Normalize weights
         if total_performance > 0:
             ensemble_weights = {
-                name: weight / total_performance
-                for name, weight in ensemble_weights.items()
+                name: weight / total_performance for name, weight in ensemble_weights.items()
             }
         else:
             # Equal weights if no performance data
@@ -522,7 +544,7 @@ class ModelTrainingIntegrator:
             "models_evaluated": len(model_results),
             "successful_models": 0,
             "best_model": None,
-            "best_performance": float('-inf'),
+            "best_performance": float("-inf"),
             "performance_comparison": {},
         }
 
@@ -531,7 +553,7 @@ class ModelTrainingIntegrator:
                 integrated_metrics["successful_models"] += 1
 
                 # Extract key performance metric (Sharpe ratio)
-                performance = results["overall_metrics"].get("avg_sharpe_ratio", float('-inf'))
+                performance = results["overall_metrics"].get("avg_sharpe_ratio", float("-inf"))
                 integrated_metrics["performance_comparison"][model_name] = performance
 
                 # Track best model
@@ -546,9 +568,7 @@ class ModelTrainingIntegrator:
         return self.checkpoint_registry.get(model_name, [])
 
     def load_model_checkpoint(
-        self,
-        model_name: str,
-        checkpoint_index: int = -1
+        self, model_name: str, checkpoint_index: int = -1
     ) -> PortfolioModel | None:
         """Load model from checkpoint."""
 
@@ -563,9 +583,10 @@ class ModelTrainingIntegrator:
 
         try:
             import pickle
-            with open(checkpoint_info.checkpoint_path, 'rb') as f:
+
+            with open(checkpoint_info.checkpoint_path, "rb") as f:
                 checkpoint_data = pickle.load(f)
-                return checkpoint_data['model']
+                return checkpoint_data["model"]
         except Exception as e:
             logger.error(f"Failed to load checkpoint: {e}")
             return None
@@ -582,7 +603,9 @@ class ModelTrainingIntegrator:
             },
             "checkpoints": {
                 "total_models_with_checkpoints": len(self.checkpoint_registry),
-                "total_checkpoints": sum(len(checkpoints) for checkpoints in self.checkpoint_registry.values()),
+                "total_checkpoints": sum(
+                    len(checkpoints) for checkpoints in self.checkpoint_registry.values()
+                ),
             },
             "validation_cache_size": len(self.validation_cache),
         }

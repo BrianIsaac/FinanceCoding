@@ -22,7 +22,9 @@ try:
     HAS_PLOTTING = True
 except ImportError:
     HAS_PLOTTING = False
-    warnings.warn("Matplotlib/Seaborn not available. Visualization features disabled.", stacklevel=2)
+    warnings.warn(
+        "Matplotlib/Seaborn not available. Visualization features disabled.", stacklevel=2
+    )
 
 try:
     import networkx as nx

@@ -129,19 +129,13 @@ class RollingBacktestEngine:
 
         # Initialize rolling validation engine
         backtest_config = config.to_backtest_config()
-        self.rolling_engine = RollingValidationEngine(
-            backtest_config,
-            config.gpu_config
-        )
+        self.rolling_engine = RollingValidationEngine(backtest_config, config.gpu_config)
 
         # Initialize temporal integrity monitor
         self.integrity_monitor = self.rolling_engine.create_integrity_monitor()
 
         # Initialize memory management
-        self.gpu_manager = (
-            GPUMemoryManager(config.gpu_config)
-            if config.gpu_config else None
-        )
+        self.gpu_manager = GPUMemoryManager(config.gpu_config) if config.gpu_config else None
 
         # Initialize output directory
         if config.output_dir:
@@ -192,7 +186,7 @@ class RollingBacktestEngine:
             model_performance={},
             temporal_integrity_report={},
             memory_usage_stats={},
-            execution_summary={}
+            execution_summary={},
         )
 
         # Execute backtest for each model
@@ -280,13 +274,15 @@ class RollingBacktestEngine:
                     returns_list.append(backtest_results["returns"])
                     weights_list.append(backtest_results["weights"])
                     costs_list.append(backtest_results["costs"])
-                    model_stats.append({
-                        "split_index": i,
-                        "train_start": split.train_period.start_date,
-                        "test_start": split.test_period.start_date,
-                        **training_results,
-                        **backtest_results["metrics"]
-                    })
+                    model_stats.append(
+                        {
+                            "split_index": i,
+                            "train_start": split.train_period.start_date,
+                            "test_start": split.test_period.start_date,
+                            **training_results,
+                            **backtest_results["metrics"],
+                        }
+                    )
 
             except Exception as e:
                 logger.error(f"Error processing split {i} for {model_name}: {e}")
@@ -330,17 +326,13 @@ class RollingBacktestEngine:
 
         # Prepare universe for each period
         universe_train = (
-            universe_data.loc[
-                split.train_period.start_date:split.train_period.end_date
-            ]
+            universe_data.loc[split.train_period.start_date : split.train_period.end_date]
             if universe_data is not None
             else None
         )
 
         universe_test = (
-            universe_data.loc[
-                split.test_period.start_date:split.test_period.end_date
-            ]
+            universe_data.loc[split.test_period.start_date : split.test_period.end_date]
             if universe_data is not None
             else None
         )
@@ -486,13 +478,18 @@ class RollingBacktestEngine:
                 costs = 0.0
                 if previous_weights is not None:
                     # Simple transaction cost calculation (can be enhanced)
-                    weight_changes = abs(current_weights - previous_weights.reindex(current_weights.index, fill_value=0)).sum()
+                    weight_changes = abs(
+                        current_weights
+                        - previous_weights.reindex(current_weights.index, fill_value=0)
+                    ).sum()
                     costs = weight_changes * self.config.transaction_cost_bps / 10000.0
 
                 # Calculate returns for holding period
                 if i < len(rebalance_dates) - 1:
                     next_date = rebalance_dates[i + 1]
-                    period_returns = test_returns.loc[rebalance_date:next_date, current_weights.index]
+                    period_returns = test_returns.loc[
+                        rebalance_date:next_date, current_weights.index
+                    ]
                     if not period_returns.empty:
                         daily_returns = (period_returns * current_weights).sum(axis=1).iloc[1:]
                         returns_list.extend(daily_returns.tolist())
@@ -512,9 +509,23 @@ class RollingBacktestEngine:
                 continue
 
         # Combine results
-        weights_df = pd.DataFrame(weights_list, index=rebalance_dates[:len(weights_list)]) if weights_list else pd.DataFrame()
-        returns_series = pd.Series(returns_list, name="portfolio_returns") if returns_list else pd.Series(dtype=float)
-        costs_series = pd.Series(costs_list, index=rebalance_dates[:len(costs_list)], name="transaction_costs") if costs_list else pd.Series(dtype=float)
+        weights_df = (
+            pd.DataFrame(weights_list, index=rebalance_dates[: len(weights_list)])
+            if weights_list
+            else pd.DataFrame()
+        )
+        returns_series = (
+            pd.Series(returns_list, name="portfolio_returns")
+            if returns_list
+            else pd.Series(dtype=float)
+        )
+        costs_series = (
+            pd.Series(
+                costs_list, index=rebalance_dates[: len(costs_list)], name="transaction_costs"
+            )
+            if costs_list
+            else pd.Series(dtype=float)
+        )
 
         # Calculate period metrics
         period_metrics = {}
@@ -529,9 +540,7 @@ class RollingBacktestEngine:
         }
 
     def _validate_inputs(
-        self,
-        models: dict[str, PortfolioModel],
-        data: dict[str, pd.DataFrame]
+        self, models: dict[str, PortfolioModel], data: dict[str, pd.DataFrame]
     ) -> None:
         """Validate inputs for rolling backtest."""
 
@@ -550,7 +559,9 @@ class RollingBacktestEngine:
         data_end = returns_data.index.max()
 
         if self.config.start_date < data_start:
-            logger.warning(f"Backtest start date {self.config.start_date} is before data start {data_start}")
+            logger.warning(
+                f"Backtest start date {self.config.start_date} is before data start {data_start}"
+            )
 
         if self.config.end_date > data_end:
             logger.warning(f"Backtest end date {self.config.end_date} is after data end {data_end}")
@@ -567,7 +578,7 @@ class RollingBacktestEngine:
                 "validation_months": self.config.validation_months,
                 "test_months": self.config.test_months,
                 "step_months": self.config.step_months,
-            }
+            },
         }
 
         # Add per-model summary statistics
@@ -611,6 +622,7 @@ class RollingBacktestEngine:
 
         # Save execution summary
         import json
+
         with open(output_dir / "execution_summary.json", "w") as f:
             json.dump(results.execution_summary, f, indent=2, default=str)
 
@@ -634,11 +646,7 @@ class ModelRetrainingEngine:
     - Memory management during intensive retraining operations
     """
 
-    def __init__(
-        self,
-        gpu_config: GPUConfig | None = None,
-        checkpoint_dir: Path | None = None
-    ):
+    def __init__(self, gpu_config: GPUConfig | None = None, checkpoint_dir: Path | None = None):
         """Initialize model retraining engine."""
         self.gpu_manager = GPUMemoryManager(gpu_config) if gpu_config else None
         self.checkpoint_dir = checkpoint_dir
@@ -675,17 +683,11 @@ class ModelRetrainingEngine:
             self._save_model_checkpoint(model, split_info, model_name)
 
         # Execute retraining with memory management
-        training_results = self._execute_retraining(
-            model, cleaned_data, universe, split_info
-        )
+        training_results = self._execute_retraining(model, cleaned_data, universe, split_info)
 
         return training_results
 
-    def _handle_missing_data(
-        self,
-        data: pd.DataFrame,
-        universe: list[str]
-    ) -> pd.DataFrame:
+    def _handle_missing_data(self, data: pd.DataFrame, universe: list[str]) -> pd.DataFrame:
         """Handle missing data during retraining."""
 
         # Filter to universe assets
@@ -694,7 +696,7 @@ class ModelRetrainingEngine:
 
         # Handle missing values
         # Forward fill for up to 5 days, then drop
-        cleaned_data = filtered_data.fillna(method='ffill', limit=5).dropna()
+        cleaned_data = filtered_data.fillna(method="ffill", limit=5).dropna()
 
         logger.info(
             f"Data cleaning: {len(universe)} universe assets, "
@@ -705,10 +707,7 @@ class ModelRetrainingEngine:
         return cleaned_data
 
     def _save_model_checkpoint(
-        self,
-        model: PortfolioModel,
-        split_info: RollSplit,
-        model_name: str
+        self, model: PortfolioModel, split_info: RollSplit, model_name: str
     ) -> None:
         """Save model checkpoint before retraining."""
 
@@ -716,12 +715,12 @@ class ModelRetrainingEngine:
             return
 
         checkpoint_path = (
-            self.checkpoint_dir /
-            f"{model_name}_{split_info.train_period.start_date.strftime('%Y%m%d')}.pkl"
+            self.checkpoint_dir
+            / f"{model_name}_{split_info.train_period.start_date.strftime('%Y%m%d')}.pkl"
         )
 
         try:
-            with open(checkpoint_path, 'wb') as f:
+            with open(checkpoint_path, "wb") as f:
                 pickle.dump(model, f)
             logger.debug(f"Model checkpoint saved: {checkpoint_path}")
         except Exception as e:

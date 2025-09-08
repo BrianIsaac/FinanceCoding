@@ -188,13 +188,15 @@ class MemoryEfficientTrainer:
     memory optimization specifically for 12GB VRAM constraints.
     """
 
-    def __init__(self,
-                 model: torch.nn.Module,
-                 optimizer: torch.optim.Optimizer,
-                 max_memory_gb: float = 11.0,
-                 gradient_accumulation_steps: int = 4,
-                 enable_mixed_precision: bool = True,
-                 gradient_clipping: float = 1.0):
+    def __init__(
+        self,
+        model: torch.nn.Module,
+        optimizer: torch.optim.Optimizer,
+        max_memory_gb: float = 11.0,
+        gradient_accumulation_steps: int = 4,
+        enable_mixed_precision: bool = True,
+        gradient_clipping: float = 1.0,
+    ):
         """
         Initialize memory-efficient trainer.
 
@@ -214,19 +216,23 @@ class MemoryEfficientTrainer:
         self.gradient_clipping = gradient_clipping
 
         # Initialize mixed precision scaler
-        self.scaler = torch.cuda.amp.GradScaler() if (
-            enable_mixed_precision and torch.cuda.is_available()
-        ) else None
+        self.scaler = (
+            torch.cuda.amp.GradScaler()
+            if (enable_mixed_precision and torch.cuda.is_available())
+            else None
+        )
 
         # Memory monitoring
         self.memory_stats = []
         self._step_count = 0
 
-    def train_epoch(self,
-                   data_loader: torch.utils.data.DataLoader,
-                   loss_fn: callable,
-                   device: torch.device,
-                   epoch: int = 0) -> dict[str, float]:
+    def train_epoch(
+        self,
+        data_loader: torch.utils.data.DataLoader,
+        loss_fn: callable,
+        device: torch.device,
+        epoch: int = 0,
+    ) -> dict[str, float]:
         """
         Train one epoch with memory-efficient techniques.
 
@@ -250,8 +256,9 @@ class MemoryEfficientTrainer:
         for batch_idx, batch_data in enumerate(data_loader):
             # Move data to device
             if isinstance(batch_data, (list, tuple)):
-                batch_data = [item.to(device) if hasattr(item, 'to') else item
-                             for item in batch_data]
+                batch_data = [
+                    item.to(device) if hasattr(item, "to") else item for item in batch_data
+                ]
             else:
                 batch_data = batch_data.to(device)
 
@@ -289,8 +296,7 @@ class MemoryEfficientTrainer:
                 if self.gradient_clipping > 0:
                     if self.scaler is not None:
                         self.scaler.unscale_(self.optimizer)
-                    torch.nn.utils.clip_grad_norm_(self.model.parameters(),
-                                                 self.gradient_clipping)
+                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.gradient_clipping)
 
                 # Optimizer step
                 if self.scaler is not None:
@@ -324,11 +330,11 @@ class MemoryEfficientTrainer:
         avg_loss = total_loss / num_batches if num_batches > 0 else 0.0
 
         return {
-            'epoch': epoch,
-            'avg_loss': avg_loss,
-            'num_batches': num_batches,
-            'memory_peak_gb': self.get_peak_memory_usage(),
-            'gradient_accumulation_steps': self.accumulation_steps
+            "epoch": epoch,
+            "avg_loss": avg_loss,
+            "num_batches": num_batches,
+            "memory_peak_gb": self.get_peak_memory_usage(),
+            "gradient_accumulation_steps": self.accumulation_steps,
         }
 
     def _record_memory_stats(self, batch_idx: int, epoch: int) -> None:
@@ -337,41 +343,43 @@ class MemoryEfficientTrainer:
             allocated = torch.cuda.memory_allocated() / (1024**3)
             cached = torch.cuda.memory_reserved() / (1024**3)
 
-            self.memory_stats.append({
-                'step': self._step_count,
-                'epoch': epoch,
-                'batch_idx': batch_idx,
-                'allocated_gb': round(allocated, 2),
-                'cached_gb': round(cached, 2),
-                'timestamp': pd.Timestamp.now()
-            })
+            self.memory_stats.append(
+                {
+                    "step": self._step_count,
+                    "epoch": epoch,
+                    "batch_idx": batch_idx,
+                    "allocated_gb": round(allocated, 2),
+                    "cached_gb": round(cached, 2),
+                    "timestamp": pd.Timestamp.now(),
+                }
+            )
 
     def get_peak_memory_usage(self) -> float:
         """Get peak memory usage in GB."""
         if not self.memory_stats:
             return 0.0
-        return max(stat['allocated_gb'] for stat in self.memory_stats)
+        return max(stat["allocated_gb"] for stat in self.memory_stats)
 
     def get_memory_report(self) -> dict[str, Any]:
         """Get comprehensive memory usage report."""
         if not self.memory_stats:
-            return {'error': 'No memory statistics recorded'}
+            return {"error": "No memory statistics recorded"}
 
-        allocated_values = [stat['allocated_gb'] for stat in self.memory_stats]
-        cached_values = [stat['cached_gb'] for stat in self.memory_stats]
+        allocated_values = [stat["allocated_gb"] for stat in self.memory_stats]
+        cached_values = [stat["cached_gb"] for stat in self.memory_stats]
 
         return {
-            'peak_allocated_gb': max(allocated_values),
-            'avg_allocated_gb': round(np.mean(allocated_values), 2),
-            'peak_cached_gb': max(cached_values),
-            'avg_cached_gb': round(np.mean(cached_values), 2),
-            'memory_limit_gb': self.max_memory / (1024**3),
-            'utilization_peak_pct': round(
+            "peak_allocated_gb": max(allocated_values),
+            "avg_allocated_gb": round(np.mean(allocated_values), 2),
+            "peak_cached_gb": max(cached_values),
+            "avg_cached_gb": round(np.mean(cached_values), 2),
+            "memory_limit_gb": self.max_memory / (1024**3),
+            "utilization_peak_pct": round(
                 (max(allocated_values) / (self.max_memory / (1024**3))) * 100, 2
             ),
-            'gradient_accumulation_steps': self.accumulation_steps,
-            'mixed_precision_enabled': self.scaler is not None,
-            'total_training_steps': self._step_count
+            "gradient_accumulation_steps": self.accumulation_steps,
+            "mixed_precision_enabled": self.scaler is not None,
+            "total_training_steps": self._step_count,
         }
 
     def optimize_for_memory_limit(self) -> dict[str, Any]:
@@ -385,29 +393,29 @@ class MemoryEfficientTrainer:
         memory_limit_gb = self.max_memory / (1024**3)
 
         recommendations = {
-            'current_peak_gb': current_usage,
-            'memory_limit_gb': memory_limit_gb,
-            'memory_available': current_usage < memory_limit_gb * 0.9,
-            'recommendations': []
+            "current_peak_gb": current_usage,
+            "memory_limit_gb": memory_limit_gb,
+            "memory_available": current_usage < memory_limit_gb * 0.9,
+            "recommendations": [],
         }
 
         if current_usage > memory_limit_gb * 0.9:  # Over 90% usage
-            recommendations['recommendations'].append(
+            recommendations["recommendations"].append(
                 f"High memory usage detected ({current_usage:.1f}GB). "
                 f"Consider increasing gradient accumulation steps."
             )
 
             # Suggest doubling accumulation steps
             new_accumulation = self.accumulation_steps * 2
-            recommendations['suggested_accumulation_steps'] = new_accumulation
+            recommendations["suggested_accumulation_steps"] = new_accumulation
 
         if not self.scaler and torch.cuda.is_available():
-            recommendations['recommendations'].append(
+            recommendations["recommendations"].append(
                 "Enable mixed precision training to reduce memory usage by ~50%"
             )
 
         if current_usage < memory_limit_gb * 0.5:  # Under 50% usage
-            recommendations['recommendations'].append(
+            recommendations["recommendations"].append(
                 "Memory usage is low. Consider reducing gradient accumulation steps "
                 "or increasing batch size for better training efficiency."
             )
@@ -423,10 +431,12 @@ class AutomaticMemoryManager:
     optimization for continuous training processes.
     """
 
-    def __init__(self,
-                 memory_threshold_gb: float = 10.5,
-                 cleanup_interval_steps: int = 50,
-                 enable_automatic_cleanup: bool = True):
+    def __init__(
+        self,
+        memory_threshold_gb: float = 10.5,
+        cleanup_interval_steps: int = 50,
+        enable_automatic_cleanup: bool = True,
+    ):
         """
         Initialize automatic memory manager.
 
@@ -455,43 +465,43 @@ class AutomaticMemoryManager:
         self.step_count += 1
 
         if not torch.cuda.is_available():
-            return {'status': 'CPU mode - no GPU monitoring'}
+            return {"status": "CPU mode - no GPU monitoring"}
 
         # Get current memory stats
         allocated = torch.cuda.memory_allocated()
         cached = torch.cuda.memory_reserved()
 
         memory_stats = {
-            'step': self.step_count,
-            'allocated_bytes': allocated,
-            'cached_bytes': cached,
-            'allocated_gb': allocated / (1024**3),
-            'cached_gb': cached / (1024**3),
-            'timestamp': pd.Timestamp.now()
+            "step": self.step_count,
+            "allocated_bytes": allocated,
+            "cached_bytes": cached,
+            "allocated_gb": allocated / (1024**3),
+            "cached_gb": cached / (1024**3),
+            "timestamp": pd.Timestamp.now(),
         }
 
         self.memory_history.append(memory_stats)
 
         # Determine if cleanup is needed
         cleanup_needed = (
-            force_cleanup or
-            (self.enable_cleanup and allocated > self.memory_threshold) or
-            (self.enable_cleanup and self.step_count % self.cleanup_interval == 0)
+            force_cleanup
+            or (self.enable_cleanup and allocated > self.memory_threshold)
+            or (self.enable_cleanup and self.step_count % self.cleanup_interval == 0)
         )
 
         if cleanup_needed:
             cleanup_result = self._perform_cleanup()
-            memory_stats['cleanup_performed'] = True
-            memory_stats['cleanup_result'] = cleanup_result
+            memory_stats["cleanup_performed"] = True
+            memory_stats["cleanup_result"] = cleanup_result
         else:
-            memory_stats['cleanup_performed'] = False
+            memory_stats["cleanup_performed"] = False
 
         return memory_stats
 
     def _perform_cleanup(self) -> dict[str, Any]:
         """Perform memory cleanup and record results."""
         if not torch.cuda.is_available():
-            return {'status': 'CPU mode - no cleanup needed'}
+            return {"status": "CPU mode - no cleanup needed"}
 
         # Record pre-cleanup memory
         pre_allocated = torch.cuda.memory_allocated()
@@ -509,22 +519,21 @@ class AutomaticMemoryManager:
         freed_cached = pre_cached - post_cached
 
         cleanup_result = {
-            'timestamp': pd.Timestamp.now(),
-            'step': self.step_count,
-            'pre_allocated_gb': pre_allocated / (1024**3),
-            'post_allocated_gb': post_allocated / (1024**3),
-            'pre_cached_gb': pre_cached / (1024**3),
-            'post_cached_gb': post_cached / (1024**3),
-            'freed_allocated_gb': freed_allocated / (1024**3),
-            'freed_cached_gb': freed_cached / (1024**3),
-            'cleanup_effectiveness': freed_cached / max(pre_cached, 1)  # Avoid division by zero
+            "timestamp": pd.Timestamp.now(),
+            "step": self.step_count,
+            "pre_allocated_gb": pre_allocated / (1024**3),
+            "post_allocated_gb": post_allocated / (1024**3),
+            "pre_cached_gb": pre_cached / (1024**3),
+            "post_cached_gb": post_cached / (1024**3),
+            "freed_allocated_gb": freed_allocated / (1024**3),
+            "freed_cached_gb": freed_cached / (1024**3),
+            "cleanup_effectiveness": freed_cached / max(pre_cached, 1),  # Avoid division by zero
         }
 
         self.cleanup_events.append(cleanup_result)
         return cleanup_result
 
-    def get_memory_trend_analysis(self,
-                                 window_size: int = 100) -> dict[str, Any]:
+    def get_memory_trend_analysis(self, window_size: int = 100) -> dict[str, Any]:
         """
         Analyze memory usage trends over recent history.
 
@@ -535,12 +544,12 @@ class AutomaticMemoryManager:
             Trend analysis report
         """
         if len(self.memory_history) < 10:
-            return {'status': 'Insufficient data for trend analysis'}
+            return {"status": "Insufficient data for trend analysis"}
 
         # Get recent memory history
         recent_history = self.memory_history[-window_size:]
-        allocated_values = [stat['allocated_gb'] for stat in recent_history]
-        cached_values = [stat['cached_gb'] for stat in recent_history]
+        allocated_values = [stat["allocated_gb"] for stat in recent_history]
+        cached_values = [stat["cached_gb"] for stat in recent_history]
 
         # Calculate trend metrics
         if len(allocated_values) > 1:
@@ -551,16 +560,16 @@ class AutomaticMemoryManager:
             cached_trend = 0
 
         return {
-            'window_size': len(recent_history),
-            'current_allocated_gb': allocated_values[-1] if allocated_values else 0,
-            'current_cached_gb': cached_values[-1] if cached_values else 0,
-            'peak_allocated_gb': max(allocated_values) if allocated_values else 0,
-            'avg_allocated_gb': np.mean(allocated_values) if allocated_values else 0,
-            'allocated_trend_gb_per_step': allocated_trend,
-            'cached_trend_gb_per_step': cached_trend,
-            'memory_increasing': allocated_trend > 0.001,  # Growing by >1MB per step
-            'cleanup_frequency': len(self.cleanup_events) / max(self.step_count, 1),
-            'total_cleanups': len(self.cleanup_events)
+            "window_size": len(recent_history),
+            "current_allocated_gb": allocated_values[-1] if allocated_values else 0,
+            "current_cached_gb": cached_values[-1] if cached_values else 0,
+            "peak_allocated_gb": max(allocated_values) if allocated_values else 0,
+            "avg_allocated_gb": np.mean(allocated_values) if allocated_values else 0,
+            "allocated_trend_gb_per_step": allocated_trend,
+            "cached_trend_gb_per_step": cached_trend,
+            "memory_increasing": allocated_trend > 0.001,  # Growing by >1MB per step
+            "cleanup_frequency": len(self.cleanup_events) / max(self.step_count, 1),
+            "total_cleanups": len(self.cleanup_events),
         }
 
     def optimize_cleanup_strategy(self) -> dict[str, Any]:
@@ -572,12 +581,12 @@ class AutomaticMemoryManager:
         """
         if not self.cleanup_events:
             return {
-                'status': 'No cleanup events recorded',
-                'recommendations': ['Enable automatic cleanup to gather data']
+                "status": "No cleanup events recorded",
+                "recommendations": ["Enable automatic cleanup to gather data"],
             }
 
         # Analyze cleanup effectiveness
-        effectiveness_scores = [event['cleanup_effectiveness'] for event in self.cleanup_events]
+        effectiveness_scores = [event["cleanup_effectiveness"] for event in self.cleanup_events]
         avg_effectiveness = np.mean(effectiveness_scores)
 
         # Analyze cleanup frequency vs memory growth
@@ -591,7 +600,7 @@ class AutomaticMemoryManager:
                 "or addressing potential memory leaks."
             )
 
-        if trend_analysis.get('memory_increasing', False):
+        if trend_analysis.get("memory_increasing", False):
             recommendations.append(
                 "Memory usage is trending upward. Consider more frequent cleanup "
                 "or reducing batch sizes."
@@ -613,47 +622,49 @@ class AutomaticMemoryManager:
             )
 
         return {
-            'avg_cleanup_effectiveness': round(avg_effectiveness, 3),
-            'total_cleanups': len(self.cleanup_events),
-            'cleanup_rate': round(len(self.cleanup_events) / max(self.step_count, 1), 3),
-            'memory_trend': trend_analysis,
-            'recommendations': recommendations,
-            'suggested_cleanup_interval': (
+            "avg_cleanup_effectiveness": round(avg_effectiveness, 3),
+            "total_cleanups": len(self.cleanup_events),
+            "cleanup_rate": round(len(self.cleanup_events) / max(self.step_count, 1), 3),
+            "memory_trend": trend_analysis,
+            "recommendations": recommendations,
+            "suggested_cleanup_interval": (
                 max(10, self.cleanup_interval // 2)
-                if trend_analysis.get('memory_increasing')
+                if trend_analysis.get("memory_increasing")
                 else self.cleanup_interval
-            )
+            ),
         }
 
     def export_memory_report(self, output_path: str) -> None:
         """Export comprehensive memory monitoring report."""
         report = {
-            'generated_at': pd.Timestamp.now().isoformat(),
-            'configuration': {
-                'memory_threshold_gb': self.memory_threshold / (1024**3),
-                'cleanup_interval_steps': self.cleanup_interval,
-                'automatic_cleanup_enabled': self.enable_cleanup
+            "generated_at": pd.Timestamp.now().isoformat(),
+            "configuration": {
+                "memory_threshold_gb": self.memory_threshold / (1024**3),
+                "cleanup_interval_steps": self.cleanup_interval,
+                "automatic_cleanup_enabled": self.enable_cleanup,
             },
-            'summary': {
-                'total_steps': self.step_count,
-                'total_cleanups': len(self.cleanup_events),
-                'memory_history_length': len(self.memory_history)
+            "summary": {
+                "total_steps": self.step_count,
+                "total_cleanups": len(self.cleanup_events),
+                "memory_history_length": len(self.memory_history),
             },
-            'trend_analysis': self.get_memory_trend_analysis(),
-            'optimization_analysis': self.optimize_cleanup_strategy(),
-            'detailed_memory_history': self.memory_history[-1000:],  # Last 1000 steps
-            'cleanup_events': self.cleanup_events
+            "trend_analysis": self.get_memory_trend_analysis(),
+            "optimization_analysis": self.optimize_cleanup_strategy(),
+            "detailed_memory_history": self.memory_history[-1000:],  # Last 1000 steps
+            "cleanup_events": self.cleanup_events,
         }
 
-        with open(output_path, 'w') as f:
+        with open(output_path, "w") as f:
             json.dump(report, f, indent=2, default=str)
 
 
 # Enhanced batch size optimization utilities
-def find_optimal_batch_size_binary_search(model: torch.nn.Module,
-                                        input_shape: tuple,
-                                        max_memory_gb: float = 11.0,
-                                        max_batch_size: int = 256) -> dict[str, Any]:
+def find_optimal_batch_size_binary_search(
+    model: torch.nn.Module,
+    input_shape: tuple,
+    max_memory_gb: float = 11.0,
+    max_batch_size: int = 256,
+) -> dict[str, Any]:
     """
     Use binary search to find optimal batch size more efficiently.
 
@@ -667,9 +678,9 @@ def find_optimal_batch_size_binary_search(model: torch.nn.Module,
         Dictionary with optimal batch size and analysis
     """
     if not torch.cuda.is_available():
-        return {'optimal_batch_size': 32, 'method': 'CPU fallback'}
+        return {"optimal_batch_size": 32, "method": "CPU fallback"}
 
-    device = torch.device('cuda')
+    device = torch.device("cuda")
     model = model.to(device)
     model.eval()
 
@@ -694,11 +705,9 @@ def find_optimal_batch_size_binary_search(model: torch.nn.Module,
 
             current_memory = torch.cuda.memory_allocated()
 
-            memory_usage_profile.append({
-                'batch_size': mid,
-                'memory_gb': current_memory / (1024**3),
-                'success': True
-            })
+            memory_usage_profile.append(
+                {"batch_size": mid, "memory_gb": current_memory / (1024**3), "success": True}
+            )
 
             if current_memory <= memory_threshold:
                 optimal_batch_size = mid
@@ -708,12 +717,9 @@ def find_optimal_batch_size_binary_search(model: torch.nn.Module,
 
         except RuntimeError as e:
             if "out of memory" in str(e).lower():
-                memory_usage_profile.append({
-                    'batch_size': mid,
-                    'memory_gb': None,
-                    'success': False,
-                    'error': 'OOM'
-                })
+                memory_usage_profile.append(
+                    {"batch_size": mid, "memory_gb": None, "success": False, "error": "OOM"}
+                )
                 high = mid - 1  # Try smaller batch size
             else:
                 raise
@@ -725,10 +731,10 @@ def find_optimal_batch_size_binary_search(model: torch.nn.Module,
     safe_batch_size = max(1, int(optimal_batch_size * 0.8))
 
     return {
-        'optimal_batch_size': safe_batch_size,
-        'max_tested_batch_size': optimal_batch_size,
-        'memory_usage_profile': memory_usage_profile,
-        'method': 'binary_search',
-        'memory_limit_gb': max_memory_gb,
-        'safety_factor': 0.8
+        "optimal_batch_size": safe_batch_size,
+        "max_tested_batch_size": optimal_batch_size,
+        "memory_usage_profile": memory_usage_profile,
+        "method": "binary_search",
+        "memory_limit_gb": max_memory_gb,
+        "safety_factor": 0.8,
     }

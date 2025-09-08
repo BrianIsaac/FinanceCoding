@@ -123,7 +123,11 @@ class TemporalIntegrityValidator:
                 },
                 "data_info": {
                     "total_timestamps": len(data_timestamps),
-                    "data_range": (min(data_timestamps).isoformat(), max(data_timestamps).isoformat()) if data_timestamps else ("", ""),
+                    "data_range": (
+                        (min(data_timestamps).isoformat(), max(data_timestamps).isoformat())
+                        if data_timestamps
+                        else ("", "")
+                    ),
                 },
                 "model_name": model_name,
             },
@@ -149,23 +153,27 @@ class TemporalIntegrityValidator:
 
         # Check training-validation separation
         if split.train_period.end_date > split.validation_period.start_date:
-            violations.append(IntegrityViolation(
-                violation_type="period_overlap",
-                severity="critical",
-                description=f"Training period ends ({split.train_period.end_date}) after validation starts ({split.validation_period.start_date})",
-                timestamp=pd.Timestamp.now(),
-                split_info={"issue": "train_val_overlap"},
-            ))
+            violations.append(
+                IntegrityViolation(
+                    violation_type="period_overlap",
+                    severity="critical",
+                    description=f"Training period ends ({split.train_period.end_date}) after validation starts ({split.validation_period.start_date})",
+                    timestamp=pd.Timestamp.now(),
+                    split_info={"issue": "train_val_overlap"},
+                )
+            )
 
         # Check validation-test separation
         if split.validation_period.end_date > split.test_period.start_date:
-            violations.append(IntegrityViolation(
-                violation_type="period_overlap",
-                severity="critical",
-                description=f"Validation period ends ({split.validation_period.end_date}) after test starts ({split.test_period.start_date})",
-                timestamp=pd.Timestamp.now(),
-                split_info={"issue": "val_test_overlap"},
-            ))
+            violations.append(
+                IntegrityViolation(
+                    violation_type="period_overlap",
+                    severity="critical",
+                    description=f"Validation period ends ({split.validation_period.end_date}) after test starts ({split.test_period.start_date})",
+                    timestamp=pd.Timestamp.now(),
+                    split_info={"issue": "val_test_overlap"},
+                )
+            )
 
         return IntegrityCheckResult(
             passed=len(violations) == 0,
@@ -189,13 +197,15 @@ class TemporalIntegrityValidator:
             next_name, next_period = periods[i + 1]
 
             if current_period.start_date >= next_period.start_date:
-                violations.append(IntegrityViolation(
-                    violation_type="temporal_ordering",
-                    severity="critical",
-                    description=f"{current_name} period starts ({current_period.start_date}) at or after {next_name} period starts ({next_period.start_date})",
-                    timestamp=pd.Timestamp.now(),
-                    split_info={"current_period": current_name, "next_period": next_name},
-                ))
+                violations.append(
+                    IntegrityViolation(
+                        violation_type="temporal_ordering",
+                        severity="critical",
+                        description=f"{current_name} period starts ({current_period.start_date}) at or after {next_name} period starts ({next_period.start_date})",
+                        timestamp=pd.Timestamp.now(),
+                        split_info={"current_period": current_name, "next_period": next_name},
+                    )
+                )
 
         return IntegrityCheckResult(
             passed=len(violations) == 0,
@@ -204,9 +214,7 @@ class TemporalIntegrityValidator:
         )
 
     def _check_data_leakage(
-        self,
-        split: RollSplit,
-        data_timestamps: list[pd.Timestamp]
+        self, split: RollSplit, data_timestamps: list[pd.Timestamp]
     ) -> IntegrityCheckResult:
         """Check for data leakage between periods."""
         violations = []
@@ -230,13 +238,18 @@ class TemporalIntegrityValidator:
             earliest_val = min(val_data)
 
             if latest_train >= earliest_val:
-                violations.append(IntegrityViolation(
-                    violation_type="data_leakage",
-                    severity="critical",
-                    description=f"Training data contains timestamp ({latest_train}) >= validation data ({earliest_val})",
-                    timestamp=pd.Timestamp.now(),
-                    data_info={"latest_train": latest_train.isoformat(), "earliest_val": earliest_val.isoformat()},
-                ))
+                violations.append(
+                    IntegrityViolation(
+                        violation_type="data_leakage",
+                        severity="critical",
+                        description=f"Training data contains timestamp ({latest_train}) >= validation data ({earliest_val})",
+                        timestamp=pd.Timestamp.now(),
+                        data_info={
+                            "latest_train": latest_train.isoformat(),
+                            "earliest_val": earliest_val.isoformat(),
+                        },
+                    )
+                )
 
         # Check for future data in validation
         if val_data and test_data:
@@ -244,13 +257,18 @@ class TemporalIntegrityValidator:
             earliest_test = min(test_data)
 
             if latest_val >= earliest_test:
-                violations.append(IntegrityViolation(
-                    violation_type="data_leakage",
-                    severity="critical",
-                    description=f"Validation data contains timestamp ({latest_val}) >= test data ({earliest_test})",
-                    timestamp=pd.Timestamp.now(),
-                    data_info={"latest_val": latest_val.isoformat(), "earliest_test": earliest_test.isoformat()},
-                ))
+                violations.append(
+                    IntegrityViolation(
+                        violation_type="data_leakage",
+                        severity="critical",
+                        description=f"Validation data contains timestamp ({latest_val}) >= test data ({earliest_test})",
+                        timestamp=pd.Timestamp.now(),
+                        data_info={
+                            "latest_val": latest_val.isoformat(),
+                            "earliest_test": earliest_test.isoformat(),
+                        },
+                    )
+                )
 
         return IntegrityCheckResult(
             passed=len(violations) == 0,
@@ -274,34 +292,40 @@ class TemporalIntegrityValidator:
         # Check that training data doesn't extend beyond validation start
         train_cutoff = split.validation_period.start_date
         future_train_data = [
-            ts for ts in data_timestamps
+            ts
+            for ts in data_timestamps
             if ts >= train_cutoff and split.train_period.contains_date(ts)
         ]
 
         if future_train_data:
-            violations.append(IntegrityViolation(
-                violation_type="future_information_access",
-                severity="critical",
-                description=f"Training period contains {len(future_train_data)} timestamps at or after validation start ({train_cutoff})",
-                timestamp=pd.Timestamp.now(),
-                data_info={"future_timestamps_count": len(future_train_data)},
-            ))
+            violations.append(
+                IntegrityViolation(
+                    violation_type="future_information_access",
+                    severity="critical",
+                    description=f"Training period contains {len(future_train_data)} timestamps at or after validation start ({train_cutoff})",
+                    timestamp=pd.Timestamp.now(),
+                    data_info={"future_timestamps_count": len(future_train_data)},
+                )
+            )
 
         # Check that validation data doesn't extend beyond test start
         val_cutoff = split.test_period.start_date
         future_val_data = [
-            ts for ts in data_timestamps
+            ts
+            for ts in data_timestamps
             if ts >= val_cutoff and split.validation_period.contains_date(ts)
         ]
 
         if future_val_data:
-            violations.append(IntegrityViolation(
-                violation_type="future_information_access",
-                severity="critical",
-                description=f"Validation period contains {len(future_val_data)} timestamps at or after test start ({val_cutoff})",
-                timestamp=pd.Timestamp.now(),
-                data_info={"future_timestamps_count": len(future_val_data)},
-            ))
+            violations.append(
+                IntegrityViolation(
+                    violation_type="future_information_access",
+                    severity="critical",
+                    description=f"Validation period contains {len(future_val_data)} timestamps at or after test start ({val_cutoff})",
+                    timestamp=pd.Timestamp.now(),
+                    data_info={"future_timestamps_count": len(future_val_data)},
+                )
+            )
 
         return IntegrityCheckResult(
             passed=len(violations) == 0,
@@ -327,31 +351,45 @@ class TemporalIntegrityValidator:
 
         # Check minimums
         if train_count < min_train_samples:
-            violations.append(IntegrityViolation(
-                violation_type="insufficient_data",
-                severity="warning",
-                description=f"Training period has {train_count} samples < minimum {min_train_samples}",
-                timestamp=pd.Timestamp.now(),
-                data_info={"period": "training", "count": train_count, "minimum": min_train_samples},
-            ))
+            violations.append(
+                IntegrityViolation(
+                    violation_type="insufficient_data",
+                    severity="warning",
+                    description=f"Training period has {train_count} samples < minimum {min_train_samples}",
+                    timestamp=pd.Timestamp.now(),
+                    data_info={
+                        "period": "training",
+                        "count": train_count,
+                        "minimum": min_train_samples,
+                    },
+                )
+            )
 
         if val_count < min_val_samples:
-            violations.append(IntegrityViolation(
-                violation_type="insufficient_data",
-                severity="warning",
-                description=f"Validation period has {val_count} samples < minimum {min_val_samples}",
-                timestamp=pd.Timestamp.now(),
-                data_info={"period": "validation", "count": val_count, "minimum": min_val_samples},
-            ))
+            violations.append(
+                IntegrityViolation(
+                    violation_type="insufficient_data",
+                    severity="warning",
+                    description=f"Validation period has {val_count} samples < minimum {min_val_samples}",
+                    timestamp=pd.Timestamp.now(),
+                    data_info={
+                        "period": "validation",
+                        "count": val_count,
+                        "minimum": min_val_samples,
+                    },
+                )
+            )
 
         if test_count < min_test_samples:
-            violations.append(IntegrityViolation(
-                violation_type="insufficient_data",
-                severity="warning",
-                description=f"Test period has {test_count} samples < minimum {min_test_samples}",
-                timestamp=pd.Timestamp.now(),
-                data_info={"period": "test", "count": test_count, "minimum": min_test_samples},
-            ))
+            violations.append(
+                IntegrityViolation(
+                    violation_type="insufficient_data",
+                    severity="warning",
+                    description=f"Test period has {test_count} samples < minimum {min_test_samples}",
+                    timestamp=pd.Timestamp.now(),
+                    data_info={"period": "test", "count": test_count, "minimum": min_test_samples},
+                )
+            )
 
         return IntegrityCheckResult(
             passed=len([v for v in violations if v.severity == "critical"]) == 0,
@@ -385,22 +423,32 @@ class TemporalIntegrityValidator:
 
         # Check if split extends beyond available data
         if split.train_period.start_date < data_min:
-            violations.append(IntegrityViolation(
-                violation_type="boundary_mismatch",
-                severity="warning",
-                description=f"Training start ({split.train_period.start_date}) before data start ({data_min})",
-                timestamp=pd.Timestamp.now(),
-                data_info={"split_start": split.train_period.start_date.isoformat(), "data_start": data_min.isoformat()},
-            ))
+            violations.append(
+                IntegrityViolation(
+                    violation_type="boundary_mismatch",
+                    severity="warning",
+                    description=f"Training start ({split.train_period.start_date}) before data start ({data_min})",
+                    timestamp=pd.Timestamp.now(),
+                    data_info={
+                        "split_start": split.train_period.start_date.isoformat(),
+                        "data_start": data_min.isoformat(),
+                    },
+                )
+            )
 
         if split.test_period.end_date > data_max:
-            violations.append(IntegrityViolation(
-                violation_type="boundary_mismatch",
-                severity="warning",
-                description=f"Test end ({split.test_period.end_date}) after data end ({data_max})",
-                timestamp=pd.Timestamp.now(),
-                data_info={"split_end": split.test_period.end_date.isoformat(), "data_end": data_max.isoformat()},
-            ))
+            violations.append(
+                IntegrityViolation(
+                    violation_type="boundary_mismatch",
+                    severity="warning",
+                    description=f"Test end ({split.test_period.end_date}) after data end ({data_max})",
+                    timestamp=pd.Timestamp.now(),
+                    data_info={
+                        "split_end": split.test_period.end_date.isoformat(),
+                        "data_end": data_max.isoformat(),
+                    },
+                )
+            )
 
         return IntegrityCheckResult(
             passed=True,  # Warnings don't fail the check
@@ -474,7 +522,7 @@ class TemporalIntegrityValidator:
         }
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(output_path, 'w') as f:
+        with open(output_path, "w") as f:
             json.dump(report, f, indent=2, default=str)
 
         logger.info(f"Integrity report exported to {output_path}")
@@ -491,8 +539,8 @@ class TemporalIntegrityValidator:
         if critical_violations:
             violation_descriptions = [v.description for v in critical_violations]
             raise ValueError(
-                "Critical temporal integrity violations detected:\n" +
-                "\n".join(f"- {desc}" for desc in violation_descriptions)
+                "Critical temporal integrity violations detected:\n"
+                + "\n".join(f"- {desc}" for desc in violation_descriptions)
             )
 
 
@@ -527,7 +575,9 @@ class ContinuousIntegrityMonitor:
     def stop_monitoring(self) -> None:
         """Stop continuous monitoring."""
         self.monitoring_active = False
-        logger.info(f"Temporal integrity monitoring stopped. Total violations: {self.violation_count}")
+        logger.info(
+            f"Temporal integrity monitoring stopped. Total violations: {self.violation_count}"
+        )
 
     def monitor_data_access(
         self,

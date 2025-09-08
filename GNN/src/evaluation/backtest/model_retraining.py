@@ -138,7 +138,9 @@ class ModelRetrainingEngine:
         Returns:
             Comprehensive retraining results
         """
-        logger.info(f"Starting retraining for {model_name} on period {split.train_period.start_date}")
+        logger.info(
+            f"Starting retraining for {model_name} on period {split.train_period.start_date}"
+        )
 
         start_time = pd.Timestamp.now()
         result = RetrainingResult(success=False, training_time_seconds=0.0)
@@ -191,7 +193,9 @@ class ModelRetrainingEngine:
             result.success = True
             result.training_time_seconds = (pd.Timestamp.now() - start_time).total_seconds()
 
-            logger.info(f"Successfully retrained {model_name} in {result.training_time_seconds:.2f}s")
+            logger.info(
+                f"Successfully retrained {model_name} in {result.training_time_seconds:.2f}s"
+            )
 
         except Exception as e:
             result.error_message = str(e)
@@ -214,7 +218,11 @@ class ModelRetrainingEngine:
         # Determine current universe
         if universe_data is not None:
             # Use dynamic universe if available
-            universe_mask = universe_data.loc[current_date] if current_date in universe_data.index else universe_data.iloc[-1]
+            universe_mask = (
+                universe_data.loc[current_date]
+                if current_date in universe_data.index
+                else universe_data.iloc[-1]
+            )
             current_universe = universe_mask[universe_mask].index.tolist()
         else:
             # Use assets available in training data
@@ -228,16 +236,21 @@ class ModelRetrainingEngine:
             if change_event.added_assets or change_event.removed_assets:
                 universe_changes.append(change_event)
                 self.universe_history.append(change_event)
-                logger.info(f"Universe change detected: +{len(change_event.added_assets)}, -{len(change_event.removed_assets)} assets")
+                logger.info(
+                    f"Universe change detected: +{len(change_event.added_assets)}, -{len(change_event.removed_assets)} assets"
+                )
 
         # Filter to assets with sufficient data
         universe_with_data = [
-            asset for asset in current_universe
+            asset
+            for asset in current_universe
             if asset in train_data.columns and not train_data[asset].isna().all()
         ]
 
         if len(universe_with_data) < self.config.min_assets_for_training:
-            logger.warning(f"Insufficient assets with data: {len(universe_with_data)} < {self.config.min_assets_for_training}")
+            logger.warning(
+                f"Insufficient assets with data: {len(universe_with_data)} < {self.config.min_assets_for_training}"
+            )
 
         return universe_with_data, universe_changes
 
@@ -257,7 +270,9 @@ class ModelRetrainingEngine:
         common = prev_set & curr_set
 
         # Calculate stability ratio
-        stability_ratio = len(common) / max(len(prev_set), len(curr_set)) if prev_set or curr_set else 1.0
+        stability_ratio = (
+            len(common) / max(len(prev_set), len(curr_set)) if prev_set or curr_set else 1.0
+        )
 
         # Determine reason for change
         reason = ""
@@ -290,22 +305,32 @@ class ModelRetrainingEngine:
 
         # Check data sufficiency
         if len(filtered_data) < self.config.min_training_samples:
-            raise ValueError(f"Insufficient training samples: {len(filtered_data)} < {self.config.min_training_samples}")
+            raise ValueError(
+                f"Insufficient training samples: {len(filtered_data)} < {self.config.min_training_samples}"
+            )
 
         # Handle missing values
-        missing_ratio = filtered_data.isna().sum().sum() / (filtered_data.shape[0] * filtered_data.shape[1])
+        missing_ratio = filtered_data.isna().sum().sum() / (
+            filtered_data.shape[0] * filtered_data.shape[1]
+        )
         if missing_ratio > self.config.max_missing_ratio:
-            logger.warning(f"High missing data ratio: {missing_ratio:.3f} > {self.config.max_missing_ratio}")
+            logger.warning(
+                f"High missing data ratio: {missing_ratio:.3f} > {self.config.max_missing_ratio}"
+            )
 
         # Forward fill limited missing values
-        cleaned_data = filtered_data.fillna(method='ffill', limit=self.config.forward_fill_limit)
+        cleaned_data = filtered_data.fillna(method="ffill", limit=self.config.forward_fill_limit)
 
         # Drop assets with excessive missing data
         asset_completeness = cleaned_data.notna().mean()
-        complete_assets = asset_completeness[asset_completeness > (1 - self.config.max_missing_ratio)].index.tolist()
+        complete_assets = asset_completeness[
+            asset_completeness > (1 - self.config.max_missing_ratio)
+        ].index.tolist()
 
         if len(complete_assets) < self.config.min_assets_for_training:
-            logger.warning(f"Few assets after cleaning: {len(complete_assets)} < {self.config.min_assets_for_training}")
+            logger.warning(
+                f"Few assets after cleaning: {len(complete_assets)} < {self.config.min_assets_for_training}"
+            )
 
         final_data = cleaned_data[complete_assets].dropna()
 
@@ -317,7 +342,9 @@ class ModelRetrainingEngine:
             "missing_ratio": missing_ratio,
         }
 
-        logger.debug(f"Data cleaning: {data_stats['original_samples']}x{data_stats['original_assets']} -> {data_stats['samples']}x{data_stats['assets']}")
+        logger.debug(
+            f"Data cleaning: {data_stats['original_samples']}x{data_stats['original_assets']} -> {data_stats['samples']}x{data_stats['assets']}"
+        )
 
         return final_data, data_stats
 
@@ -336,17 +363,20 @@ class ModelRetrainingEngine:
         checkpoint_path = self.config.checkpoint_dir / checkpoint_filename
 
         try:
-            with open(checkpoint_path, 'wb') as f:
-                pickle.dump({
-                    'model': model,
-                    'split_info': {
-                        'train_start': split.train_period.start_date,
-                        'train_end': split.train_period.end_date,
-                        'val_start': split.validation_period.start_date,
-                        'test_start': split.test_period.start_date,
+            with open(checkpoint_path, "wb") as f:
+                pickle.dump(
+                    {
+                        "model": model,
+                        "split_info": {
+                            "train_start": split.train_period.start_date,
+                            "train_end": split.train_period.end_date,
+                            "val_start": split.validation_period.start_date,
+                            "test_start": split.test_period.start_date,
+                        },
+                        "timestamp": pd.Timestamp.now(),
                     },
-                    'timestamp': pd.Timestamp.now(),
-                }, f)
+                    f,
+                )
 
             # Update checkpoint registry
             if model_name not in self.checkpoint_registry:
@@ -423,7 +453,8 @@ class ModelRetrainingEngine:
                 metrics["validation_volatility"] = portfolio_returns.std() * np.sqrt(252)
                 metrics["validation_sharpe"] = (
                     metrics["validation_return"] / metrics["validation_volatility"]
-                    if metrics["validation_volatility"] > 0 else 0.0
+                    if metrics["validation_volatility"] > 0
+                    else 0.0
                 )
                 metrics["validation_samples"] = len(portfolio_returns)
 
@@ -461,9 +492,19 @@ class ModelRetrainingEngine:
                 "total_retrains": len(history),
                 "successful_retrains": len(successful_retrains),
                 "success_rate": len(successful_retrains) / len(history) if history else 0.0,
-                "avg_training_time": np.mean([r.training_time_seconds for r in successful_retrains]) if successful_retrains else 0.0,
-                "avg_training_samples": np.mean([r.training_samples for r in successful_retrains]) if successful_retrains else 0,
-                "recent_universe_changes": len(list(self.universe_history[-10:])) if self.universe_history else 0,
+                "avg_training_time": (
+                    np.mean([r.training_time_seconds for r in successful_retrains])
+                    if successful_retrains
+                    else 0.0
+                ),
+                "avg_training_samples": (
+                    np.mean([r.training_samples for r in successful_retrains])
+                    if successful_retrains
+                    else 0
+                ),
+                "recent_universe_changes": (
+                    len(list(self.universe_history[-10:])) if self.universe_history else 0
+                ),
             }
         else:
             # Aggregate stats across all models
@@ -477,15 +518,15 @@ class ModelRetrainingEngine:
                 "total_models": len(self.retraining_history),
                 "total_retrains": len(all_retrains),
                 "successful_retrains": len(successful_retrains),
-                "overall_success_rate": len(successful_retrains) / len(all_retrains) if all_retrains else 0.0,
+                "overall_success_rate": (
+                    len(successful_retrains) / len(all_retrains) if all_retrains else 0.0
+                ),
                 "total_universe_changes": len(self.universe_history),
                 "checkpoints_saved": sum(len(paths) for paths in self.checkpoint_registry.values()),
             }
 
     def load_model_checkpoint(
-        self,
-        model_name: str,
-        checkpoint_date: pd.Timestamp | None = None
+        self, model_name: str, checkpoint_date: pd.Timestamp | None = None
     ) -> PortfolioModel | None:
         """Load model from checkpoint."""
 
@@ -504,8 +545,8 @@ class ModelRetrainingEngine:
                 # Extract date from filename
                 filename = path.stem
                 try:
-                    date_str = filename.split('_')[-1]
-                    path_date = pd.to_datetime(date_str, format='%Y%m%d')
+                    date_str = filename.split("_")[-1]
+                    path_date = pd.to_datetime(date_str, format="%Y%m%d")
                     if path_date <= checkpoint_date:
                         checkpoint_path = path
                 except:
@@ -518,9 +559,9 @@ class ModelRetrainingEngine:
             return None
 
         try:
-            with open(checkpoint_path, 'rb') as f:
+            with open(checkpoint_path, "rb") as f:
                 checkpoint_data = pickle.load(f)
-                return checkpoint_data['model']
+                return checkpoint_data["model"]
         except Exception as e:
             logger.error(f"Failed to load checkpoint: {e}")
             return None
@@ -539,8 +580,8 @@ class ModelRetrainingEngine:
                 try:
                     # Extract date from filename
                     filename = checkpoint_path.stem
-                    date_str = filename.split('_')[-1]
-                    checkpoint_date = pd.to_datetime(date_str, format='%Y%m%d')
+                    date_str = filename.split("_")[-1]
+                    checkpoint_date = pd.to_datetime(date_str, format="%Y%m%d")
 
                     if checkpoint_date < cutoff_date and checkpoint_path.exists():
                         checkpoint_path.unlink()
@@ -601,7 +642,8 @@ class UniverseManager:
                 date=date,
                 added_assets=added,
                 removed_assets=removed,
-                stability_ratio=len(current_universe & previous_universe) / len(current_universe | previous_universe),
+                stability_ratio=len(current_universe & previous_universe)
+                / len(current_universe | previous_universe),
             )
             self.change_log.append(change_event)
             return change_event
@@ -637,8 +679,7 @@ class UniverseManager:
         """Analyze universe stability over time period."""
 
         period_changes = [
-            change for change in self.change_log
-            if start_date <= change.date <= end_date
+            change for change in self.change_log if start_date <= change.date <= end_date
         ]
 
         if not period_changes:
@@ -654,5 +695,6 @@ class UniverseManager:
             "total_additions": total_additions,
             "total_removals": total_removals,
             "avg_stability_ratio": avg_stability,
-            "change_frequency": len(period_changes) / ((end_date - start_date).days / 30),  # Changes per month
+            "change_frequency": len(period_changes)
+            / ((end_date - start_date).days / 30),  # Changes per month
         }

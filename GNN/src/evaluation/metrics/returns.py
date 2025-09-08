@@ -13,6 +13,8 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from .risk import RiskAnalytics, RiskMetricsConfig
+
 
 @dataclass
 class ReturnMetricsConfig:
@@ -208,30 +210,28 @@ class ReturnAnalyzer:
             "cvar_95": cvar_95,
         }
 
-    def calculate_risk_metrics(self, returns: pd.Series) -> dict[str, float]:
+    def calculate_risk_metrics(
+        self, returns: pd.Series, benchmark_returns: pd.Series = None
+    ) -> dict[str, float]:
         """
-        Calculate risk-specific metrics.
+        Calculate comprehensive risk-specific metrics using RiskAnalytics.
 
         Args:
             returns: Portfolio returns time series
+            benchmark_returns: Optional benchmark returns for relative metrics
 
         Returns:
             Dictionary containing VaR, CVaR, maximum drawdown,
-            and other risk metrics
-
-        Note:
-            This is a stub implementation. Risk metrics calculation
-            will be implemented in future stories.
+            tracking error, Information Ratio and other risk metrics
         """
-        # Stub implementation
-        return {
-            "value_at_risk": 0.0,
-            "conditional_var": 0.0,
-            "maximum_drawdown": 0.0,
-            "drawdown_duration": 0.0,
-            "downside_deviation": 0.0,
-            "sortino_ratio": 0.0,
-        }
+        risk_analytics = RiskAnalytics(
+            RiskMetricsConfig(
+                risk_free_rate=self.config.risk_free_rate,
+                trading_days_per_year=self.config.trading_days_per_year,
+            )
+        )
+
+        return risk_analytics.calculate_comprehensive_risk_metrics(returns, benchmark_returns)
 
     def calculate_benchmark_comparison(
         self, returns: pd.Series, benchmark_returns: pd.Series
@@ -245,19 +245,51 @@ class ReturnAnalyzer:
 
         Returns:
             Dictionary containing alpha, beta, information ratio,
-            and tracking error
-
-        Note:
-            This is a stub implementation. Benchmark comparison
-            will be implemented in future stories.
+            tracking error, and correlation metrics
         """
-        # Stub implementation
+        # Align data
+        aligned_data = pd.DataFrame({"portfolio": returns, "benchmark": benchmark_returns}).dropna()
+
+        if aligned_data.empty or len(aligned_data) < 63:  # Need minimum 3 months
+            return {
+                "alpha": 0.0,
+                "beta": 0.0,
+                "information_ratio": 0.0,
+                "tracking_error": 0.0,
+                "correlation": 0.0,
+            }
+
+        portfolio_aligned = aligned_data["portfolio"]
+        benchmark_aligned = aligned_data["benchmark"]
+
+        # Calculate excess returns
+        risk_free_rate = self.config.risk_free_rate / self.config.trading_days_per_year
+        excess_portfolio = portfolio_aligned - risk_free_rate
+        excess_benchmark = benchmark_aligned - risk_free_rate
+
+        # Calculate beta using covariance
+        beta = np.cov(excess_portfolio, excess_benchmark)[0, 1] / np.var(excess_benchmark)
+
+        # Calculate alpha (Jensen's alpha)
+        alpha = excess_portfolio.mean() - beta * excess_benchmark.mean()
+        alpha_annualized = alpha * self.config.trading_days_per_year
+
+        # Calculate tracking error and information ratio
+        excess_returns = portfolio_aligned - benchmark_aligned
+        tracking_error = excess_returns.std() * np.sqrt(self.config.trading_days_per_year)
+        active_return = excess_returns.mean() * self.config.trading_days_per_year
+        information_ratio = active_return / tracking_error if tracking_error > 0 else 0.0
+
+        # Calculate correlation
+        correlation = portfolio_aligned.corr(benchmark_aligned)
+
         return {
-            "alpha": 0.0,
-            "beta": 0.0,
-            "information_ratio": 0.0,
-            "tracking_error": 0.0,
-            "correlation": 0.0,
+            "alpha": alpha_annualized,
+            "beta": beta,
+            "information_ratio": information_ratio,
+            "tracking_error": tracking_error,
+            "correlation": correlation,
+            "excess_return": active_return,
         }
 
     def calculate_maximum_drawdown(
@@ -324,6 +356,71 @@ class ReturnAnalyzer:
             * excess_returns.mean()
             / excess_returns.std()
         )
+
+    def generate_performance_report(
+        self, returns: pd.Series, benchmark_returns: pd.Series | None = None
+    ) -> dict[str, Any]:
+        """
+        Generate comprehensive performance report with all metrics.
+
+        Args:
+            returns: Portfolio returns time series
+            benchmark_returns: Optional benchmark returns for comparison
+
+        Returns:
+            Comprehensive performance metrics dictionary
+        """
+        report = {}
+
+        # Basic metrics
+        basic_metrics = self.calculate_basic_metrics(returns, benchmark_returns)
+        report.update(basic_metrics)
+
+        # Risk metrics
+        risk_metrics = self.calculate_risk_metrics(returns)
+        report["risk_metrics"] = risk_metrics
+
+        # Benchmark comparison if available
+        if benchmark_returns is not None:
+            benchmark_metrics = self.calculate_benchmark_comparison(returns, benchmark_returns)
+            report["benchmark_comparison"] = benchmark_metrics
+
+        # Additional calculated metrics
+        if not returns.empty:
+            # CAGR calculation
+            num_years = len(returns) / self.config.trading_days_per_year
+            total_return = (1 + returns).prod() - 1
+            cagr = (1 + total_return) ** (1 / num_years) - 1 if num_years > 0 else 0.0
+            report["cagr"] = cagr
+
+            # Rolling metrics summary
+            if len(returns) > 252:  # At least 1 year of data
+                rolling_12m_volatility = returns.rolling(252).std().dropna() * np.sqrt(252)
+                rolling_12m_sharpe = self._calculate_rolling_sharpe(returns, 252)
+
+                report["rolling_metrics"] = {
+                    "avg_12m_volatility": rolling_12m_volatility.mean(),
+                    "volatility_stability": (
+                        1 / rolling_12m_volatility.std()
+                        if rolling_12m_volatility.std() > 0
+                        else 0.0
+                    ),
+                    "avg_12m_sharpe": rolling_12m_sharpe.mean(),
+                    "sharpe_stability": (
+                        1 / rolling_12m_sharpe.std() if rolling_12m_sharpe.std() > 0 else 0.0
+                    ),
+                }
+
+        return report
+
+    def _calculate_rolling_sharpe(self, returns: pd.Series, window: int) -> pd.Series:
+        """Calculate rolling Sharpe ratio."""
+        daily_rf = self.config.risk_free_rate / self.config.trading_days_per_year
+        excess_returns = returns - daily_rf
+        rolling_mean = excess_returns.rolling(window).mean()
+        rolling_std = excess_returns.rolling(window).std()
+        rolling_sharpe = rolling_mean / rolling_std * np.sqrt(self.config.trading_days_per_year)
+        return rolling_sharpe.dropna()
 
     def _empty_metrics(self) -> dict[str, float]:
         """Return empty metrics dictionary for edge cases."""

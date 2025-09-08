@@ -109,9 +109,7 @@ class MemoryManager:
 
         self.monitoring_active = True
         self.monitoring_thread = threading.Thread(
-            target=self._monitoring_loop,
-            args=(interval_seconds,),
-            daemon=True
+            target=self._monitoring_loop, args=(interval_seconds,), daemon=True
         )
         self.monitoring_thread.start()
         logger.info("Memory monitoring started")
@@ -145,10 +143,11 @@ class MemoryManager:
         # GPU memory if available
         try:
             import torch
+
             if torch.cuda.is_available():
                 gpu_memory = torch.cuda.memory_stats()
-                allocated = gpu_memory.get('allocated_bytes.all.current', 0) / (1024**3)
-                cached = gpu_memory.get('reserved_bytes.all.current', 0) / (1024**3)
+                allocated = gpu_memory.get("allocated_bytes.all.current", 0) / (1024**3)
+                cached = gpu_memory.get("reserved_bytes.all.current", 0) / (1024**3)
                 stats.gpu_memory_gb = allocated + cached
 
                 device_props = torch.cuda.get_device_properties(0)
@@ -236,7 +235,9 @@ class MemoryManager:
         # Clear Python garbage
         len(gc.get_objects())
         collected = gc.collect()
-        optimization_results["actions_taken"].append(f"Garbage collection: {collected} objects collected")
+        optimization_results["actions_taken"].append(
+            f"Garbage collection: {collected} objects collected"
+        )
 
         # Clear data cache
         cache_size_before = len(self.data_cache)
@@ -250,6 +251,7 @@ class MemoryManager:
         # Clear GPU cache if available
         try:
             import torch
+
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
                 optimization_results["actions_taken"].append("GPU cache cleared")
@@ -258,7 +260,9 @@ class MemoryManager:
 
         # Get final memory stats
         after_stats = self.get_current_memory_stats()
-        memory_freed = optimization_results["before_stats"].used_memory_gb - after_stats.used_memory_gb
+        memory_freed = (
+            optimization_results["before_stats"].used_memory_gb - after_stats.used_memory_gb
+        )
         optimization_results["memory_freed_gb"] = memory_freed
         optimization_results["after_stats"] = after_stats
 
@@ -267,23 +271,20 @@ class MemoryManager:
         return optimization_results
 
     def process_in_batches(
-        self,
-        data: pd.DataFrame | list[Any],
-        processing_func: callable,
-        **kwargs
+        self, data: pd.DataFrame | list[Any], processing_func: callable, **kwargs
     ) -> list[Any]:
         """Process data in memory-efficient batches."""
 
         if isinstance(data, pd.DataFrame):
             total_size = len(data)
             batch_generator = (
-                data.iloc[i:i+self.config.batch_size]
+                data.iloc[i : i + self.config.batch_size]
                 for i in range(0, total_size, self.config.batch_size)
             )
         else:
             total_size = len(data)
             batch_generator = (
-                data[i:i+self.config.batch_size]
+                data[i : i + self.config.batch_size]
                 for i in range(0, total_size, self.config.batch_size)
             )
 
@@ -301,10 +302,12 @@ class MemoryManager:
             try:
                 batch_result = processing_func(batch, **kwargs)
                 results.append(batch_result)
-                processed_count += len(batch) if hasattr(batch, '__len__') else 1
+                processed_count += len(batch) if hasattr(batch, "__len__") else 1
 
                 if batch_idx % 100 == 0:
-                    logger.debug(f"Processed {processed_count}/{total_size} items in {batch_idx+1} batches")
+                    logger.debug(
+                        f"Processed {processed_count}/{total_size} items in {batch_idx+1} batches"
+                    )
 
             except Exception as e:
                 logger.error(f"Error processing batch {batch_idx}: {e}")
@@ -323,7 +326,9 @@ class MemoryManager:
         data_size = self._estimate_object_size(data)
 
         # Check if we have enough cache space
-        current_cache_size = sum(self._estimate_object_size(obj) for obj in self.data_cache.values())
+        current_cache_size = sum(
+            self._estimate_object_size(obj) for obj in self.data_cache.values()
+        )
 
         if current_cache_size + data_size > self.max_cache_size_bytes:
             # Clean up oldest items
@@ -380,8 +385,10 @@ class MemoryManager:
         current_time = pd.Timestamp.now()
 
         # Cooldown check
-        if (self.last_alert_time and
-            (current_time - self.last_alert_time).total_seconds() < self.alert_cooldown_seconds):
+        if (
+            self.last_alert_time
+            and (current_time - self.last_alert_time).total_seconds() < self.alert_cooldown_seconds
+        ):
             return
 
         alert_triggered = False
@@ -396,12 +403,16 @@ class MemoryManager:
 
         # Process memory alerts
         if memory_stats.process_memory_gb > self.config.max_memory_gb:
-            self._trigger_alert(f"Process memory limit exceeded: {memory_stats.process_memory_gb:.2f} GB")
+            self._trigger_alert(
+                f"Process memory limit exceeded: {memory_stats.process_memory_gb:.2f} GB"
+            )
             alert_triggered = True
 
         # GPU memory alerts
         if memory_stats.gpu_memory_percent > 95:
-            self._trigger_alert(f"Critical GPU memory usage: {memory_stats.gpu_memory_percent:.1f}%")
+            self._trigger_alert(
+                f"Critical GPU memory usage: {memory_stats.gpu_memory_percent:.1f}%"
+            )
             alert_triggered = True
 
         # Performance alerts
@@ -437,7 +448,8 @@ class MemoryManager:
         cache_ttl_hours = 2  # Time to live: 2 hours
 
         expired_keys = [
-            key for key, access_time in self.cache_access_times.items()
+            key
+            for key, access_time in self.cache_access_times.items()
             if (current_time - access_time).total_seconds() > cache_ttl_hours * 3600
         ]
 
@@ -452,8 +464,7 @@ class MemoryManager:
 
         # Sort by access time (oldest first)
         sorted_keys = sorted(
-            self.cache_access_times.keys(),
-            key=lambda k: self.cache_access_times[k]
+            self.cache_access_times.keys(), key=lambda k: self.cache_access_times[k]
         )
 
         freed_size = 0
@@ -480,6 +491,7 @@ class MemoryManager:
             else:
                 # Rough estimation using sys.getsizeof
                 import sys
+
                 return sys.getsizeof(obj)
         except Exception:
             return 1024  # Default 1KB estimate
@@ -544,7 +556,8 @@ class MemoryManager:
 
         if output_path:
             import json
-            with open(output_path, 'w') as f:
+
+            with open(output_path, "w") as f:
                 json.dump(report, f, indent=2, default=str)
             logger.info(f"Performance report saved to {output_path}")
 
@@ -590,7 +603,7 @@ class BatchProcessor:
         start_time = pd.Timestamp.now()
 
         for i in range(0, len(splits), optimal_batch_size):
-            batch_splits = splits[i:i+optimal_batch_size]
+            batch_splits = splits[i : i + optimal_batch_size]
 
             try:
                 # Process batch

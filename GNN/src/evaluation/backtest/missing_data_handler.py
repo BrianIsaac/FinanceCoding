@@ -100,7 +100,11 @@ class MissingDataHandler:
         # Basic statistics
         metrics.total_observations = data.size
         metrics.missing_observations = data.isna().sum().sum()
-        metrics.missing_ratio = metrics.missing_observations / metrics.total_observations if metrics.total_observations > 0 else 0.0
+        metrics.missing_ratio = (
+            metrics.missing_observations / metrics.total_observations
+            if metrics.total_observations > 0
+            else 0.0
+        )
 
         # Per-asset analysis
         asset_missing = data.isna().sum()
@@ -130,7 +134,9 @@ class MissingDataHandler:
         if isinstance(data.index, pd.DatetimeIndex):
             metrics.data_gaps = self._detect_temporal_gaps(data.index)
 
-        logger.debug(f"Data quality: {metrics.missing_ratio:.3f} missing ratio, {metrics.complete_assets} complete assets")
+        logger.debug(
+            f"Data quality: {metrics.missing_ratio:.3f} missing ratio, {metrics.complete_assets} complete assets"
+        )
 
         return metrics
 
@@ -170,14 +176,10 @@ class MissingDataHandler:
 
         # Apply primary strategy
         try:
-            cleaned_data = self._apply_missing_strategy(
-                working_data, self.config.primary_strategy
-            )
+            cleaned_data = self._apply_missing_strategy(working_data, self.config.primary_strategy)
         except Exception as e:
             logger.warning(f"Primary strategy {self.config.primary_strategy} failed: {e}")
-            cleaned_data = self._apply_missing_strategy(
-                working_data, self.config.fallback_strategy
-            )
+            cleaned_data = self._apply_missing_strategy(working_data, self.config.fallback_strategy)
 
         # Handle extreme values if configured
         if self.config.handle_extreme_values:
@@ -205,16 +207,16 @@ class MissingDataHandler:
         """Apply specific missing data strategy."""
 
         if strategy == MissingDataStrategy.FORWARD_FILL:
-            return data.fillna(method='ffill', limit=self.config.forward_fill_limit)
+            return data.fillna(method="ffill", limit=self.config.forward_fill_limit)
 
         elif strategy == MissingDataStrategy.BACKWARD_FILL:
-            return data.fillna(method='bfill', limit=self.config.backward_fill_limit)
+            return data.fillna(method="bfill", limit=self.config.backward_fill_limit)
 
         elif strategy == MissingDataStrategy.LINEAR_INTERPOLATE:
-            return data.interpolate(method='linear', limit=self.config.forward_fill_limit)
+            return data.interpolate(method="linear", limit=self.config.forward_fill_limit)
 
         elif strategy == MissingDataStrategy.SPLINE_INTERPOLATE:
-            return data.interpolate(method='spline', order=2, limit=self.config.forward_fill_limit)
+            return data.interpolate(method="spline", order=2, limit=self.config.forward_fill_limit)
 
         elif strategy == MissingDataStrategy.CROSS_SECTIONAL_MEDIAN:
             # Fill with cross-sectional median for each time period
@@ -227,12 +229,14 @@ class MissingDataHandler:
         elif strategy == MissingDataStrategy.DROP_ASSETS:
             # Drop assets with too much missing data
             asset_completeness = data.notna().mean()
-            keep_assets = asset_completeness[asset_completeness >= self.config.min_data_coverage].index
+            keep_assets = asset_completeness[
+                asset_completeness >= self.config.min_data_coverage
+            ].index
             return data[keep_assets].dropna()
 
         elif strategy == MissingDataStrategy.DROP_PERIODS:
             # Drop time periods with too much missing data
-            return data.dropna(axis=0, how='any')
+            return data.dropna(axis=0, how="any")
 
         elif strategy == MissingDataStrategy.ZERO_FILL:
             return data.fillna(0.0)
@@ -247,7 +251,7 @@ class MissingDataHandler:
 
         for col in data.columns:
             series = data[col]
-            if series.dtype in ['float64', 'float32', 'int64', 'int32']:
+            if series.dtype in ["float64", "float32", "int64", "int32"]:
                 # Calculate z-score
                 mean_val = series.mean()
                 std_val = series.std()
@@ -269,10 +273,14 @@ class MissingDataHandler:
 
         # Remove assets with remaining missing data above threshold
         asset_missing_ratios = data.isna().mean()
-        valid_assets = asset_missing_ratios[asset_missing_ratios <= self.config.max_missing_ratio].index
+        valid_assets = asset_missing_ratios[
+            asset_missing_ratios <= self.config.max_missing_ratio
+        ].index
 
         if len(valid_assets) < len(data.columns):
-            logger.warning(f"Removing {len(data.columns) - len(valid_assets)} assets due to excessive missing data")
+            logger.warning(
+                f"Removing {len(data.columns) - len(valid_assets)} assets due to excessive missing data"
+            )
 
         validated_data = data[valid_assets]
 
@@ -294,7 +302,9 @@ class MissingDataHandler:
 
         return validated_data
 
-    def _detect_temporal_gaps(self, date_index: pd.DatetimeIndex) -> list[tuple[pd.Timestamp, pd.Timestamp]]:
+    def _detect_temporal_gaps(
+        self, date_index: pd.DatetimeIndex
+    ) -> list[tuple[pd.Timestamp, pd.Timestamp]]:
         """Detect gaps in temporal data."""
 
         if len(date_index) < 2:
@@ -306,9 +316,7 @@ class MissingDataHandler:
         if expected_freq:
             # Generate expected date range
             expected_dates = pd.date_range(
-                start=date_index[0],
-                end=date_index[-1],
-                freq=expected_freq
+                start=date_index[0], end=date_index[-1], freq=expected_freq
             )
 
             # Find missing dates
@@ -346,9 +354,12 @@ class MissingDataHandler:
             "avg_complete_assets": np.mean([m.complete_assets for m in recent_metrics]),
             "max_consecutive_missing": max([m.consecutive_missing_max for m in recent_metrics]),
             "total_gaps_detected": sum([len(m.data_gaps) for m in recent_metrics]),
-            "data_quality_trend": "improving" if len(recent_metrics) > 1 and
-                                 recent_metrics[-1].missing_ratio < recent_metrics[0].missing_ratio
-                                 else "stable",
+            "data_quality_trend": (
+                "improving"
+                if len(recent_metrics) > 1
+                and recent_metrics[-1].missing_ratio < recent_metrics[0].missing_ratio
+                else "stable"
+            ),
         }
 
     def recommend_strategy(self, data: pd.DataFrame) -> MissingDataStrategy:
@@ -389,7 +400,11 @@ class MissingDataHandler:
                 "missing_ratio": series.isna().mean(),
                 "first_valid": series.first_valid_index(),
                 "last_valid": series.last_valid_index(),
-                "data_range_days": (series.last_valid_index() - series.first_valid_index()).days if series.first_valid_index() and series.last_valid_index() else 0,
+                "data_range_days": (
+                    (series.last_valid_index() - series.first_valid_index()).days
+                    if series.first_valid_index() and series.last_valid_index()
+                    else 0
+                ),
             }
 
         # Time period analysis
@@ -427,7 +442,8 @@ class MissingDataHandler:
 
         if output_path:
             import json
-            with open(output_path, 'w') as f:
+
+            with open(output_path, "w") as f:
                 json.dump(report, f, indent=2, default=str)
             logger.info(f"Data quality report saved to {output_path}")
 

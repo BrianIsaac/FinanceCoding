@@ -103,17 +103,13 @@ class RollingWindowGenerator:
         )
 
         # Validate and filter windows
-        valid_windows = self._validate_and_filter_windows(
-            candidate_windows, validated_timestamps
-        )
+        valid_windows = self._validate_and_filter_windows(candidate_windows, validated_timestamps)
 
         # Apply post-processing
         final_windows = self._post_process_windows(valid_windows, validated_timestamps)
 
         # Generate statistics
-        self._generation_stats = self._compute_generation_stats(
-            final_windows, validated_timestamps
-        )
+        self._generation_stats = self._compute_generation_stats(final_windows, validated_timestamps)
 
         logger.info(
             f"Generated {len(final_windows)} valid windows from "
@@ -122,10 +118,7 @@ class RollingWindowGenerator:
 
         return final_windows
 
-    def _validate_timestamps(
-        self,
-        timestamps: list[pd.Timestamp]
-    ) -> list[pd.Timestamp]:
+    def _validate_timestamps(self, timestamps: list[pd.Timestamp]) -> list[pd.Timestamp]:
         """Validate and clean input timestamps."""
 
         # Remove duplicates and sort
@@ -140,8 +133,10 @@ class RollingWindowGenerator:
 
         # Detect large gaps
         if len(unique_timestamps) > 1:
-            gaps = [(unique_timestamps[i+1] - unique_timestamps[i]).days
-                   for i in range(len(unique_timestamps)-1)]
+            gaps = [
+                (unique_timestamps[i + 1] - unique_timestamps[i]).days
+                for i in range(len(unique_timestamps) - 1)
+            ]
             max_gap = max(gaps)
 
             if max_gap > self.config.max_gap_days * 5:  # Allow larger gaps in timestamp list
@@ -189,9 +184,7 @@ class RollingWindowGenerator:
 
             # Adaptive stepping
             if self.config.enable_adaptive_stepping:
-                step_size = self._calculate_adaptive_step(
-                    candidate_windows, timestamps
-                )
+                step_size = self._calculate_adaptive_step(candidate_windows, timestamps)
 
             # Advance to next window
             current_start = self._add_months(current_start, step_size)
@@ -215,45 +208,38 @@ class RollingWindowGenerator:
         for window in candidate_windows:
             # Check data availability
             if not self._check_data_availability(window, timestamp_set):
-                logger.debug(f"Insufficient data for window starting {window.train_period.start_date}")
+                logger.debug(
+                    f"Insufficient data for window starting {window.train_period.start_date}"
+                )
                 continue
 
             # Check temporal integrity
             if not self._check_temporal_integrity(window):
-                logger.warning(f"Temporal integrity violation for window starting {window.train_period.start_date}")
+                logger.warning(
+                    f"Temporal integrity violation for window starting {window.train_period.start_date}"
+                )
                 continue
 
             # Check data quality
             if not self._check_data_quality(window, timestamps):
-                logger.debug(f"Data quality issues for window starting {window.train_period.start_date}")
+                logger.debug(
+                    f"Data quality issues for window starting {window.train_period.start_date}"
+                )
                 continue
 
             valid_windows.append(window)
 
         return valid_windows
 
-    def _check_data_availability(
-        self,
-        window: RollSplit,
-        timestamp_set: set[pd.Timestamp]
-    ) -> bool:
+    def _check_data_availability(self, window: RollSplit, timestamp_set: set[pd.Timestamp]) -> bool:
         """Check if window has sufficient data availability."""
 
         # Count samples in each period
-        train_samples = sum(
-            1 for ts in timestamp_set
-            if window.train_period.contains_date(ts)
-        )
+        train_samples = sum(1 for ts in timestamp_set if window.train_period.contains_date(ts))
 
-        val_samples = sum(
-            1 for ts in timestamp_set
-            if window.validation_period.contains_date(ts)
-        )
+        val_samples = sum(1 for ts in timestamp_set if window.validation_period.contains_date(ts))
 
-        test_samples = sum(
-            1 for ts in timestamp_set
-            if window.test_period.contains_date(ts)
-        )
+        test_samples = sum(1 for ts in timestamp_set if window.test_period.contains_date(ts))
 
         # Check minimums
         sufficient_train = train_samples >= self.config.min_training_samples
@@ -273,41 +259,30 @@ class RollingWindowGenerator:
             return False
 
         # Ensure proper ordering
-        if (window.train_period.start_date >= window.validation_period.start_date or
-            window.validation_period.start_date >= window.test_period.start_date):
+        if (
+            window.train_period.start_date >= window.validation_period.start_date
+            or window.validation_period.start_date >= window.test_period.start_date
+        ):
             return False
 
         return True
 
-    def _check_data_quality(
-        self,
-        window: RollSplit,
-        timestamps: list[pd.Timestamp]
-    ) -> bool:
+    def _check_data_quality(self, window: RollSplit, timestamps: list[pd.Timestamp]) -> bool:
         """Check data quality within window periods."""
 
         # Get timestamps for each period
-        train_timestamps = [
-            ts for ts in timestamps
-            if window.train_period.contains_date(ts)
-        ]
+        train_timestamps = [ts for ts in timestamps if window.train_period.contains_date(ts)]
 
-        val_timestamps = [
-            ts for ts in timestamps
-            if window.validation_period.contains_date(ts)
-        ]
+        val_timestamps = [ts for ts in timestamps if window.validation_period.contains_date(ts)]
 
-        test_timestamps = [
-            ts for ts in timestamps
-            if window.test_period.contains_date(ts)
-        ]
+        test_timestamps = [ts for ts in timestamps if window.test_period.contains_date(ts)]
 
         # Check for excessive gaps in each period
         for period_timestamps in [train_timestamps, val_timestamps, test_timestamps]:
             if len(period_timestamps) > 1:
                 gaps = [
-                    (period_timestamps[i+1] - period_timestamps[i]).days
-                    for i in range(len(period_timestamps)-1)
+                    (period_timestamps[i + 1] - period_timestamps[i]).days
+                    for i in range(len(period_timestamps) - 1)
                 ]
                 max_gap = max(gaps) if gaps else 0
 
@@ -343,11 +318,7 @@ class RollingWindowGenerator:
 
         return non_overlapping
 
-    def _detect_window_overlap(
-        self,
-        window1: RollSplit,
-        window2: RollSplit
-    ) -> bool:
+    def _detect_window_overlap(self, window1: RollSplit, window2: RollSplit) -> bool:
         """Detect if two windows have problematic overlap."""
 
         # Check training period overlap
@@ -383,8 +354,7 @@ class RollingWindowGenerator:
 
             # Check data density in last window
             train_timestamps = [
-                ts for ts in timestamps
-                if last_window.train_period.contains_date(ts)
+                ts for ts in timestamps if last_window.train_period.contains_date(ts)
             ]
 
             expected_days = last_window.train_period.duration_days
@@ -417,10 +387,13 @@ class RollingWindowGenerator:
 
         for window in windows:
             window_timestamps = [
-                ts for ts in timestamps
-                if (window.train_period.contains_date(ts) or
-                    window.validation_period.contains_date(ts) or
-                    window.test_period.contains_date(ts))
+                ts
+                for ts in timestamps
+                if (
+                    window.train_period.contains_date(ts)
+                    or window.validation_period.contains_date(ts)
+                    or window.test_period.contains_date(ts)
+                )
             ]
             utilized_timestamps.update(window_timestamps)
 
@@ -428,10 +401,18 @@ class RollingWindowGenerator:
 
         # Period statistics
         avg_training_days = np.mean([w.train_period.duration_days for w in windows])
-        avg_step_days = np.mean([
-            (windows[i+1].train_period.start_date - windows[i].train_period.start_date).days
-            for i in range(len(windows)-1)
-        ]) if len(windows) > 1 else 0
+        avg_step_days = (
+            np.mean(
+                [
+                    (
+                        windows[i + 1].train_period.start_date - windows[i].train_period.start_date
+                    ).days
+                    for i in range(len(windows) - 1)
+                ]
+            )
+            if len(windows) > 1
+            else 0
+        )
 
         return {
             "total_windows": len(windows),
@@ -505,17 +486,14 @@ class WalkForwardAnalyzer:
         return analysis
 
     def _validate_step_progression(
-        self,
-        windows: list[RollSplit],
-        expected_step_months: int
+        self, windows: list[RollSplit], expected_step_months: int
     ) -> dict[str, Any]:
         """Validate that step progression follows expected pattern."""
 
         actual_steps = []
         for i in range(1, len(windows)):
             step_days = (
-                windows[i].train_period.start_date -
-                windows[i-1].train_period.start_date
+                windows[i].train_period.start_date - windows[i - 1].train_period.start_date
             ).days
             actual_steps.append(step_days)
 
@@ -539,9 +517,7 @@ class WalkForwardAnalyzer:
         }
 
     def _analyze_temporal_coverage(
-        self,
-        windows: list[RollSplit],
-        timestamps: list[pd.Timestamp]
+        self, windows: list[RollSplit], timestamps: list[pd.Timestamp]
     ) -> dict[str, Any]:
         """Analyze temporal coverage of walk-forward windows."""
 
@@ -572,9 +548,7 @@ class WalkForwardAnalyzer:
         }
 
     def _detect_potential_bias(
-        self,
-        windows: list[RollSplit],
-        timestamps: list[pd.Timestamp]
+        self, windows: list[RollSplit], timestamps: list[pd.Timestamp]
     ) -> dict[str, Any]:
         """Detect potential sources of bias in walk-forward setup."""
 
@@ -611,9 +585,7 @@ class WalkForwardAnalyzer:
         }
 
     def _check_data_snooping_bias(
-        self,
-        windows: list[RollSplit],
-        timestamps: list[pd.Timestamp]
+        self, windows: list[RollSplit], timestamps: list[pd.Timestamp]
     ) -> dict[str, Any]:
         """Check for potential data snooping bias."""
 
@@ -622,7 +594,7 @@ class WalkForwardAnalyzer:
 
         for i in range(1, len(windows)):
             current_train = windows[i].train_period
-            prev_train = windows[i-1].train_period
+            prev_train = windows[i - 1].train_period
 
             # Calculate training period overlap
             overlap_start = max(current_train.start_date, prev_train.start_date)
@@ -645,9 +617,7 @@ class WalkForwardAnalyzer:
         }
 
     def _check_survivorship_bias(
-        self,
-        windows: list[RollSplit],
-        timestamps: list[pd.Timestamp]
+        self, windows: list[RollSplit], timestamps: list[pd.Timestamp]
     ) -> dict[str, Any]:
         """Check for potential survivorship bias."""
 
@@ -657,10 +627,7 @@ class WalkForwardAnalyzer:
         timestamp_set = set(timestamps)
 
         for window in windows:
-            train_data = sum(
-                1 for ts in timestamp_set
-                if window.train_period.contains_date(ts)
-            )
+            train_data = sum(1 for ts in timestamp_set if window.train_period.contains_date(ts))
 
             expected_train_days = window.train_period.duration_days
             availability_ratio = train_data / expected_train_days
