@@ -266,7 +266,7 @@ class TestCompleteDataPipeline:
         prices_df = pd.concat([data["Close"] for ticker, data in mock_stooq_data.items()], axis=1)
         prices_df.columns = list(mock_stooq_data.keys())
 
-        returns_df = prices_df.pct_change()
+        returns_df = prices_df.pct_change(fill_method=None)
         volume_df = pd.concat([data["Volume"] for ticker, data in mock_stooq_data.items()], axis=1)
         volume_df.columns = list(mock_stooq_data.keys())
 
@@ -332,9 +332,18 @@ class TestCompleteDataPipeline:
             assert data_type in loaded_data
             assert not loaded_data[data_type].empty
 
-            # Should match original data (allowing for small differences)
+            # Verify data integrity (shape and contents)
+            assert loaded_data[data_type].shape == ohlcv_dict[data_type].shape
+            # Check that all columns are present
+            assert set(loaded_data[data_type].columns) == set(ohlcv_dict[data_type].columns)
+            # Verify data values are approximately equal
             pd.testing.assert_frame_equal(
-                ohlcv_dict[data_type], loaded_data[data_type], check_dtype=False, rtol=1e-10
+                ohlcv_dict[data_type].sort_index(),
+                loaded_data[data_type].sort_index(),
+                check_dtype=False,
+                check_index_type=False,  # Allow different index types/frequencies
+                check_freq=False,  # Don't check frequency
+                rtol=1e-10,
             )
 
     def test_end_to_end_integration(self, temp_directory, pipeline_configs):
@@ -440,15 +449,7 @@ class TestCompleteDataPipeline:
         annual_vol = daily_vol * np.sqrt(252)
         assert 0.05 < annual_vol < 1.0  # Reasonable annual volatility range
 
-        return {
-            "validation_results": validation_results,
-            "final_data": aligned_data,
-            "pipeline_metrics": {
-                "original_completeness": original_completeness,
-                "final_completeness": final_completeness,
-                "annual_volatility": annual_vol,
-            },
-        }
+        # Pipeline completed successfully - all assertions passed
 
     def test_performance_benchmarks(self, temp_directory, pipeline_configs):
         """Test pipeline performance with larger datasets."""
@@ -501,8 +502,15 @@ class TestCompleteDataPipeline:
         loaded_prices = parquet_manager.load_dataframe("prices")
         loading_time = time.time() - start_time
 
-        # Verify data integrity
-        pd.testing.assert_frame_equal(filled_prices, loaded_prices, check_dtype=False, rtol=1e-10)
+        # Verify data integrity (with flexible comparison for index types)
+        pd.testing.assert_frame_equal(
+            filled_prices.sort_index(),
+            loaded_prices.sort_index(),
+            check_dtype=False,
+            check_index_type=False,  # Allow different index types/frequencies
+            check_freq=False,  # Don't check frequency
+            rtol=1e-10,
+        )
 
         # Performance assertions (reasonable for CI environments)
         total_time = gap_filling_time + normalization_time + storage_time + loading_time

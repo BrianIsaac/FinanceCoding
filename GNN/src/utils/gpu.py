@@ -113,7 +113,7 @@ class GPUMemoryManager:
 
         return optimal_batch_size
 
-    def setup_mixed_precision(self) -> torch.cuda.amp.GradScaler:
+    def setup_mixed_precision(self) -> torch.amp.GradScaler:
         """
         Setup mixed precision training for memory efficiency.
 
@@ -217,7 +217,7 @@ class MemoryEfficientTrainer:
 
         # Initialize mixed precision scaler
         self.scaler = (
-            torch.cuda.amp.GradScaler()
+            torch.amp.GradScaler("cuda")
             if (enable_mixed_precision and torch.cuda.is_available())
             else None
         )
@@ -263,7 +263,7 @@ class MemoryEfficientTrainer:
                 batch_data = batch_data.to(device)
 
             # Forward pass with optional mixed precision
-            with torch.cuda.amp.autocast(enabled=self.scaler is not None):
+            with torch.amp.autocast("cuda", enabled=self.scaler is not None):
                 if isinstance(batch_data, (list, tuple)):
                     outputs = self.model(*batch_data[:-1])  # Assume last item is target
                     targets = batch_data[-1]

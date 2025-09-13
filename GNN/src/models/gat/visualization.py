@@ -487,8 +487,7 @@ class InteractiveVizDashboard:
     def _check_plotly(self) -> bool:
         """Check if Plotly is available for interactive plots."""
         try:
-            import plotly.express as px
-            import plotly.graph_objects as go
+            import plotly.graph_objects  # noqa: F401
 
             return True
         except ImportError:

@@ -696,7 +696,7 @@ class ModelRetrainingEngine:
 
         # Handle missing values
         # Forward fill for up to 5 days, then drop
-        cleaned_data = filtered_data.fillna(method="ffill", limit=5).dropna()
+        cleaned_data = filtered_data.ffill(limit=5).dropna()
 
         logger.info(
             f"Data cleaning: {len(universe)} universe assets, "

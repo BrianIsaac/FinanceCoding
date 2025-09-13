@@ -237,7 +237,8 @@ class ModelRetrainingEngine:
                 universe_changes.append(change_event)
                 self.universe_history.append(change_event)
                 logger.info(
-                    f"Universe change detected: +{len(change_event.added_assets)}, -{len(change_event.removed_assets)} assets"
+                    f"Universe change detected: +{len(change_event.added_assets)}, "
+                    f"-{len(change_event.removed_assets)} assets"
                 )
 
         # Filter to assets with sufficient data
@@ -249,7 +250,8 @@ class ModelRetrainingEngine:
 
         if len(universe_with_data) < self.config.min_assets_for_training:
             logger.warning(
-                f"Insufficient assets with data: {len(universe_with_data)} < {self.config.min_assets_for_training}"
+                f"Insufficient assets with data: {len(universe_with_data)} < "
+                f"{self.config.min_assets_for_training}"
             )
 
         return universe_with_data, universe_changes
@@ -306,7 +308,8 @@ class ModelRetrainingEngine:
         # Check data sufficiency
         if len(filtered_data) < self.config.min_training_samples:
             raise ValueError(
-                f"Insufficient training samples: {len(filtered_data)} < {self.config.min_training_samples}"
+                f"Insufficient training samples: {len(filtered_data)} < "
+                f"{self.config.min_training_samples}"
             )
 
         # Handle missing values
@@ -319,7 +322,7 @@ class ModelRetrainingEngine:
             )
 
         # Forward fill limited missing values
-        cleaned_data = filtered_data.fillna(method="ffill", limit=self.config.forward_fill_limit)
+        cleaned_data = filtered_data.ffill(limit=self.config.forward_fill_limit)
 
         # Drop assets with excessive missing data
         asset_completeness = cleaned_data.notna().mean()
@@ -329,7 +332,8 @@ class ModelRetrainingEngine:
 
         if len(complete_assets) < self.config.min_assets_for_training:
             logger.warning(
-                f"Few assets after cleaning: {len(complete_assets)} < {self.config.min_assets_for_training}"
+                f"Few assets after cleaning: {len(complete_assets)} < "
+                f"{self.config.min_assets_for_training}"
             )
 
         final_data = cleaned_data[complete_assets].dropna()
@@ -343,7 +347,8 @@ class ModelRetrainingEngine:
         }
 
         logger.debug(
-            f"Data cleaning: {data_stats['original_samples']}x{data_stats['original_assets']} -> {data_stats['samples']}x{data_stats['assets']}"
+            f"Data cleaning: {data_stats['original_samples']}x{data_stats['original_assets']} -> "
+            f"{data_stats['samples']}x{data_stats['assets']}"
         )
 
         return final_data, data_stats

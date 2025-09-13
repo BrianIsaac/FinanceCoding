@@ -238,7 +238,7 @@ class TestComprehensiveReportGenerator:
                 operational_metrics,
                 statistical_results,
                 model_specifications,
-                tmp_path,
+                output_path=tmp_path,
             )
 
             assert "executive_summary" in report_data["components"]
@@ -266,7 +266,7 @@ class TestComprehensiveReportGenerator:
                 operational_metrics,
                 statistical_results,
                 model_specifications,
-                tmp_path,
+                output_path=tmp_path,
             )
 
             assert "performance_analysis" in report_data["components"]
@@ -300,16 +300,19 @@ class TestComprehensiveReportGenerator:
         ):
 
             mock_comp.return_value = pd.DataFrame(
-                {"Model": ["HRP"], "GPU Memory Required (GB)": [2.0]}
+                {"Model": ["HRP", "LSTM", "GAT"], "GPU Memory Required (GB)": [2.0, 6.0, 8.0]}
             )
             mock_ops.return_value = pd.DataFrame(
-                {"Model": ["HRP"], "Overall Complexity (0-100)": [30.0]}
+                {"Model": ["HRP", "LSTM", "GAT"], "Overall Complexity (0-100)": [30.0, 70.0, 80.0]}
             )
             mock_tco.return_value = pd.DataFrame(
-                {"Model": ["HRP"], "Risk-Adjusted TCO ($)": ["100,000"]}
+                {
+                    "Model": ["HRP", "LSTM", "GAT"],
+                    "Risk-Adjusted TCO ($)": ["100,000", "200,000", "250,000"],
+                }
             )
             mock_timeline.return_value = pd.DataFrame(
-                {"Model": ["HRP"], "Total Timeline (months)": ["3.0"]}
+                {"Model": ["HRP", "LSTM", "GAT"], "Total Timeline (months)": ["3.0", "4.0", "5.0"]}
             )
             mock_summary.return_value = "Feasibility summary text"
 
@@ -318,7 +321,7 @@ class TestComprehensiveReportGenerator:
                 operational_metrics,
                 statistical_results,
                 model_specifications,
-                tmp_path,
+                output_path=tmp_path,
             )
 
             assert "feasibility_assessment" in report_data["components"]
@@ -371,7 +374,7 @@ class TestComprehensiveReportGenerator:
             mock_ops.return_value = pd.DataFrame()
             mock_tco.return_value = mock_feasibility
             mock_timeline.return_value = pd.DataFrame(
-                {"Model": ["LSTM"], "Total Timeline (months)": ["4.0"]}
+                {"Model": ["HRP", "LSTM", "GAT"], "Total Timeline (months)": ["3.0", "4.0", "5.0"]}
             )
             mock_summary.return_value = "Summary"
 
@@ -380,7 +383,7 @@ class TestComprehensiveReportGenerator:
                 operational_metrics,
                 statistical_results,
                 model_specifications,
-                tmp_path,
+                output_path=tmp_path,
             )
 
             # Strategic recommendations should be included when feasibility data is available
@@ -402,7 +405,7 @@ class TestComprehensiveReportGenerator:
             operational_metrics,
             statistical_results,
             model_specifications,
-            tmp_path,
+            output_path=tmp_path,
         )
 
         # HTML should be generated

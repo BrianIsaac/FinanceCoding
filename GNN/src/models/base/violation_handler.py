@@ -273,7 +273,7 @@ class ViolationHandler:
 
         # Redistribute excess to non-violating assets
         non_violating_mask = ~violating_mask
-        if non_violating_mask.any() and excess_weight > 0:
+        if bool(non_violating_mask.any()) and excess_weight > 0:
             available_capacity = (max_weight - adjusted_weights[non_violating_mask]).clip(lower=0)
             total_capacity = available_capacity.sum()
 

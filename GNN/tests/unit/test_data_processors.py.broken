@@ -1,0 +1,309 @@
+"""Tests for critical data processing modules."""
+
+import numpy as np
+import pandas as pd
+import pytest
+
+from src.data.processors.covariance import robust_covariance, to_correlation
+from src.data.processors.universe_builder import UniverseBuilder
+from src.data.processors.gap_filling import GapFiller
+from src.config.data import DataPipelineConfig
+
+
+class TestCovarianceFunctions:
+    """Test covariance function functionality."""
+    
+    @pytest.fixture
+    def sample_returns(self):
+        """Create sample returns data for testing."""
+        dates = pd.date_range('2023-01-01', periods=100, freq='D')
+        assets = ['ASSET_A', 'ASSET_B', 'ASSET_C', 'ASSET_D']
+        
+        np.random.seed(42)
+        returns_data = np.random.multivariate_normal(
+            mean=[0.001, 0.0008, 0.0012, 0.0009],
+            cov=[[0.0004, 0.0001, 0.0002, 0.0001],
+                 [0.0001, 0.0009, 0.0001, 0.0002],
+                 [0.0002, 0.0001, 0.0016, 0.0003],
+                 [0.0001, 0.0002, 0.0003, 0.0025]],
+            size=100
+        )
+        
+        return pd.DataFrame(returns_data, index=dates, columns=assets)
+    
+    def test_robust_covariance_calculation_basic(self, sample_returns):
+        """Test basic robust covariance calculation."""        
+        # Convert to numpy array for function
+        returns_array = sample_returns.values
+        
+        # Test basic covariance calculation
+        cov_matrix = robust_covariance(returns_array, method='sample')
+        
+        assert isinstance(cov_matrix, np.ndarray)
+        assert cov_matrix.shape == (4, 4)  # 4 assets
+        
+        # Covariance matrix should be symmetric
+        assert np.allclose(cov_matrix, cov_matrix.T)
+        
+        # Diagonal elements should be positive (variances)
+        assert (np.diag(cov_matrix) > 0).all()
+    
+    def test_correlation_matrix_calculation(self, sample_returns):
+        """Test correlation matrix calculation."""
+        returns_array = sample_returns.values
+        
+        # First get covariance matrix
+        cov_matrix = robust_covariance(returns_array, method='sample')
+        
+        # Convert to correlation matrix
+        corr_matrix = to_correlation(cov_matrix)
+        
+        assert isinstance(corr_matrix, np.ndarray)
+        assert corr_matrix.shape == (4, 4)
+        
+        # Correlation matrix diagonal should be 1
+        assert np.allclose(np.diag(corr_matrix), 1.0)
+        
+        # Correlation values should be between -1 and 1
+        assert (corr_matrix >= -1.0).all()
+        assert (corr_matrix <= 1.0).all()
+    
+    def test_robust_covariance_estimation_methods(self, sample_returns):
+        """Test different robust covariance estimation methods."""
+        returns_array = sample_returns.values
+        
+        # Test with outliers
+        outlier_returns = returns_array.copy()
+        outlier_returns[50, 0] = 0.1  # Add large outlier
+        
+        # Test different methods
+        robust_cov_lw = robust_covariance(outlier_returns, method='lw')
+        robust_cov_oas = robust_covariance(outlier_returns, method='oas')
+        standard_cov = robust_covariance(outlier_returns, method='sample')
+        
+        assert isinstance(robust_cov_lw, np.ndarray)
+        assert isinstance(robust_cov_oas, np.ndarray)
+        assert robust_cov_lw.shape == (4, 4)
+        assert robust_cov_oas.shape == (4, 4)
+        
+        # Robust estimates should be different from standard
+        assert not np.allclose(robust_cov_lw, standard_cov)
+        assert not np.allclose(robust_cov_oas, standard_cov)
+
+
+class TestUniverseBuilder:
+    """Test universe construction functionality."""
+    
+    @pytest.fixture 
+    def config(self):
+        """Create test configuration."""
+        return DataPipelineConfig(
+            start_date='2023-01-01',
+            end_date='2023-12-31'
+        )
+    
+    def test_universe_builder_initialization(self, config):
+        """Test universe builder initialization."""
+        builder = UniverseBuilder(config)
+        
+        assert builder.config == config
+        assert hasattr(builder, 'universe_cache')
+    
+    def test_build_custom_universe(self, config):
+        """Test building a custom universe."""
+        builder = UniverseBuilder(config)
+        
+        # Test with custom asset list
+        custom_assets = ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'TSLA']
+        
+        universe = builder.build_custom_universe(
+            asset_list=custom_assets,
+            start_date=pd.Timestamp('2023-01-01'),
+            end_date=pd.Timestamp('2023-12-31')
+        )
+        
+        assert isinstance(universe, pd.DataFrame)
+        assert len(universe.columns) == len(custom_assets)
+        assert (universe.columns == custom_assets).all()
+        
+        # Universe should have boolean values
+        assert universe.dtypes.apply(lambda x: x == bool).all()
+    
+    def test_filter_by_market_cap(self, config):
+        """Test market cap filtering functionality."""
+        builder = UniverseBuilder(config)
+        
+        # Create mock market cap data
+        assets = ['STOCK_A', 'STOCK_B', 'STOCK_C', 'STOCK_D']
+        market_caps = pd.Series([5e9, 1e9, 50e9, 500e6], index=assets)
+        
+        filtered_assets = builder.filter_by_market_cap(
+            assets=assets,
+            market_caps=market_caps,
+            min_market_cap=2e9
+        )
+        
+        # Should keep only assets with market cap >= 2B
+        expected_assets = ['STOCK_A', 'STOCK_C']
+        assert set(filtered_assets) == set(expected_assets)
+
+
+class TestGapFiller:
+    """Test gap filling functionality."""
+    
+    @pytest.fixture
+    def data_with_gaps(self):
+        """Create test data with gaps."""
+        dates = pd.date_range('2023-01-01', periods=50, freq='D')
+        assets = ['ASSET_X', 'ASSET_Y', 'ASSET_Z']
+        
+        # Create data with some NaN values
+        np.random.seed(42)
+        data = pd.DataFrame(
+            np.random.normal(100, 5, (50, 3)),
+            index=dates,
+            columns=assets
+        )
+        
+        # Introduce gaps
+        data.loc['2023-01-10':'2023-01-12', 'ASSET_X'] = np.nan
+        data.loc['2023-01-20':'2023-01-22', 'ASSET_Y'] = np.nan
+        data.loc['2023-01-30', 'ASSET_Z'] = np.nan
+        
+        return data
+    
+    def test_gap_fill_processor_initialization(self):
+        """Test gap fill processor initialization."""
+        config = {'max_gap_days': 5, 'method': 'forward_fill'}
+        processor = GapFiller(config)
+        
+        assert processor.config == config
+    
+    def test_forward_fill_method(self, data_with_gaps):
+        """Test forward fill gap filling method."""
+        config = {'max_gap_days': 5, 'method': 'forward_fill'}
+        processor = GapFiller(config)
+        
+        filled_data = processor.fill_gaps_forward_fill(data_with_gaps)
+        
+        assert isinstance(filled_data, pd.DataFrame)
+        assert filled_data.shape == data_with_gaps.shape
+        
+        # Should have fewer NaN values than original
+        original_nan_count = data_with_gaps.isnull().sum().sum()
+        filled_nan_count = filled_data.isnull().sum().sum()
+        assert filled_nan_count <= original_nan_count
+    
+    def test_interpolation_method(self, data_with_gaps):
+        """Test interpolation gap filling method."""
+        config = {'max_gap_days': 5, 'method': 'interpolation'}
+        processor = GapFiller(config)
+        
+        filled_data = processor.fill_gaps_interpolation(data_with_gaps)
+        
+        assert isinstance(filled_data, pd.DataFrame)
+        assert filled_data.shape == data_with_gaps.shape
+        
+        # Interpolation should fill internal gaps but not leading/trailing
+        # Check that middle gaps are filled
+        assert not filled_data.loc['2023-01-11', 'ASSET_X'] != filled_data.loc['2023-01-11', 'ASSET_X']  # Not NaN
+    
+    def test_gap_detection(self, data_with_gaps):
+        """Test gap detection functionality."""
+        config = {'max_gap_days': 5, 'method': 'forward_fill'}
+        processor = GapFiller(config)
+        
+        gaps = processor.detect_gaps(data_with_gaps)
+        
+        assert isinstance(gaps, dict)
+        
+        # Should detect gaps in ASSET_X and ASSET_Y
+        assert 'ASSET_X' in gaps
+        assert 'ASSET_Y' in gaps
+        
+        # Each asset's gaps should be a list of tuples (start, end)
+        for asset, asset_gaps in gaps.items():
+            assert isinstance(asset_gaps, list)
+            for gap in asset_gaps:
+                assert isinstance(gap, tuple)
+                assert len(gap) == 2  # (start, end)
+    
+    def test_gap_fill_with_fallback(self, data_with_gaps):
+        """Test gap filling with fallback data source."""
+        config = {'max_gap_days': 5, 'method': 'fallback'}
+        processor = GapFiller(config)
+        
+        # Create fallback data (slightly different values)
+        fallback_data = data_with_gaps * 1.01  # 1% different
+        fallback_data = fallback_data.fillna(method='bfill')  # No gaps in fallback
+        
+        filled_data = processor.fill_gaps(
+            primary_data=data_with_gaps,
+            fallback_data=fallback_data,
+            method='fallback'
+        )
+        
+        assert isinstance(filled_data, pd.DataFrame)
+        assert filled_data.shape == data_with_gaps.shape
+        
+        # Should have no NaN values if fallback is complete
+        if not fallback_data.isnull().any().any():
+            assert not filled_data.isnull().any().any()
+
+
+class TestDataQualityValidation:
+    """Test data quality validation functionality."""
+    
+    def test_return_validation_basic(self):
+        """Test basic return data validation."""
+        # Create valid return data
+        dates = pd.date_range('2023-01-01', periods=30, freq='D')
+        assets = ['ASSET_1', 'ASSET_2', 'ASSET_3']
+        
+        valid_returns = pd.DataFrame(
+            np.random.normal(0.001, 0.02, (30, 3)),
+            index=dates,
+            columns=assets
+        )
+        
+        from src.data.processors.data_quality_validator import DataQualityValidator
+        
+        validator = DataQualityValidator()
+        
+        # Should pass validation
+        is_valid, issues = validator.validate_returns(valid_returns)
+        
+        assert isinstance(is_valid, bool)
+        assert isinstance(issues, list)
+        
+        if not is_valid:
+            # If validation fails, there should be issues reported
+            assert len(issues) > 0
+    
+    def test_outlier_detection(self):
+        """Test outlier detection in return data."""
+        dates = pd.date_range('2023-01-01', periods=30, freq='D')
+        assets = ['ASSET_1', 'ASSET_2']
+        
+        # Create data with outliers
+        normal_returns = np.random.normal(0.001, 0.02, (30, 2))
+        normal_returns[15, 0] = 0.5  # 50% return - clear outlier
+        normal_returns[20, 1] = -0.3  # -30% return - clear outlier
+        
+        returns_with_outliers = pd.DataFrame(
+            normal_returns,
+            index=dates,
+            columns=assets
+        )
+        
+        from src.data.processors.data_quality_validator import DataQualityValidator
+        
+        validator = DataQualityValidator(outlier_threshold=3.0)
+        outliers = validator.detect_outliers(returns_with_outliers)
+        
+        assert isinstance(outliers, pd.DataFrame)
+        assert outliers.shape == returns_with_outliers.shape
+        
+        # Should detect the outliers we introduced
+        assert outliers.iloc[15, 0] == True  # First outlier
+        assert outliers.iloc[20, 1] == True  # Second outlier

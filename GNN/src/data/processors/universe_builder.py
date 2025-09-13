@@ -228,13 +228,15 @@ class UniverseBuilder:
 
         # Check date coverage
         if not universe_calendar.empty:
-            validation_results["first_date"] = universe_calendar["date"].min()
-            validation_results["last_date"] = universe_calendar["date"].max()
+            first_date = pd.to_datetime(universe_calendar["date"].min())
+            last_date = pd.to_datetime(universe_calendar["date"].max())
+            validation_results["first_date"] = first_date
+            validation_results["last_date"] = last_date
 
             # Check for missing months
             expected_months = pd.bdate_range(
-                start=validation_results["first_date"].replace(day=1),
-                end=validation_results["last_date"],
+                start=first_date.replace(day=1),
+                end=last_date,
                 freq="BMS",
             )
             actual_dates = set(universe_calendar["date"].unique())
@@ -273,7 +275,7 @@ def create_universe_builder(
     universe_type: str = "midcap400",
     rebalance_frequency: str = "monthly",
     output_dir: str = "data/processed",
-    **kwargs,
+    **kwargs: Any,
 ) -> UniverseBuilder:
     """Factory function to create UniverseBuilder with sensible defaults.
 

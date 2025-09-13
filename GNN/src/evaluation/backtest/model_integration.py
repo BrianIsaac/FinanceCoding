@@ -420,7 +420,10 @@ class ModelTrainingIntegrator:
         if not self.config.checkpoint_dir:
             raise ValueError("Checkpoint directory not configured")
 
-        checkpoint_filename = f"{model_name}_split_{validation_result.split_index}_{split.train_period.start_date.strftime('%Y%m%d')}.pkl"
+        checkpoint_filename = (
+            f"{model_name}_split_{validation_result.split_index}_"
+            f"{split.train_period.start_date.strftime('%Y%m%d')}.pkl"
+        )
         checkpoint_path = self.config.checkpoint_dir / checkpoint_filename
 
         # Create checkpoint info

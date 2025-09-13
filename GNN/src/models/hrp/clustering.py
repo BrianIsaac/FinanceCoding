@@ -8,6 +8,7 @@ correlation-based distance metrics and configurable linkage methods.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -144,7 +145,7 @@ class HRPClustering:
 
     def build_cluster_tree(
         self, asset_names: list[str], linkage_matrix: np.ndarray | None = None
-    ) -> dict[str, any]:
+    ) -> dict[str, Any]:
         """
         Create cluster tree structure for recursive bisection algorithm.
 
@@ -234,6 +235,11 @@ class HRPClustering:
 
             # Check diagonal elements
             diagonal = np.diag(correlation_matrix.values)
+
+            # Check for NaN values in diagonal first
+            if np.any(np.isnan(diagonal)):
+                return False, "Correlation matrix diagonal contains NaN values"
+
             if not np.allclose(diagonal, 1.0, atol=1e-6):
                 return False, "Correlation matrix diagonal must be 1.0"
 

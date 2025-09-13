@@ -8,31 +8,15 @@ optimal approach selection based on institutional constraints and objectives.
 
 from __future__ import annotations
 
-import warnings
 from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
 import pandas as pd
 
-try:
-    import matplotlib.pyplot as plt
-    import seaborn as sns
-
-    HAS_MATPLOTLIB = True
-except ImportError:
-    HAS_MATPLOTLIB = False
-    warnings.warn("Matplotlib/Seaborn not available. Static plotting disabled.", stacklevel=2)
-
-try:
-    import plotly.express as px
-    import plotly.graph_objects as go
-    from plotly.subplots import make_subplots
-
-    HAS_PLOTLY = True
-except ImportError:
-    HAS_PLOTLY = False
-    warnings.warn("Plotly not available. Interactive plotting disabled.", stacklevel=2)
+# Plotting libraries can be added when visualization features are implemented
+HAS_MATPLOTLIB = False
+HAS_PLOTLY = False
 
 from src.evaluation.reporting.regime_analysis import MarketRegimeAnalysis
 

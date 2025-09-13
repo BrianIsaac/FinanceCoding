@@ -169,3 +169,65 @@ def setup_logging(config: ProjectConfig) -> logging.Logger:
     )
 
     return logging.getLogger(__name__)
+
+
+def save_config(config: dict[str, Any], config_path: Union[str, Path]) -> None:
+    """Save configuration to YAML file.
+
+    Args:
+        config: Configuration dictionary to save
+        config_path: Path where to save the YAML file
+
+    Example:
+        >>> config = {'model_type': 'gat', 'hidden_dim': 64}
+        >>> save_config(config, 'configs/custom_config.yaml')
+    """
+    config_path = Path(config_path)
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with open(config_path, 'w') as file:
+        yaml.dump(config, file, default_flow_style=False, indent=2)
+
+
+def validate_config_comprehensive(config: dict[str, Any]) -> bool:
+    """Comprehensive configuration validation with specific rules.
+
+    Args:
+        config: Configuration dictionary to validate
+
+    Returns:
+        True if configuration is valid
+
+    Raises:
+        ValueError: If configuration is invalid
+    """
+    # Check required sections
+    required_sections = ['project', 'data']
+    for section in required_sections:
+        if section not in config:
+            raise ValueError(f"Missing required section: {section}")
+
+    # Validate project section
+    if 'project' in config:
+        project = config['project']
+        if 'log_level' in project:
+            valid_levels = ['DEBUG', 'INFO', 'WARNING', 'ERROR']
+            if project['log_level'] not in valid_levels:
+                raise ValueError(f"Invalid log level: {project['log_level']}. Must be one of {valid_levels}")
+
+    # Validate data section
+    if 'data' in config:
+        data = config['data']
+        if 'start_date' in data and 'end_date' in data:
+            try:
+                from datetime import datetime
+                start = datetime.strptime(data['start_date'], '%Y-%m-%d')
+                end = datetime.strptime(data['end_date'], '%Y-%m-%d')
+                if end <= start:
+                    raise ValueError("end_date must be after start_date")
+            except ValueError as e:
+                if "time data" in str(e):
+                    raise ValueError("Invalid date format. Use YYYY-MM-DD")
+                raise
+
+    return True

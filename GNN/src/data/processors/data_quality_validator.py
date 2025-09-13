@@ -387,7 +387,7 @@ class DataQualityValidator:
                 price_series = prices_df[ticker]
 
                 # Check for zero volume on days with price changes
-                price_changes = price_series.pct_change().abs()
+                price_changes = price_series.pct_change(fill_method=None).abs()
                 significant_price_changes = price_changes > 0.05  # > 5% price change
                 zero_volume_on_price_change = (
                     (volume_series == 0) & significant_price_changes
@@ -707,7 +707,8 @@ class DataQualityValidator:
             if large_differences > len(common_dates) * 0.05:  # > 5% of data
                 result["passed"] = False
                 result["issues"].append(
-                    f"{ticker}: {large_differences}/{len(common_dates)} large price-return inconsistencies"
+                    f"{ticker}: {large_differences}/{len(common_dates)} "
+                    f"large price-return inconsistencies"
                 )
 
         return result
@@ -734,7 +735,8 @@ class DataQualityValidator:
 
         if overall_score < self.config.quality_score_threshold:
             recommendations.append(
-                f"Overall quality score ({overall_score:.3f}) below threshold ({self.config.quality_score_threshold})"
+                f"Overall quality score ({overall_score:.3f}) below threshold "
+                f"({self.config.quality_score_threshold})"
             )
 
         # Collect recommendations from components
@@ -808,7 +810,9 @@ class DataQualityValidator:
             <title>Data Quality Dashboard</title>
             <style>
                 body {{ font-family: Arial, sans-serif; margin: 40px; }}
-                .metric {{ background: #f5f5f5; padding: 15px; margin: 10px 0; border-radius: 5px; }}
+                .metric {{
+                    background: #f5f5f5; padding: 15px; margin: 10px 0; border-radius: 5px;
+                }}
                 .score {{ font-size: 24px; font-weight: bold; }}
                 .good {{ color: green; }}
                 .warning {{ color: orange; }}
@@ -821,7 +825,9 @@ class DataQualityValidator:
 
             <div class="metric">
                 <h2>Overall Quality Score</h2>
-                <div class="score {self._get_score_class(validation_results['overall_quality_score'])}">
+                <div class="score {
+                    self._get_score_class(validation_results['overall_quality_score'])
+                }">
                     {validation_results['overall_quality_score']:.3f}
                 </div>
             </div>

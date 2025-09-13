@@ -51,7 +51,7 @@ class GapFiller:
         Returns:
             Forward-filled series
         """
-        filled = series.fillna(method="ffill", limit=limit)
+        filled = series.ffill(limit=limit)
 
         if volume_series is not None:
             # Only keep fills where volume meets minimum threshold
@@ -80,7 +80,7 @@ class GapFiller:
         Returns:
             Backward-filled series
         """
-        filled = series.fillna(method="bfill", limit=limit)
+        filled = series.bfill(limit=limit)
 
         if volume_series is not None:
             volume_valid = volume_series >= min_volume
@@ -128,7 +128,7 @@ class GapFiller:
                 start_idx = None
 
         # Interpolate small gaps only
-        for start_date, end_date, gap_days in gap_ranges:
+        for start_date, end_date, _gap_days in gap_ranges:
             gap_mask = (series.index >= start_date) & (series.index < end_date)
 
             # Get boundary values

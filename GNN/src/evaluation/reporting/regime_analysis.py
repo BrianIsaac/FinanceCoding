@@ -163,7 +163,7 @@ class MarketRegimeAnalysis:
             regimes[idx] = regime_mapping[cluster_labels[i]]
 
         # Forward fill for missing values
-        regimes = regimes.fillna(method="ffill").fillna("neutral")
+        regimes = regimes.ffill().fillna("neutral")
 
         return regimes
 
@@ -189,7 +189,7 @@ class MarketRegimeAnalysis:
             regimes[idx] = regime_mapping[cluster_labels[i]]
 
         # Forward fill for missing values
-        regimes = regimes.fillna(method="ffill").fillna("neutral")
+        regimes = regimes.ffill().fillna("neutral")
 
         return regimes
 

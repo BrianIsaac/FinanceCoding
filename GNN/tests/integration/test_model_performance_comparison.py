@@ -17,7 +17,7 @@ from scipy import stats
 
 from src.evaluation.backtest.engine import BacktestConfig, BacktestEngine
 from src.models.base.portfolio_model import PortfolioConstraints
-from src.models.hrp.model import HRPModel
+from src.models.hrp.model import HRPConfig, HRPModel
 from src.models.lstm.model import LSTMModelConfig, LSTMPortfolioModel
 from src.models.model_registry import ModelRegistry
 
@@ -104,7 +104,12 @@ class TestModelPerformanceComparison:
                 "model": LSTMPortfolioModel(constraints=base_constraints, config=lstm_config),
                 "name": "LSTM",
             },
-            "hrp": {"model": HRPModel(constraints=base_constraints), "name": "HRP"},
+            "hrp": {
+                "model": HRPModel(
+                    constraints=base_constraints, hrp_config=HRPConfig(min_observations=50)
+                ),
+                "name": "HRP",
+            },
             "equal_weight": {
                 "model": self._create_equal_weight_model(base_constraints),
                 "name": "Equal Weight",

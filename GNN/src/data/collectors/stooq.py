@@ -311,7 +311,7 @@ class StooqCollector:
 
     def collect_universe_data(
         self,
-        universe_builder,
+        universe_builder: Any,
         date_range: tuple[str, str] | None = None,
         max_workers: int = 8,
     ) -> dict[str, pd.DataFrame]:

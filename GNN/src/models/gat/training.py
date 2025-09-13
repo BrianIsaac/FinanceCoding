@@ -81,15 +81,15 @@ class GPUMemoryManager:
         if not torch.cuda.is_available():
             return {"allocated": 0.0, "reserved": 0.0, "available": 0.0}
 
-        allocated = torch.cuda.memory_allocated() / 1024**3  # GB
-        reserved = torch.cuda.memory_reserved() / 1024**3  # GB
-        available = self.max_memory / 1024**3 - allocated  # GB
+        allocated = float(torch.cuda.memory_allocated() / 1024**3)  # GB
+        reserved = float(torch.cuda.memory_reserved() / 1024**3)  # GB
+        available = float(self.max_memory / 1024**3 - allocated)  # GB
 
         return {
             "allocated": allocated,
             "reserved": reserved,
             "available": available,
-            "max_allowed": self.max_memory / 1024**3,
+            "max_allowed": float(self.max_memory / 1024**3),
         }
 
     def estimate_batch_memory(self, model: nn.Module, sample_batch_size: int = 1) -> float:
@@ -125,7 +125,8 @@ class GPUMemoryManager:
             peak_memory = torch.cuda.max_memory_allocated()
             memory_per_sample = (peak_memory - initial_memory) / sample_batch_size
 
-            return memory_per_sample * sample_batch_size / 1024**3  # GB
+            result = float(memory_per_sample * sample_batch_size / 1024**3)  # GB
+            return result
 
         except Exception:
             return 1.0  # Conservative estimate
@@ -149,12 +150,13 @@ class GPUMemoryManager:
         # Binary search for optimal batch size
         left, right = 1, max_batch_size
         optimal_batch_size = 1
+        max_memory_threshold = float(self.max_memory / 1024**3 * 0.8)  # Use 80% of max memory
 
         while left <= right:
             mid = (left + right) // 2
-            estimated_memory = self.estimate_batch_memory(model, mid)
+            estimated_memory = float(self.estimate_batch_memory(model, mid))
 
-            if estimated_memory <= self.max_memory / 1024**3 * 0.8:  # Use 80% of max memory
+            if estimated_memory <= max_memory_threshold:
                 optimal_batch_size = mid
                 left = mid + 1
             else:
@@ -328,7 +330,7 @@ class GATTrainer:
                 self.scaler = torch.amp.GradScaler("cuda")
             except (AttributeError, TypeError):
                 # Fall back to older API
-                self.scaler = torch.cuda.amp.GradScaler()
+                self.scaler = torch.amp.GradScaler("cuda")
         else:
             self.scaler = None
 
@@ -404,7 +406,7 @@ class GATTrainer:
 
                     # Forward pass with mixed precision
                     if self.scaler is not None:
-                        with torch.cuda.amp.autocast():
+                        with torch.amp.autocast("cuda"):
                             weights, _, reg_loss = self.model(x, edge_index, mask_valid, edge_attr)
 
                             # Compute portfolio loss

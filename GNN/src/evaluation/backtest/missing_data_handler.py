@@ -135,7 +135,8 @@ class MissingDataHandler:
             metrics.data_gaps = self._detect_temporal_gaps(data.index)
 
         logger.debug(
-            f"Data quality: {metrics.missing_ratio:.3f} missing ratio, {metrics.complete_assets} complete assets"
+            f"Data quality: {metrics.missing_ratio:.3f} missing ratio, "
+            f"{metrics.complete_assets} complete assets"
         )
 
         return metrics
@@ -194,7 +195,8 @@ class MissingDataHandler:
 
         logger.info(
             f"Missing data handling complete: "
-            f"{initial_metrics.missing_ratio:.3f} -> {final_metrics.missing_ratio:.3f} missing ratio"
+            f"{initial_metrics.missing_ratio:.3f} -> "
+            f"{final_metrics.missing_ratio:.3f} missing ratio"
         )
 
         return cleaned_data, final_metrics
@@ -207,10 +209,10 @@ class MissingDataHandler:
         """Apply specific missing data strategy."""
 
         if strategy == MissingDataStrategy.FORWARD_FILL:
-            return data.fillna(method="ffill", limit=self.config.forward_fill_limit)
+            return data.ffill(limit=self.config.forward_fill_limit)
 
         elif strategy == MissingDataStrategy.BACKWARD_FILL:
-            return data.fillna(method="bfill", limit=self.config.backward_fill_limit)
+            return data.bfill(limit=self.config.backward_fill_limit)
 
         elif strategy == MissingDataStrategy.LINEAR_INTERPOLATE:
             return data.interpolate(method="linear", limit=self.config.forward_fill_limit)
@@ -279,7 +281,8 @@ class MissingDataHandler:
 
         if len(valid_assets) < len(data.columns):
             logger.warning(
-                f"Removing {len(data.columns) - len(valid_assets)} assets due to excessive missing data"
+                f"Removing {len(data.columns) - len(valid_assets)} assets "
+                f"due to excessive missing data"
             )
 
         validated_data = data[valid_assets]

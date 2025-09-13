@@ -15,14 +15,8 @@ from typing import Any
 
 import pandas as pd
 
-try:
-    import matplotlib.pyplot as plt
-    import seaborn as sns
-
-    HAS_MATPLOTLIB = True
-except ImportError:
-    HAS_MATPLOTLIB = False
-    warnings.warn("Matplotlib/Seaborn not available. Static plotting disabled.", stacklevel=2)
+# Matplotlib/Seaborn support can be added when needed
+HAS_MATPLOTLIB = False
 
 try:
     import plotly.graph_objects as go
@@ -37,7 +31,6 @@ try:
     from reportlab.lib import colors
     from reportlab.lib.pagesizes import letter
     from reportlab.lib.styles import getSampleStyleSheet
-    from reportlab.lib.units import inch
     from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
     HAS_REPORTLAB = True
@@ -48,7 +41,6 @@ except ImportError:
 try:
     import openpyxl
     from openpyxl.styles import Border, Font, PatternFill, Side
-    from openpyxl.utils.dataframe import dataframe_to_rows
 
     HAS_OPENPYXL = True
 except ImportError:

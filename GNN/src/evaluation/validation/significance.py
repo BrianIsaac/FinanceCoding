@@ -6,7 +6,7 @@ Memmel correction and pairwise comparison frameworks.
 """
 
 import warnings
-from typing import Optional, Union
+from typing import Any, Optional, Union
 
 import numpy as np
 import pandas as pd
@@ -22,7 +22,7 @@ class StatisticalValidation:
         returns_a: Union[pd.Series, np.ndarray],
         returns_b: Union[pd.Series, np.ndarray],
         alpha: float = 0.05,
-    ) -> dict[str, float]:
+    ) -> dict[str, Any]:
         """Test statistical significance of Sharpe ratio differences using Jobson-Korkie test with Memmel correction.
 
         Args:
@@ -44,16 +44,9 @@ class StatisticalValidation:
 
         # Handle edge cases
         if n <= 1:
-            warnings.warn("Insufficient data for statistical testing", stacklevel=2)
-            return {
-                "test_statistic": np.nan,
-                "p_value": np.nan,
-                "is_significant": False,
-                "confidence_level": 1 - alpha,
-                "sharpe_a": np.nan,
-                "sharpe_b": np.nan,
-                "sharpe_diff": np.nan,
-            }
+            raise ValueError(
+                "Insufficient data for statistical testing - need at least 2 observations"
+            )
 
         # Calculate basic statistics
         mean_a, mean_b = np.mean(ret_a), np.mean(ret_b)
@@ -67,8 +60,8 @@ class StatisticalValidation:
                 "p_value": np.nan,
                 "is_significant": False,
                 "confidence_level": 1 - alpha,
-                "sharpe_a": mean_a / std_a if std_a > 0 else np.nan,
-                "sharpe_b": mean_b / std_b if std_b > 0 else np.nan,
+                "sharpe_a": float(mean_a / std_a if std_a > 0 else np.nan),
+                "sharpe_b": float(mean_b / std_b if std_b > 0 else np.nan),
                 "sharpe_diff": np.nan,
             }
 
@@ -101,22 +94,25 @@ class StatisticalValidation:
 
         # Test statistic
         if var_sharpe_diff_corrected <= 0:
-            warnings.warn("Non-positive variance in Sharpe ratio test", stacklevel=2)
-            test_stat = 0
+            warnings.warn("Zero volatility detected", stacklevel=2)
+            test_stat = np.nan
         else:
             test_stat = sharpe_diff / np.sqrt(var_sharpe_diff_corrected)
 
         # Two-tailed p-value
-        p_value = 2 * (1 - norm.cdf(abs(test_stat)))
+        if np.isnan(test_stat):
+            p_value = np.nan
+        else:
+            p_value = 2 * (1 - norm.cdf(abs(test_stat)))
 
         return {
             "test_statistic": test_stat,
             "p_value": p_value,
             "is_significant": bool(p_value < alpha),
             "confidence_level": 1 - alpha,
-            "sharpe_a": sharpe_a,
-            "sharpe_b": sharpe_b,
-            "sharpe_diff": sharpe_diff,
+            "sharpe_a": float(sharpe_a),
+            "sharpe_b": float(sharpe_b),
+            "sharpe_diff": float(sharpe_diff),
             "correlation": corr,
             "sample_size": n,
             "method": "Jobson-Korkie with Memmel correction",
@@ -127,7 +123,7 @@ class StatisticalValidation:
         returns_a: Union[pd.Series, np.ndarray],
         returns_b: Union[pd.Series, np.ndarray],
         alpha: float = 0.05,
-    ) -> dict[str, float]:
+    ) -> dict[str, Any]:
         """Asymptotic statistical test for Sharpe ratio differences with proper variance calculations.
 
         Args:
@@ -154,8 +150,8 @@ class StatisticalValidation:
         # Calculate higher moments for asymptotic variance
         skew_a = stats.skew(ret_a)
         skew_b = stats.skew(ret_b)
-        kurt_a = stats.kurtosis(ret_a, excess=True)
-        kurt_b = stats.kurtosis(ret_b, excess=True)
+        kurt_a = stats.kurtosis(ret_a)
+        kurt_b = stats.kurtosis(ret_b)
 
         # Sharpe ratios
         sharpe_a = mean_a / std_a
@@ -275,7 +271,7 @@ class PerformanceSignificanceTest:
         self.alpha = alpha
 
     def comprehensive_comparison(
-        self, returns_dict: dict[str, pd.Series], metrics: list[str] = None
+        self, returns_dict: dict[str, pd.Series], metrics: Optional[list[str]] = None
     ) -> dict[str, pd.DataFrame]:
         """Perform comprehensive statistical comparison across multiple performance metrics.
 
@@ -334,5 +330,9 @@ class PerformanceSignificanceTest:
             window_results["window_end"] = aligned_returns.index[end_idx - 1]
 
             results.append(window_results)
+
+        if not results:
+            # Return empty DataFrame with expected columns when no windows can be created
+            return pd.DataFrame(columns=["window_start", "window_end"])
 
         return pd.concat(results, ignore_index=True)

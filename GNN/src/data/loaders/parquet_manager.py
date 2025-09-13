@@ -181,7 +181,9 @@ class ParquetManager:
         # Add metadata if provided
         if metadata:
             existing_metadata = table.schema.metadata or {}
-            updated_metadata = {**existing_metadata, **metadata}
+            # Convert all metadata values to strings to avoid PyArrow type errors
+            string_metadata = {str(key): str(value) for key, value in metadata.items()}
+            updated_metadata = {**existing_metadata, **string_metadata}
             table = table.replace_schema_metadata(updated_metadata)
 
         # Write with optimization settings
@@ -338,27 +340,37 @@ class ParquetManager:
 
                 # Apply date filters if specified
                 if start_date or end_date:
-                    date_column = table.column("date")
-                    filters = []
+                    # Find the date column - it could be "date" or "index"
+                    date_col_name = None
+                    if "date" in table.schema.names:
+                        date_col_name = "date"
+                    elif "index" in table.schema.names:
+                        date_col_name = "index"
 
-                    if start_date:
-                        start_ts = pd.to_datetime(start_date)
-                        filters.append(pc.greater_equal(date_column, pa.scalar(start_ts)))
+                    if date_col_name:
+                        date_column = table.column(date_col_name)
+                        filters = []
 
-                    if end_date:
-                        end_ts = pd.to_datetime(end_date)
-                        filters.append(pc.less_equal(date_column, pa.scalar(end_ts)))
+                        if start_date:
+                            start_ts = pd.to_datetime(start_date)
+                            filters.append(pc.greater_equal(date_column, pa.scalar(start_ts)))
 
-                    if filters:
-                        combined_filter = filters[0]
-                        for f in filters[1:]:
-                            combined_filter = pc.and_(combined_filter, f)
-                        table = table.filter(combined_filter)
+                        if end_date:
+                            end_ts = pd.to_datetime(end_date)
+                            filters.append(pc.less_equal(date_column, pa.scalar(end_ts)))
+
+                        if filters:
+                            combined_filter = filters[0]
+                            for f in filters[1:]:
+                                combined_filter = pc.and_(combined_filter, f)
+                            table = table.filter(combined_filter)
 
                 # Apply column selection
                 if columns:
+                    # Include the date/index column plus requested columns
+                    date_cols = [col for col in ["date", "index"] if col in table.schema.names]
                     available_columns = [
-                        col for col in ["date"] + columns if col in table.schema.names
+                        col for col in date_cols + columns if col in table.schema.names
                     ]
                     table = table.select(available_columns)
 
@@ -378,9 +390,17 @@ class ParquetManager:
         combined_df = pd.concat(dataframes, ignore_index=True)
 
         # Set date as index and sort
+        date_col = None
         if "date" in combined_df.columns:
-            combined_df = combined_df.set_index("date")
+            date_col = "date"
+        elif "index" in combined_df.columns:
+            date_col = "index"
+
+        if date_col:
+            combined_df = combined_df.set_index(date_col)
             combined_df.index = pd.to_datetime(combined_df.index)
+            # Reset index name to None for consistency with original data
+            combined_df.index.name = None
             combined_df = combined_df.sort_index()
 
         return combined_df
@@ -592,7 +612,11 @@ class DataLoader:
                     data_type=data_type, start_date=start_date, end_date=end_date, columns=tickers
                 )
                 data[data_type] = df
-            except Exception:
+            except Exception as e:
+                # Log the specific error for debugging but continue with empty DataFrame
+                import logging
+
+                logging.warning(f"Failed to load data for {data_type}: {e}")
                 data[data_type] = pd.DataFrame()
 
         return data

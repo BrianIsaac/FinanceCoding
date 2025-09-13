@@ -25,9 +25,7 @@ except ImportError:
     warnings.warn("Matplotlib/Seaborn not available. Static plotting disabled.", stacklevel=2)
 
 try:
-    import plotly.express as px
     import plotly.graph_objects as go
-    from plotly.subplots import make_subplots
 
     HAS_PLOTLY = True
 except ImportError:

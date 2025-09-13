@@ -504,7 +504,7 @@ class TestMarketRegimeAnalysis:
         )
 
         assert isinstance(performance_tables, dict)
-        for regime, table in performance_tables.items():
+        for _regime, table in performance_tables.items():
             assert isinstance(table, pd.DataFrame)
             assert len(table) <= len(sample_returns_data)  # At most one row per approach
 
@@ -542,7 +542,7 @@ class TestMarketRegimeAnalysis:
         )
 
         assert isinstance(statistical_results, dict)
-        for approach, results in statistical_results.items():
+        for _approach, results in statistical_results.items():
             assert isinstance(results, dict)
             for regime_key, stats in results.items():
                 assert regime_key.startswith("regime_")
@@ -566,9 +566,9 @@ class TestIntegrationScenarios:
         tables = PerformanceComparisonTables()
         charts = TimeSeriesCharts()
         risk_return = RiskReturnAnalysis()
-        heatmaps = PerformanceHeatmaps()
+        PerformanceHeatmaps()
         operational = OperationalEfficiencyAnalysis()
-        regime_analysis = MarketRegimeAnalysis()
+        MarketRegimeAnalysis()
 
         # Test table creation
         performance_table = tables.create_performance_ranking_table(
@@ -640,7 +640,7 @@ class TestIntegrationScenarios:
             tables.create_performance_ranking_table(empty_data)
 
         # Test mismatched data handling
-        mismatched_data = {"approach1": sample_returns_data["HRP"]}
+        {"approach1": sample_returns_data["HRP"]}
         mismatched_performance = {"approach2": {"sharpe_ratio": 1.0}}
 
         # Should handle gracefully or raise appropriate error

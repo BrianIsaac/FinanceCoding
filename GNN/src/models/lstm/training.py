@@ -15,7 +15,7 @@ import numpy as np
 import pandas as pd
 import torch
 import torch.optim as optim
-from torch.cuda.amp import GradScaler, autocast
+from torch.amp import GradScaler, autocast
 from torch.utils.data import DataLoader, Dataset
 
 from .architecture import LSTMNetwork, SharpeRatioLoss
@@ -127,7 +127,7 @@ class MemoryEfficientTrainer:
         self.criterion = SharpeRatioLoss()
 
         # Initialize mixed precision scaler
-        self.scaler = GradScaler() if config.use_mixed_precision else None
+        self.scaler = GradScaler("cuda") if config.use_mixed_precision else None
 
         # Training state
         self.best_loss = float("inf")
@@ -200,7 +200,8 @@ class MemoryEfficientTrainer:
             raise ValueError(
                 f"No valid sequences created. Data has {n_timesteps} timesteps, "
                 f"need at least {sequence_length + prediction_horizon} for sequence_length={sequence_length} "
-                f"and prediction_horizon={prediction_horizon}"
+                f"and prediction_horizon={prediction_horizon}. "
+                f"Range for loop: {sequence_length} to {n_timesteps - prediction_horizon + 1}"
             )
 
         logger.info(f"Created {len(sequences)} sequences with shape {sequences.shape}")
@@ -302,7 +303,7 @@ class MemoryEfficientTrainer:
         self, sequences: torch.Tensor, targets: torch.Tensor
     ) -> torch.Tensor:
         """Forward pass with automatic mixed precision."""
-        with autocast():
+        with autocast("cuda"):
             predictions, _ = self.model(sequences)
             return self.criterion(predictions, targets) / self.config.gradient_accumulation_steps
 
@@ -406,7 +407,7 @@ class MemoryEfficientTrainer:
                 targets = targets.to(self.device, non_blocking=True)
 
                 if self.config.use_mixed_precision:
-                    with autocast():
+                    with autocast("cuda"):
                         predictions, _ = self.model(sequences)
                         loss = self.criterion(predictions, targets)
                 else:
@@ -419,7 +420,9 @@ class MemoryEfficientTrainer:
         avg_loss = total_loss / num_batches if num_batches > 0 else 0.0
         return avg_loss
 
-    def _create_data_splits(self, sequences: list, targets: list, dates: list) -> tuple:
+    def _create_data_splits(
+        self, sequences: torch.Tensor, targets: torch.Tensor, dates: list
+    ) -> tuple:
         """Create training and validation data splits."""
         if self.config.walk_forward_validation and len(sequences) > 10:
             return self.create_walk_forward_splits(sequences, targets, dates)
@@ -433,7 +436,12 @@ class MemoryEfficientTrainer:
         return train_seq, train_tgt, val_seq, val_tgt
 
     def _create_data_loaders(
-        self, train_seq: list, train_tgt: list, val_seq: list, val_tgt: list, batch_size: int
+        self,
+        train_seq: torch.Tensor,
+        train_tgt: torch.Tensor,
+        val_seq: torch.Tensor,
+        val_tgt: torch.Tensor,
+        batch_size: int,
     ) -> tuple:
         """Create training and validation data loaders."""
         train_dataset = TimeSeriesDataset(train_seq, train_tgt)

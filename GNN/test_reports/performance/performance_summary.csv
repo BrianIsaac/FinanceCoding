@@ -1,0 +1,4 @@
+Model,Sharpe Ratio,vs Baseline,Information Ratio,Annual Return (%),Volatility (%),Max Drawdown (%),Calmar Ratio,Sortino Ratio,Win Rate (%),Avg Win/Loss,Sharpe Ratio Rank,Information Ratio Rank,Calmar Ratio Rank,Sortino Ratio Rank
+HRP,0.9238,,0.9238,19.02,18.42,15.31,1.2422,1.6869,53.2,1.04,2,2,2,2
+LSTM,1.3719*,,1.3719,34.75,23.87,17.61,1.9730,2.4548,54.0,1.07,1,1,1,1
+GAT,-0.2175*,,-0.2175,-2.47,20.56,14.22,-0.1739,-0.3712,50.8,0.95,3,3,3,3

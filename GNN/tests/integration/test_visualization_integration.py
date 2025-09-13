@@ -5,21 +5,22 @@ Tests the integration between different visualization modules and their
 interaction with data sources, configuration management, and export systems.
 """
 
+import tempfile
+from pathlib import Path
+from unittest.mock import Mock, patch
+
 import numpy as np
 import pandas as pd
 import pytest
-from pathlib import Path
-from unittest.mock import Mock, patch
-import tempfile
 import yaml
 
 from src.evaluation.reporting.charts import TimeSeriesCharts
-from src.evaluation.reporting.tables import PerformanceComparisonTables
 from src.evaluation.reporting.heatmaps import PerformanceHeatmaps
-from src.evaluation.reporting.risk_return import RiskReturnAnalysis
+from src.evaluation.reporting.interactive import InteractiveDashboard
 from src.evaluation.reporting.operational_analysis import OperationalEfficiencyAnalysis
 from src.evaluation.reporting.regime_analysis import MarketRegimeAnalysis
-from src.evaluation.reporting.interactive import InteractiveDashboard
+from src.evaluation.reporting.risk_return import RiskReturnAnalysis
+from src.evaluation.reporting.tables import PerformanceComparisonTables
 
 
 class TestVisualizationIntegration:
@@ -31,28 +32,30 @@ class TestVisualizationIntegration:
         # Create date range
         dates = pd.date_range("2020-01-01", "2022-12-31", freq="D")
         n_dates = len(dates)
-        
+
         # Set random seed for reproducibility
         np.random.seed(42)
-        
+
         # Generate correlated returns data
         approaches = ["HRP", "LSTM", "GAT", "EqualWeight", "MeanVariance"]
         base_returns = np.random.multivariate_normal(
             mean=[0.0008, 0.0010, 0.0012, 0.0005, 0.0007],
-            cov=np.array([
-                [0.0002, 0.0001, 0.0001, 0.00008, 0.00009],
-                [0.0001, 0.0003, 0.0001, 0.00009, 0.0001],
-                [0.0001, 0.0001, 0.0004, 0.0001, 0.0001],
-                [0.00008, 0.00009, 0.0001, 0.00015, 0.00008],
-                [0.00009, 0.0001, 0.0001, 0.00008, 0.00018],
-            ]),
-            size=n_dates
+            cov=np.array(
+                [
+                    [0.0002, 0.0001, 0.0001, 0.00008, 0.00009],
+                    [0.0001, 0.0003, 0.0001, 0.00009, 0.0001],
+                    [0.0001, 0.0001, 0.0004, 0.0001, 0.0001],
+                    [0.00008, 0.00009, 0.0001, 0.00015, 0.00008],
+                    [0.00009, 0.0001, 0.0001, 0.00008, 0.00018],
+                ]
+            ),
+            size=n_dates,
         )
-        
+
         returns_data = {}
         for i, approach in enumerate(approaches):
             returns_data[approach] = pd.Series(base_returns[:, i], index=dates)
-            
+
         # Generate turnover data
         turnover_data = {}
         for approach in approaches:
@@ -63,20 +66,20 @@ class TestVisualizationIntegration:
                 # Traditional approaches have lower turnover
                 turnover = np.random.gamma(1.5, 0.05, n_dates)
             turnover_data[approach] = pd.Series(turnover, index=dates)
-            
+
         # Generate performance metrics
         performance_metrics = {}
         for approach, returns_series in returns_data.items():
             total_return = (1 + returns_series).prod() - 1
             volatility = returns_series.std() * np.sqrt(252)
             sharpe_ratio = returns_series.mean() / returns_series.std() * np.sqrt(252)
-            
+
             # Calculate maximum drawdown
             cum_returns = (1 + returns_series).cumprod()
             running_max = cum_returns.expanding().max()
             drawdown = (cum_returns - running_max) / running_max
             max_drawdown = drawdown.min()
-            
+
             performance_metrics[approach] = {
                 "total_return": total_return,
                 "annualized_return": (1 + returns_series.mean()) ** 252 - 1,
@@ -86,26 +89,26 @@ class TestVisualizationIntegration:
                 "max_drawdown": max_drawdown,
                 "tracking_error": volatility * 0.6,
             }
-            
+
         # Generate regime data
         regime_labels = []
         current_regime = "bull"
         regime_duration = 0
-        
+
         for _ in range(n_dates):
             regime_duration += 1
-            
+
             # Change regime probabilistically
             if regime_duration > 30:  # Minimum 30 days
                 change_prob = min(0.05, regime_duration / 500)  # Increasing prob over time
                 if np.random.random() < change_prob:
                     current_regime = np.random.choice(["bull", "bear", "sideways"])
                     regime_duration = 0
-                    
+
             regime_labels.append(current_regime)
-            
+
         regime_data = pd.Series(regime_labels, index=dates)
-        
+
         return {
             "returns_data": returns_data,
             "turnover_data": turnover_data,
@@ -133,10 +136,10 @@ class TestVisualizationIntegration:
             "tables": {
                 "decimal_places": 3,
                 "significance_levels": [0.05, 0.01],
-            }
+            },
         }
-        
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
             yaml.dump(config_data, f)
             return f.name
 
@@ -144,13 +147,13 @@ class TestVisualizationIntegration:
         """Test complete end-to-end analysis workflow."""
         returns_data = sample_data["returns_data"]
         performance_metrics = sample_data["performance_metrics"]
-        turnover_data = sample_data["turnover_data"]
-        regime_data = sample_data["regime_data"]
-        
+        sample_data["turnover_data"]
+        sample_data["regime_data"]
+
         # 1. Test table creation (no external dependencies)
         tables = PerformanceComparisonTables()
         performance_table = tables.create_performance_ranking_table(performance_metrics)
-        
+
         assert isinstance(performance_table, pd.DataFrame)
         assert len(performance_table) == len(performance_metrics)
         assert "sharpe_ratio" in performance_table.columns
@@ -158,10 +161,10 @@ class TestVisualizationIntegration:
         # 2. Test components initialization
         charts = TimeSeriesCharts()
         assert charts.config is not None
-        
+
         risk_return = RiskReturnAnalysis()
         assert risk_return.config is not None
-        
+
         operational = OperationalEfficiencyAnalysis()
         assert operational.config is not None
 
@@ -170,10 +173,10 @@ class TestVisualizationIntegration:
         detected_regimes = regime_analysis.detect_market_regimes(
             returns_data["HRP"], method="threshold"
         )
-        
+
         assert isinstance(detected_regimes, pd.Series)
         assert len(detected_regimes) > 0
-        
+
         # 4. Test data processing methods
         heatmaps = PerformanceHeatmaps()
         aggregated_data = heatmaps._aggregate_returns(returns_data, "monthly")
@@ -182,17 +185,17 @@ class TestVisualizationIntegration:
 
     def test_interactive_dashboard_integration(self, sample_data):
         """Test interactive dashboard integration with all components."""
-        returns_data = sample_data["returns_data"]
-        performance_metrics = sample_data["performance_metrics"]
-        turnover_data = sample_data["turnover_data"]
-        
+        sample_data["returns_data"]
+        sample_data["performance_metrics"]
+        sample_data["turnover_data"]
+
         # Test dashboard initialization
         with patch("src.evaluation.reporting.interactive.HAS_PLOTLY", True):
             dashboard = InteractiveDashboard()
             assert dashboard.config is not None
             assert dashboard.time_series is not None
             assert dashboard.tables is not None
-            
+
             # Test component integration
             assert hasattr(dashboard, "heatmaps")
             assert hasattr(dashboard, "risk_return")
@@ -201,31 +204,29 @@ class TestVisualizationIntegration:
 
     def test_configuration_integration(self, config_file, sample_data):
         """Test configuration file integration across components."""
-        returns_data = sample_data["returns_data"]
-        
+        sample_data["returns_data"]
+
         # Test dashboard with config file
         with patch("src.evaluation.reporting.interactive.HAS_PLOTLY", True):
             dashboard = InteractiveDashboard(config_path=config_file)
-            
+
             assert dashboard.config.height == 800
             assert dashboard.config.width == 1200
             assert dashboard.config.theme == "plotly_white"
 
     def test_export_integration(self, sample_data, tmp_path):
         """Test export functionality integration across components."""
-        returns_data = sample_data["returns_data"]
+        sample_data["returns_data"]
         performance_metrics = sample_data["performance_metrics"]
-        
+
         # Test table export only (no external dependencies)
         tables = PerformanceComparisonTables()
         performance_table = tables.create_performance_ranking_table(performance_metrics)
-        
+
         exported_files = tables.export_table(
-            performance_table, 
-            str(tmp_path / "performance_table"),
-            formats=["csv", "html"]
+            performance_table, str(tmp_path / "performance_table"), formats=["csv", "html"]
         )
-        
+
         assert "csv" in exported_files
         assert "html" in exported_files
         assert Path(exported_files["csv"]).exists()
@@ -235,22 +236,22 @@ class TestVisualizationIntegration:
         """Test data validation across visualization components."""
         returns_data = sample_data["returns_data"]
         performance_metrics = sample_data["performance_metrics"]
-        
+
         # Test with missing data
-        incomplete_returns = {k: v for k, v in returns_data.items() if k in ["HRP", "LSTM"]}
+        {k: v for k, v in returns_data.items() if k in ["HRP", "LSTM"]}
         incomplete_metrics = {k: v for k, v in performance_metrics.items() if k in ["HRP", "LSTM"]}
-        
+
         # Should handle incomplete data gracefully
         tables = PerformanceComparisonTables()
         result_table = tables.create_performance_ranking_table(incomplete_metrics)
-        
+
         assert isinstance(result_table, pd.DataFrame)
         assert len(result_table) == 2
-        
+
         # Test with empty data
         empty_data = {}
         empty_result = tables.create_performance_ranking_table(empty_data)
-        
+
         assert isinstance(empty_result, pd.DataFrame)
         assert len(empty_result) == 0
 
@@ -258,7 +259,7 @@ class TestVisualizationIntegration:
         """Test statistical analysis integration across components."""
         returns_data = sample_data["returns_data"]
         performance_metrics = sample_data["performance_metrics"]
-        
+
         # Create mock statistical results
         statistical_results = {}
         for approach in returns_data.keys():
@@ -266,15 +267,15 @@ class TestVisualizationIntegration:
                 "sharpe_ratio": {"p_value": 0.025, "t_stat": 2.1},
                 "total_return": {"p_value": 0.018, "t_stat": 2.4},
             }
-        
+
         # Test table integration with statistical results
         tables = PerformanceComparisonTables()
         result_table = tables.create_performance_ranking_table(
             performance_metrics, statistical_results
         )
-        
+
         assert isinstance(result_table, pd.DataFrame)
-        
+
         # Check for significance indicators
         sharpe_col = result_table["sharpe_ratio"].astype(str)
         assert any("*" in str(val) for val in sharpe_col)
@@ -282,19 +283,19 @@ class TestVisualizationIntegration:
     def test_regime_analysis_integration(self, sample_data):
         """Test regime analysis integration with other components."""
         returns_data = sample_data["returns_data"]
-        regime_data = sample_data["regime_data"]
-        
+        sample_data["regime_data"]
+
         # Test regime analysis initialization and basic functionality
         regime_analysis = MarketRegimeAnalysis()
         assert regime_analysis.config is not None
-        
+
         # Test regime detection
         detected_regimes = regime_analysis.detect_market_regimes(
             returns_data["HRP"], method="threshold"
         )
         assert isinstance(detected_regimes, pd.Series)
         assert len(detected_regimes) > 0
-        
+
         # Test feature preparation
         features = regime_analysis._prepare_regime_features(returns_data["HRP"])
         assert isinstance(features, pd.DataFrame)
@@ -304,24 +305,24 @@ class TestVisualizationIntegration:
         """Test heatmap integration with regime and statistical data."""
         returns_data = sample_data["returns_data"]
         regime_data = sample_data["regime_data"]
-        
+
         heatmaps = PerformanceHeatmaps()
-        
+
         with patch("src.evaluation.reporting.heatmaps.HAS_PLOTLY", True):
             with patch("src.evaluation.reporting.heatmaps.make_subplots") as mock_subplots:
                 mock_figure = Mock()
                 mock_subplots.return_value = mock_figure
-                
+
                 # Test monthly performance heatmaps
                 monthly_heatmap = heatmaps.create_monthly_performance_heatmap(
                     returns_data, interactive=True
                 )
                 assert monthly_heatmap is not None
-                
+
                 # Test with regime annotation
                 with patch("src.evaluation.reporting.heatmaps.HAS_MATPLOTLIB", True):
                     aggregated_data = heatmaps._aggregate_returns(returns_data, "monthly")
-                    
+
                     if aggregated_data:  # Only test if we have data
                         regime_heatmap = heatmaps.add_regime_identification_overlay(
                             aggregated_data, regime_data
@@ -331,46 +332,46 @@ class TestVisualizationIntegration:
     def test_performance_consistency(self, sample_data):
         """Test consistency of performance calculations across components."""
         returns_data = sample_data["returns_data"]
-        
+
         # Calculate performance using different components
-        tables = PerformanceComparisonTables()
-        charts = TimeSeriesCharts()
-        
+        PerformanceComparisonTables()
+        TimeSeriesCharts()
+
         # Manual calculation for comparison
         approach = "HRP"
         returns_series = returns_data[approach]
-        
+
         expected_total_return = (1 + returns_series).prod() - 1
         expected_volatility = returns_series.std() * np.sqrt(252)
         expected_sharpe = returns_series.mean() / returns_series.std() * np.sqrt(252)
-        
+
         # These calculations should be consistent across components
         # (Note: in actual implementation, components should use the same calculation methods)
         assert isinstance(expected_total_return, (int, float))
         assert isinstance(expected_volatility, (int, float))
         assert isinstance(expected_sharpe, (int, float))
-        
+
         # Values should be reasonable
         assert -1 <= expected_total_return <= 5  # Reasonable return range
-        assert 0 <= expected_volatility <= 1    # Reasonable volatility range
-        assert -5 <= expected_sharpe <= 10      # Reasonable Sharpe ratio range
+        assert 0 <= expected_volatility <= 1  # Reasonable volatility range
+        assert -5 <= expected_sharpe <= 10  # Reasonable Sharpe ratio range
 
     def test_memory_efficiency(self, sample_data):
         """Test memory efficiency with large datasets."""
         # Create larger dataset
         dates = pd.date_range("2010-01-01", "2022-12-31", freq="D")
         n_dates = len(dates)
-        
+
         np.random.seed(42)
         large_returns_data = {}
-        
+
         for approach in ["HRP", "LSTM", "GAT", "EqualWeight", "MeanVariance"]:
             returns = np.random.normal(0.0008, 0.015, n_dates)
             large_returns_data[approach] = pd.Series(returns, index=dates)
-        
+
         # Test that components can handle larger datasets
         tables = PerformanceComparisonTables()
-        
+
         # Calculate performance metrics
         large_performance_metrics = {}
         for approach, returns_series in large_returns_data.items():
@@ -379,7 +380,7 @@ class TestVisualizationIntegration:
                 "volatility": returns_series.std() * np.sqrt(252),
                 "sharpe_ratio": returns_series.mean() / returns_series.std() * np.sqrt(252),
             }
-        
+
         # Should handle large dataset without errors
         result = tables.create_performance_ranking_table(large_performance_metrics)
         assert isinstance(result, pd.DataFrame)
@@ -391,15 +392,15 @@ class TestVisualizationIntegration:
         corrupted_returns = sample_data["returns_data"].copy()
         corrupted_returns["HRP"].iloc[100:200] = np.nan  # Introduce NaN values
         corrupted_returns["LSTM"].iloc[300:400] = np.inf  # Introduce infinite values
-        
+
         # Components should handle corrupted data gracefully
         charts = TimeSeriesCharts()
-        
+
         with patch("src.evaluation.reporting.charts.HAS_PLOTLY", True):
             with patch("src.evaluation.reporting.charts.go") as mock_go:
                 mock_figure = Mock()
                 mock_go.Figure.return_value = mock_figure
-                
+
                 # Should not raise errors
                 try:
                     result = charts.plot_cumulative_returns(corrupted_returns)
@@ -411,19 +412,19 @@ class TestVisualizationIntegration:
         """Test concurrent processing capabilities."""
         returns_data = sample_data["returns_data"]
         performance_metrics = sample_data["performance_metrics"]
-        
+
         # Test creating multiple components and processing concurrently
         charts = TimeSeriesCharts()
         tables = PerformanceComparisonTables()
         heatmaps = PerformanceHeatmaps()
-        
+
         # Create multiple tables/analyses
         results = []
-        
+
         results.append(tables.create_performance_ranking_table(performance_metrics))
         results.append(heatmaps._aggregate_returns(returns_data, "monthly"))
         results.append(charts.config is not None)
-        
+
         # All results should be valid
         assert all(result is not None for result in results)
         assert len(results) == 3
@@ -431,33 +432,31 @@ class TestVisualizationIntegration:
     def test_version_compatibility(self, sample_data):
         """Test compatibility with different data formats and versions."""
         returns_data = sample_data["returns_data"]
-        
+
         # Test with different pandas index types
         for approach in returns_data:
             original_series = returns_data[approach]
-            
+
             # Test with different index types
             returns_with_int_index = pd.Series(
-                original_series.values, 
-                index=range(len(original_series))
+                original_series.values, index=range(len(original_series))
             )
-            
-            returns_with_str_index = pd.Series(
-                original_series.values,
-                index=[f"period_{i}" for i in range(len(original_series))]
+
+            pd.Series(
+                original_series.values, index=[f"period_{i}" for i in range(len(original_series))]
             )
-            
+
             # Components should handle different index types
             charts = TimeSeriesCharts()
-            
+
             # These should work without errors (though may not be optimal)
             alternative_data = {"test_approach": returns_with_int_index}
-            
+
             with patch("src.evaluation.reporting.charts.HAS_PLOTLY", True):
                 with patch("src.evaluation.reporting.charts.go") as mock_go:
                     mock_figure = Mock()
                     mock_go.Figure.return_value = mock_figure
-                    
+
                     try:
                         result = charts.plot_cumulative_returns(alternative_data)
                         assert result is not None
@@ -471,6 +470,7 @@ class TestVisualizationIntegration:
         with patch("src.evaluation.reporting.charts.HAS_MATPLOTLIB", True):
             try:
                 import matplotlib.pyplot as plt
-                plt.close('all')
+
+                plt.close("all")
             except ImportError:
                 pass

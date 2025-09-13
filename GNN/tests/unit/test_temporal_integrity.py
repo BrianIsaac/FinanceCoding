@@ -8,7 +8,6 @@ to ensure no look-ahead bias and proper temporal data handling.
 import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import List
 from unittest.mock import Mock, patch
 
 import pandas as pd

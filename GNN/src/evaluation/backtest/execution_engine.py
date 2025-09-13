@@ -213,7 +213,8 @@ class BacktestExecutor:
             self._save_execution_logs()
 
         logger.info(
-            f"Backtest execution completed: {self.rebalance_count} rebalances, {len(self.trade_log)} trades"
+            f"Backtest execution completed: {self.rebalance_count} rebalances, "
+            f"{len(self.trade_log)} trades"
         )
 
         return results
@@ -243,7 +244,7 @@ class BacktestExecutor:
         # Get current universe
         current_universe = self._get_current_universe(rebalance_date, returns_data, universe_data)
 
-        if not current_universe:
+        if not current_universe or len(current_universe) == 0:
             logger.warning(f"No universe available for {rebalance_date}")
             return
 
@@ -349,7 +350,7 @@ class BacktestExecutor:
         """Determine reason for rebalancing."""
 
         # Default to scheduled rebalancing
-        if not self.current_weights:
+        if not self.current_weights or len(self.current_weights) == 0:
             return RebalanceReason.SCHEDULED
 
         # Check for significant weight changes
@@ -412,16 +413,18 @@ class BacktestExecutor:
                 trade_value = abs(quantity_change * price)
 
                 # Calculate transaction cost
+                current_weights_series = (
+                    pd.Series(self.current_weights, name="current")
+                    if self.current_weights
+                    else pd.Series(dtype=float, index=target_weights.index).fillna(0.0)
+                )
+                cost_breakdown = self.transaction_cost_calculator.calculate_transaction_costs(
+                    current_weights_series,
+                    target_weights,
+                    portfolio_value,
+                )
                 transaction_cost = (
-                    self.transaction_cost_calculator.calculate_transaction_costs(
-                        target_weights.to_frame().T,
-                        (
-                            pd.Series(self.current_weights, name="current").to_frame().T
-                            if self.current_weights
-                            else pd.DataFrame()
-                        ),
-                        prices.to_frame().T,
-                    )
+                    cost_breakdown.get("total_cost", 0.0)
                     * trade_value
                     / portfolio_value
                     if portfolio_value > 0

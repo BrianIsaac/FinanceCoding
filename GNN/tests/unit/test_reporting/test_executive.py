@@ -146,7 +146,7 @@ class TestExecutiveSummaryGenerator:
         lstm_significant = rankings[rankings["Model"] == "LSTM"]["Statistically Significant"].iloc[
             0
         ]
-        assert lstm_significant is True  # p-value < 0.05
+        assert lstm_significant  # p-value < 0.05
 
     def test_feasibility_scores_calculation(self, executive_generator, sample_operational_metrics):
         """Test feasibility scores calculation."""

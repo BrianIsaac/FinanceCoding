@@ -264,9 +264,12 @@ class PerformanceComparisonTables:
                     # Add significance indicator
                     significance_symbol = self._get_significance_symbol(p_value)
                     if significance_symbol:
-                        original_value = df_with_sig.loc[approach, metric]
-                        # Convert to string to avoid dtype compatibility issues
-                        df_with_sig.loc[approach, metric] = str(original_value) + significance_symbol
+                        df_with_sig.loc[approach, metric]
+                        # Create new column name for significance indicators
+                        sig_col = f"{metric}_sig"
+                        if sig_col not in df_with_sig.columns:
+                            df_with_sig[sig_col] = ""
+                        df_with_sig.loc[approach, sig_col] = significance_symbol
 
         return df_with_sig
 
@@ -376,7 +379,7 @@ class PerformanceComparisonTables:
                 # Format ranks as integers, handling NaN values
                 if formatted_df[col].dtype in ["float64", "int64"]:
                     # Convert to nullable integer type to handle NaN
-                    formatted_df[col] = formatted_df[col].astype('Int64')
+                    formatted_df[col] = formatted_df[col].astype("Int64")
             elif not col.endswith(("_symbol", "_indicator")):
                 # Format other numerical columns
                 if formatted_df[col].dtype in ["float64", "int64"]:

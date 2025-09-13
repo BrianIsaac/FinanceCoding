@@ -43,7 +43,7 @@ class DashboardConfig:
     update_frequency: int = 5000
     export_formats: list[str] = None
     responsive: bool = True
-    
+
     def __post_init__(self):
         if self.export_formats is None:
             self.export_formats = ["html", "png", "pdf"]
@@ -52,7 +52,7 @@ class DashboardConfig:
 class InteractiveDashboard:
     """
     Interactive dashboard framework for comprehensive portfolio performance analysis.
-    
+
     Provides unified dashboards integrating all visualization components with
     real-time updates, interactive controls, and comprehensive analysis capabilities.
     """
@@ -73,10 +73,10 @@ class InteractiveDashboard:
             self.config = self._load_config(config_path)
         else:
             self.config = config or DashboardConfig()
-            
+
         if not HAS_PLOTLY:
             raise ImportError("Plotly required for interactive dashboards")
-            
+
         # Initialize visualization components
         self.time_series = TimeSeriesCharts()
         self.tables = PerformanceComparisonTables()
@@ -87,12 +87,12 @@ class InteractiveDashboard:
 
     def _load_config(self, config_path: str | Path) -> DashboardConfig:
         """Load configuration from YAML file."""
-        with open(config_path, "r") as f:
+        with open(config_path) as f:
             config_data = yaml.safe_load(f)
-            
+
         # Extract relevant configuration
         global_config = config_data.get("global", {})
-        
+
         return DashboardConfig(
             height=global_config.get("height", 1000),
             width=global_config.get("width", 1400),
@@ -130,7 +130,7 @@ class InteractiveDashboard:
             subplot_titles=(
                 "Cumulative Returns Comparison",
                 "",
-                "Drawdown Analysis", 
+                "Drawdown Analysis",
                 "Key Performance Metrics",
                 "Risk-Return Analysis",
                 "Rolling Sharpe Ratio",
@@ -145,14 +145,22 @@ class InteractiveDashboard:
         )
 
         colors = [
-            "#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd",
-            "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf"
+            "#1f77b4",
+            "#ff7f0e",
+            "#2ca02c",
+            "#d62728",
+            "#9467bd",
+            "#8c564b",
+            "#e377c2",
+            "#7f7f7f",
+            "#bcbd22",
+            "#17becf",
         ]
 
         # 1. Cumulative Returns (top, full width)
         for idx, (approach, returns_series) in enumerate(returns_data.items()):
             cum_returns = (1 + returns_series).cumprod()
-            
+
             fig.add_trace(
                 go.Scatter(
                     x=cum_returns.index,
@@ -201,9 +209,11 @@ class InteractiveDashboard:
                     name=f"{approach} DD",
                     line={"color": colors[idx % len(colors)], "width": 2},
                     fill="tonexty" if idx > 0 else "tozeroy",
-                    fillcolor=f"rgba({colors[idx % len(colors)][1:]}, 0.3)"
-                    if colors[idx % len(colors)].startswith("#")
-                    else f"rgba(128,128,128,0.3)",
+                    fillcolor=(
+                        f"rgba({colors[idx % len(colors)][1:]}, 0.3)"
+                        if colors[idx % len(colors)].startswith("#")
+                        else "rgba(128,128,128,0.3)"
+                    ),
                     showlegend=False,
                     hovertemplate=f"<b>{approach}</b><br>"
                     + "Date: %{x}<br>"
@@ -218,7 +228,7 @@ class InteractiveDashboard:
             table_data = []
             approaches = list(performance_metrics.keys())
             metrics = ["sharpe_ratio", "total_return", "max_drawdown", "volatility"]
-            
+
             for metric in metrics:
                 row_data = [metric.replace("_", " ").title()]
                 for approach in approaches:
@@ -287,7 +297,7 @@ class InteractiveDashboard:
             for idx, (approach, metrics_dict) in enumerate(rolling_metrics.items()):
                 if "sharpe_ratio" in metrics_dict:
                     sharpe_series = metrics_dict["sharpe_ratio"]
-                    
+
                     fig.add_trace(
                         go.Scatter(
                             x=sharpe_series.index,
@@ -317,13 +327,13 @@ class InteractiveDashboard:
         # Update axes
         fig.update_yaxes(title_text="Cumulative Return", tickformat=".1%", row=1, col=1)
         fig.update_xaxes(title_text="Date", row=1, col=1)
-        
+
         fig.update_yaxes(title_text="Drawdown", tickformat=".1%", row=2, col=1)
         fig.update_xaxes(title_text="Date", row=2, col=1)
-        
+
         fig.update_yaxes(title_text="Return", tickformat=".1%", row=3, col=1)
         fig.update_xaxes(title_text="Volatility", tickformat=".1%", row=3, col=1)
-        
+
         fig.update_yaxes(title_text="Rolling Sharpe", row=3, col=2)
         fig.update_xaxes(title_text="Date", row=3, col=2)
 
@@ -372,7 +382,7 @@ class InteractiveDashboard:
             subplot_titles=(
                 "Value at Risk Analysis",
                 "Return Correlation Matrix",
-                "Regime-Specific Performance", 
+                "Regime-Specific Performance",
                 "Tail Risk Metrics",
             ),
             specs=[
@@ -383,9 +393,7 @@ class InteractiveDashboard:
             horizontal_spacing=0.1,
         )
 
-        colors = [
-            "#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd"
-        ]
+        colors = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd"]
 
         # 1. VaR Analysis (top left)
         var_levels = [0.95, 0.99, 0.999]
@@ -394,7 +402,7 @@ class InteractiveDashboard:
             for level in var_levels:
                 var = returns_series.quantile(1 - level)
                 var_values.append(var * 100)  # Convert to percentage points
-                
+
             fig.add_trace(
                 go.Bar(
                     x=[f"{level:.1%}" for level in var_levels],
@@ -410,7 +418,7 @@ class InteractiveDashboard:
         # 2. Correlation Matrix (top right)
         returns_df = pd.DataFrame(returns_data)
         corr_matrix = returns_df.corr()
-        
+
         fig.add_trace(
             go.Heatmap(
                 z=corr_matrix.values,
@@ -430,20 +438,20 @@ class InteractiveDashboard:
         if regime_data is not None:
             # Calculate regime-specific metrics
             unique_regimes = regime_data.dropna().unique()
-            
+
             for idx, regime in enumerate(unique_regimes[:3]):  # Limit to 3 regimes
                 regime_returns = []
                 approach_names = []
-                
+
                 for approach, returns_series in returns_data.items():
                     regime_mask = regime_data == regime
                     regime_performance = returns_series[regime_mask]
-                    
+
                     if len(regime_performance) > 10:
                         avg_return = regime_performance.mean() * 252  # Annualized
                         regime_returns.append(avg_return * 100)  # Convert to percentage
                         approach_names.append(approach)
-                
+
                 if regime_returns:
                     fig.add_trace(
                         go.Bar(
@@ -461,12 +469,12 @@ class InteractiveDashboard:
         approaches = []
         skewness_values = []
         kurtosis_values = []
-        
+
         for approach, returns_series in returns_data.items():
             approaches.append(approach)
             skewness_values.append(returns_series.skew())
             kurtosis_values.append(returns_series.kurtosis())
-            
+
         fig.add_trace(
             go.Bar(
                 x=approaches,
@@ -478,7 +486,7 @@ class InteractiveDashboard:
             row=2,
             col=2,
         )
-        
+
         fig.add_trace(
             go.Bar(
                 x=approaches,
@@ -504,11 +512,11 @@ class InteractiveDashboard:
         # Update axes
         fig.update_yaxes(title_text="VaR (%)", row=1, col=1)
         fig.update_xaxes(title_text="Confidence Level", row=1, col=1)
-        
+
         if regime_data is not None:
             fig.update_yaxes(title_text="Annualized Return (%)", row=2, col=1)
             fig.update_xaxes(title_text="Approach", row=2, col=1)
-        
+
         fig.update_yaxes(title_text="Skewness", row=2, col=2)
         fig.update_yaxes(title_text="Excess Kurtosis", secondary_y=True, row=2, col=2)
         fig.update_xaxes(title_text="Approach", row=2, col=2)
@@ -554,9 +562,7 @@ class InteractiveDashboard:
             horizontal_spacing=0.06,
         )
 
-        colors = [
-            "#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd"
-        ]
+        colors = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd"]
 
         # 1. Portfolio Turnover (top left)
         for idx, (approach, turnover_series) in enumerate(turnover_data.items()):
@@ -578,22 +584,22 @@ class InteractiveDashboard:
         approaches = []
         gross_sharpe = []
         net_sharpe = []
-        
+
         for approach in returns_data.keys():
             if approach in turnover_data and approach in performance_metrics:
                 approaches.append(approach)
                 gross_sr = performance_metrics[approach].get("sharpe_ratio", 0)
-                
+
                 # Estimate net Sharpe after transaction costs
                 avg_turnover = turnover_data[approach].mean()
                 cost_drag = avg_turnover * (cost_bps / 10000) * 12  # Annualized
                 returns_series = returns_data[approach]
                 net_returns_mean = returns_series.mean() - cost_drag / 252
-                net_sr = net_returns_mean / returns_series.std() * (252 ** 0.5)
-                
+                net_sr = net_returns_mean / returns_series.std() * (252**0.5)
+
                 gross_sharpe.append(gross_sr)
                 net_sharpe.append(net_sr)
-                
+
         fig.add_trace(
             go.Bar(
                 x=approaches,
@@ -605,7 +611,7 @@ class InteractiveDashboard:
             row=1,
             col=2,
         )
-        
+
         fig.add_trace(
             go.Bar(
                 x=approaches,
@@ -625,11 +631,11 @@ class InteractiveDashboard:
             if approach in turnover_data and approach in returns_data:
                 turnover_series = turnover_data[approach]
                 returns_series = returns_data[approach]
-                volatility = returns_series.std() * (252 ** 0.5)
-                
+                volatility = returns_series.std() * (252**0.5)
+
                 # Simple shortfall estimate: turnover * volatility * cost factor
                 shortfall_series = turnover_series * volatility * 0.01  # 1% of vol per turnover
-                
+
                 fig.add_trace(
                     go.Scatter(
                         x=shortfall_series.index,
@@ -649,15 +655,15 @@ class InteractiveDashboard:
             for approach, constraints in constraint_data.items():
                 total_violations = 0
                 total_periods = 0
-                
-                for constraint_name, violation_series in constraints.items():
+
+                for _constraint_name, violation_series in constraints.items():
                     violations = (violation_series > 0.05).sum()  # 5% threshold
                     total_violations += violations
                     total_periods += len(violation_series)
-                    
+
                 if total_periods > 0:
                     violation_rates[approach] = total_violations / total_periods
-                    
+
             if violation_rates:
                 fig.add_trace(
                     go.Bar(
@@ -675,16 +681,16 @@ class InteractiveDashboard:
         efficiency_x = []
         efficiency_y = []
         efficiency_labels = []
-        
+
         for approach in approaches:
             if approach in turnover_data and approach in performance_metrics:
                 avg_turnover = turnover_data[approach].mean()
                 sharpe_ratio = performance_metrics[approach].get("sharpe_ratio", 0)
-                
+
                 efficiency_x.append(avg_turnover)
                 efficiency_y.append(sharpe_ratio)
                 efficiency_labels.append(approach)
-                
+
         fig.add_trace(
             go.Scatter(
                 x=efficiency_x,
@@ -704,13 +710,13 @@ class InteractiveDashboard:
         if approaches:
             cost_components = ["Trading", "Market Impact", "Timing", "Other"]
             cost_values = [40, 30, 20, 10]  # Example percentages
-            
+
             fig.add_trace(
                 go.Bar(
                     x=cost_components,
                     y=cost_values,
                     name="Cost Attribution",
-                    marker_color=colors[:len(cost_components)],
+                    marker_color=colors[: len(cost_components)],
                     showlegend=False,
                 ),
                 row=2,
@@ -730,10 +736,10 @@ class InteractiveDashboard:
         fig.update_yaxes(title_text="Turnover", tickformat=".1%", row=1, col=1)
         fig.update_yaxes(title_text="Sharpe Ratio", row=1, col=2)
         fig.update_yaxes(title_text="Shortfall (bps)", row=1, col=3)
-        
+
         if constraint_data:
             fig.update_yaxes(title_text="Violation Rate", tickformat=".1%", row=2, col=1)
-            
+
         fig.update_yaxes(title_text="Sharpe Ratio", row=2, col=2)
         fig.update_xaxes(title_text="Turnover", tickformat=".1%", row=2, col=2)
         fig.update_yaxes(title_text="Cost (%)", row=2, col=3)
@@ -798,10 +804,8 @@ class InteractiveDashboard:
             HTML string with complete report
         """
         # Create individual dashboards
-        main_dashboard = self.create_main_performance_dashboard(
-            returns_data, performance_metrics
-        )
-        
+        main_dashboard = self.create_main_performance_dashboard(returns_data, performance_metrics)
+
         # Create summary tables
         performance_table = self.tables.create_performance_ranking_table(
             performance_metrics, statistical_results
@@ -824,48 +828,48 @@ class InteractiveDashboard:
         </head>
         <body>
             <h1>Portfolio Performance Analysis Report</h1>
-            
+
             <div class="section summary">
                 <h2>Executive Summary</h2>
-                <p>This report presents a comprehensive analysis of portfolio performance across multiple approaches, 
+                <p>This report presents a comprehensive analysis of portfolio performance across multiple approaches,
                 including traditional and machine learning-based strategies.</p>
-                
+
                 <h3>Key Findings:</h3>
                 <ul>
-                    <li>Analysis period: {returns_data[list(returns_data.keys())[0]].index[0].strftime('%Y-%m-%d')} 
+                    <li>Analysis period: {returns_data[list(returns_data.keys())[0]].index[0].strftime('%Y-%m-%d')}
                         to {returns_data[list(returns_data.keys())[0]].index[-1].strftime('%Y-%m-%d')}</li>
                     <li>Number of approaches analyzed: {len(returns_data)}</li>
                     <li>Total observations: {len(returns_data[list(returns_data.keys())[0]])}</li>
                 </ul>
             </div>
-            
+
             <div class="section">
                 <h2>Performance Dashboard</h2>
                 <div class="dashboard">
                     {main_dashboard.to_html(include_plotlyjs=False, div_id="main-dashboard")}
                 </div>
             </div>
-            
+
             <div class="section">
                 <h2>Performance Rankings</h2>
                 {performance_table.to_html(classes='table table-striped', table_id='performance-table')}
             </div>
-            
+
             <div class="section">
                 <h2>Statistical Analysis</h2>
                 {self._create_statistical_summary(statistical_results) if statistical_results else '<p>No statistical analysis available.</p>'}
             </div>
-            
+
             <div class="section">
                 <h2>Risk Analysis</h2>
                 {self._create_risk_summary(returns_data, performance_metrics)}
             </div>
-            
+
             <div class="section">
                 <h2>Conclusions and Recommendations</h2>
                 {self._create_conclusions(performance_metrics)}
             </div>
-            
+
         </body>
         </html>
         """
@@ -879,17 +883,17 @@ class InteractiveDashboard:
     def _create_statistical_summary(self, statistical_results: dict[str, dict[str, Any]]) -> str:
         """Create statistical analysis summary HTML."""
         summary_html = "<h3>Statistical Significance Results</h3><ul>"
-        
+
         for approach, results in statistical_results.items():
             significant_tests = 0
             total_tests = len(results)
-            
-            for test_name, test_data in results.items():
+
+            for _test_name, test_data in results.items():
                 if isinstance(test_data, dict) and test_data.get("p_value", 1.0) < 0.05:
                     significant_tests += 1
-                    
+
             summary_html += f"<li><strong>{approach}</strong>: {significant_tests}/{total_tests} tests significant at 5% level</li>"
-            
+
         summary_html += "</ul>"
         return summary_html
 
@@ -898,12 +902,12 @@ class InteractiveDashboard:
     ) -> str:
         """Create risk analysis summary HTML."""
         summary_html = "<h3>Risk Characteristics</h3><ul>"
-        
+
         for approach, returns_series in returns_data.items():
-            vol = returns_series.std() * (252 ** 0.5)
+            vol = returns_series.std() * (252**0.5)
             max_dd = performance_metrics[approach].get("max_drawdown", 0)
             var_95 = returns_series.quantile(0.05)
-            
+
             summary_html += f"""
             <li><strong>{approach}</strong>:
                 <ul>
@@ -913,33 +917,29 @@ class InteractiveDashboard:
                 </ul>
             </li>
             """
-            
+
         summary_html += "</ul>"
         return summary_html
 
     def _create_conclusions(self, performance_metrics: dict[str, dict[str, float]]) -> str:
         """Create conclusions and recommendations HTML."""
         # Find best performing approach by Sharpe ratio
-        best_sharpe = max(
-            performance_metrics.items(),
-            key=lambda x: x[1].get("sharpe_ratio", 0)
-        )
-        
+        best_sharpe = max(performance_metrics.items(), key=lambda x: x[1].get("sharpe_ratio", 0))
+
         # Find lowest risk approach by volatility
         lowest_vol = min(
-            performance_metrics.items(),
-            key=lambda x: x[1].get("volatility", float("inf"))
+            performance_metrics.items(), key=lambda x: x[1].get("volatility", float("inf"))
         )
 
         conclusions_html = f"""
         <h3>Key Insights</h3>
         <ul>
-            <li><strong>Best Risk-Adjusted Performance</strong>: {best_sharpe[0]} 
+            <li><strong>Best Risk-Adjusted Performance</strong>: {best_sharpe[0]}
                 (Sharpe Ratio: {best_sharpe[1].get('sharpe_ratio', 0):.3f})</li>
-            <li><strong>Lowest Risk Approach</strong>: {lowest_vol[0]} 
+            <li><strong>Lowest Risk Approach</strong>: {lowest_vol[0]}
                 (Volatility: {lowest_vol[1].get('volatility', 0):.1%})</li>
         </ul>
-        
+
         <h3>Recommendations</h3>
         <ul>
             <li>Consider diversification across multiple approaches to reduce concentration risk</li>
@@ -948,5 +948,5 @@ class InteractiveDashboard:
             <li>Implement transaction cost controls to preserve net performance</li>
         </ul>
         """
-        
+
         return conclusions_html

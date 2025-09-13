@@ -54,7 +54,7 @@ class DataNormalizer:
         if method == "log":
             returns = np.log(prices_df / prices_df.shift(1))
         else:  # simple returns
-            returns = prices_df.pct_change()
+            returns = prices_df.pct_change(fill_method=None)
 
         if handle_splits:
             returns = self._handle_corporate_actions(returns, prices_df, outlier_threshold)

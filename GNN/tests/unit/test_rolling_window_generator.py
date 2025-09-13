@@ -7,7 +7,6 @@ temporal validation and integrity monitoring.
 
 from datetime import datetime
 from pathlib import Path
-from typing import List
 from unittest.mock import Mock, patch
 
 import numpy as np

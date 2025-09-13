@@ -16,19 +16,11 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-try:
-    import matplotlib.pyplot as plt
-    import seaborn as sns
-
-    HAS_MATPLOTLIB = True
-except ImportError:
-    HAS_MATPLOTLIB = False
-    warnings.warn("Matplotlib/Seaborn not available. Static plotting disabled.", stacklevel=2)
+# Matplotlib/Seaborn support can be added when needed
+HAS_MATPLOTLIB = False
 
 try:
-    import plotly.express as px
     import plotly.graph_objects as go
-    from plotly.subplots import make_subplots
 
     HAS_PLOTLY = True
 except ImportError:

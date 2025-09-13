@@ -105,11 +105,24 @@ target-version = "py39"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "N", "UP", "B", "A", "C4", "T20"]
-ignore = ["E203"]
-exclude = [".git", "__pycache__", ".venv", "build", "dist"]
+ignore = [
+    "E203",    # Whitespace before ':' (conflicts with Black)
+    "E501",    # Line too long (handled by Black at 100 chars)
+    "N806",    # Variable in function should be lowercase (common ML: X_train, y_train)
+    "N803",    # Argument name should be lowercase (common ML: X, y, etc.)
+    "B023",    # Function definition does not bind loop variable (common in research code)
+    "N812",    # Lowercase imported as non-lowercase (common: torch.nn.functional as F)
+]
+exclude = [".git", "__pycache__", ".venv", "build", "dist", "legacy_scripts", "*.ipynb"]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/*" = ["F401"]
+"tests/*" = ["F401", "N806", "N803"]  # Allow ML naming conventions and unused imports in tests
+"legacy_scripts/*" = ["E", "F", "W", "I", "N", "UP", "B", "A", "C4", "T20"]  # Ignore all in legacy
+"scripts/*" = ["N806", "N803", "F401", "E702"]  # Allow ML naming and quick scripts patterns
+"**/test_*.py" = ["N806", "N803", "F401"]  # ML naming conventions in test files
+"debug_*.py" = ["E", "F", "W", "I", "N", "UP", "B", "A", "C4", "T20"]  # Ignore debug files
+"**/*experimental*" = ["F401", "E702"]  # Allow experimental/research patterns
+"**/*notebook*" = ["F401", "E702"]  # Allow notebook-style patterns
 
 [tool.mypy]
 python_version = "3.9"

@@ -142,6 +142,20 @@ class ConstraintEngine:
         # Step 3: Final normalization - always normalize to 1.0
         constrained_weights = self._normalize_weights(constrained_weights)
 
+        # Step 3.5: Re-apply max weight constraint after normalization if needed
+        constrained_weights = self._apply_max_weight_constraint(constrained_weights, violations)
+
+        # Step 3.6: Final normalization only if weights don't violate max weight constraint
+        # Check if normalization would violate max weight constraint
+        weight_sum = constrained_weights.sum()
+        if abs(weight_sum - 1.0) > 1e-10:
+            # Only normalize if it won't violate max weight constraint
+            potential_weights = constrained_weights / weight_sum if weight_sum > 0 else constrained_weights
+            max_weight_after_norm = potential_weights.max()
+            if max_weight_after_norm <= self.constraints.max_position_weight + 1e-10:
+                constrained_weights = potential_weights
+            # Otherwise, keep weights as-is to maintain constraint compliance
+
         # Step 4: Log violations if date provided
         if date is not None and violations:
             self._log_violations(date, violations)
@@ -384,8 +398,8 @@ class ConstraintEngine:
             return {"total_violations": 0, "by_type": {}, "by_severity": {}}
 
         # Count violations by type
-        by_type = {}
-        by_severity = {}
+        by_type: dict[str, int] = {}
+        by_severity: dict[str, int] = {}
 
         for record in self.violation_log:
             violation_type = record["violation_type"]

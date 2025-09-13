@@ -347,14 +347,14 @@ class TestEnsembleGraphBuilder:
         # Create sample correlation matrix
         n_assets = 5
         np.random.seed(42)
-        C = np.random.rand(n_assets, n_assets)
-        C = (C + C.T) / 2  # Make symmetric
-        np.fill_diagonal(C, 1.0)
+        c = np.random.rand(n_assets, n_assets)
+        c = (c + c.T) / 2  # Make symmetric
+        np.fill_diagonal(c, 1.0)
 
         config = GraphBuildConfig(knn_k=2)
         methods = ["mst", "knn"]
 
-        edges, attrs = _build_ensemble_graph(C, methods, None, config)
+        edges, attrs = _build_ensemble_graph(c, methods, None, config)
 
         assert len(edges) > 0
         assert len(attrs) == len(edges)
@@ -362,7 +362,7 @@ class TestEnsembleGraphBuilder:
 
     def test_ensemble_graph_weighted(self):
         """Test ensemble graph with custom weights."""
-        C = np.array(
+        c = np.array(
             [[1.0, 0.8, 0.3, 0.1], [0.8, 1.0, 0.4, 0.2], [0.3, 0.4, 1.0, 0.6], [0.1, 0.2, 0.6, 1.0]]
         )
 
@@ -370,21 +370,21 @@ class TestEnsembleGraphBuilder:
         methods = ["mst", "knn"]
         weights = [0.3, 0.7]  # Favor k-NN
 
-        edges, attrs = _build_ensemble_graph(C, methods, weights, config)
+        edges, attrs = _build_ensemble_graph(c, methods, weights, config)
 
         assert len(edges) > 0
         assert len(attrs) == len(edges)
 
     def test_ensemble_invalid_weights(self):
         """Test ensemble graph with mismatched weights."""
-        C = np.eye(3)
+        c = np.eye(3)
         config = GraphBuildConfig()
 
         methods = ["mst", "knn"]
         invalid_weights = [0.5]  # Wrong length
 
         with pytest.raises(ValueError, match="Number of weights must match"):
-            _build_ensemble_graph(C, methods, invalid_weights, config)
+            _build_ensemble_graph(c, methods, invalid_weights, config)
 
 
 if __name__ == "__main__":

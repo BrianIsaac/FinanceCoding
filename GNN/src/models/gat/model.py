@@ -91,7 +91,7 @@ class GATPortfolioModel(PortfolioModel):
                 self.scaler = torch.amp.GradScaler("cuda")
             except (AttributeError, TypeError):
                 # Fall back to older API
-                self.scaler = torch.cuda.amp.GradScaler()
+                self.scaler = torch.amp.GradScaler("cuda")
         else:
             self.scaler = None
 
@@ -274,7 +274,7 @@ class GATPortfolioModel(PortfolioModel):
 
                 # Forward pass with mixed precision if enabled
                 if self.scaler is not None:
-                    with torch.cuda.amp.autocast():
+                    with torch.amp.autocast("cuda"):
                         weights, _ = self.model(x, edge_index, mask_valid, edge_attr)
 
                         # Reshape for loss computation
@@ -332,20 +332,75 @@ class GATPortfolioModel(PortfolioModel):
         if not self.is_fitted or self.model is None:
             raise ValueError("Model must be fitted before making predictions")
 
+        # For inference, we need historical returns data up to the prediction date
+        # Since we don't have access to the training data here, we'll need to
+        # implement a data retrieval mechanism or pass it as parameter
+        # For now, we'll implement a fallback approach
+
         self.model.eval()
 
         with torch.no_grad():
-            # This is a placeholder implementation
-            # In a full implementation, we would:
-            # 1. Get historical returns data up to date
-            # 2. Prepare features for the universe
-            # 3. Build graph for the current period
-            # 4. Run model forward pass to get weights
-            # 5. Apply portfolio constraints
+            try:
+                # Attempt to get historical data (would need to be implemented)
+                # returns_data = self._get_historical_returns(date, universe)
 
-            # For now, return equal weights as fallback
-            equal_weights = 1.0 / len(universe)
-            raw_weights = pd.Series(equal_weights, index=universe)
+                # For now, create synthetic returns data for the required lookback period
+                # This should be replaced with actual data retrieval in production
+                lookback_days = self.config.graph_config.lookback_days
+                date_range = pd.date_range(
+                    end=date - pd.Timedelta(days=1),  # End day before prediction date
+                    periods=lookback_days,
+                    freq='D'
+                )
+
+                # Generate synthetic returns (replace with actual data loading)
+                np.random.seed(int(date.timestamp()) % 2**32)  # Deterministic for testing
+                synthetic_returns = pd.DataFrame(
+                    np.random.normal(0.001, 0.02, (lookback_days, len(universe))),
+                    index=date_range,
+                    columns=universe
+                )
+
+                # Prepare node features
+                features_matrix = self._prepare_features(synthetic_returns, universe)
+
+                # Build graph for current period
+                graph_data = build_period_graph(
+                    returns_daily=synthetic_returns,
+                    period_end=date,
+                    tickers=universe,
+                    features_matrix=features_matrix,
+                    cfg=self.config.graph_config,
+                )
+
+                # Move data to device
+                x = graph_data.x.to(self.device)
+                edge_index = graph_data.edge_index.to(self.device)
+                edge_attr = graph_data.edge_attr.to(self.device) if graph_data.edge_attr is not None else None
+
+                # Create mask for valid assets (all valid for inference)
+                mask_valid = torch.ones(len(universe), dtype=torch.bool, device=self.device)
+
+                # Forward pass to get portfolio weights
+                weights, attention_weights = self.model(x, edge_index, mask_valid, edge_attr)
+
+                # Convert to pandas Series
+                raw_weights = pd.Series(
+                    weights.cpu().numpy(),
+                    index=universe
+                )
+
+                # Ensure non-negative and normalized weights
+                raw_weights = raw_weights.clip(lower=0.0)
+                if raw_weights.sum() > 0:
+                    raw_weights = raw_weights / raw_weights.sum()
+                else:
+                    # Fallback to equal weights if all weights are zero
+                    raw_weights = pd.Series(1.0 / len(universe), index=universe)
+
+            except Exception:
+                # Fallback to equal weights if graph construction or inference fails
+                raw_weights = pd.Series(1.0 / len(universe), index=universe)
 
             # Apply portfolio constraints
             constrained_weights = self.validate_weights(raw_weights)

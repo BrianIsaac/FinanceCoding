@@ -7,7 +7,10 @@ rolling windows, temporal validation, and backtest execution.
 
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Dict, List
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 from unittest.mock import Mock, patch
 
 import numpy as np
@@ -28,6 +31,10 @@ class MockPortfolioModel(PortfolioModel):
     """Mock portfolio model for testing."""
 
     def __init__(self, name: str = "mock_model"):
+        # Initialize parent class with basic constraints
+        from src.models.base.constraints import PortfolioConstraints
+        super().__init__(PortfolioConstraints())
+
         self.name = name
         self.fitted = False
         self.fit_calls = []
@@ -58,6 +65,17 @@ class MockPortfolioModel(PortfolioModel):
             1.0 / len(universe), index=universe, name=f"weights_{date.strftime('%Y%m%d')}"
         )
         return weights
+
+    def get_model_info(self) -> dict[str, Any]:
+        """Return model metadata for testing."""
+        return {
+            "model_type": "mock",
+            "name": self.name,
+            "fitted": self.fitted,
+            "hyperparameters": {},
+            "constraints": {},
+            "version": "1.0.0",
+        }
 
 
 class TestRollingBacktestConfig:
@@ -116,7 +134,7 @@ class TestRollingBacktestEngine:
         """Default rolling backtest configuration."""
         return RollingBacktestConfig(
             start_date=pd.Timestamp("2020-01-01"),
-            end_date=pd.Timestamp("2024-12-31"),
+            end_date=pd.Timestamp("2027-12-31"),
             training_months=36,
             validation_months=12,
             test_months=12,
@@ -131,7 +149,7 @@ class TestRollingBacktestEngine:
     @pytest.fixture
     def sample_data(self) -> dict[str, pd.DataFrame]:
         """Sample data for testing."""
-        dates = pd.date_range(start="2020-01-01", end="2024-12-31", freq="D")
+        dates = pd.date_range(start="2020-01-01", end="2027-12-31", freq="D")
         assets = ["AAPL", "GOOGL", "MSFT", "TSLA", "NVDA"]
 
         # Generate synthetic returns

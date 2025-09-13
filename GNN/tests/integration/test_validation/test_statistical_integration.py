@@ -1,5 +1,7 @@
 """Integration tests for statistical validation framework."""
 
+import gc
+import sys
 from datetime import datetime, timedelta
 
 import numpy as np
@@ -164,7 +166,7 @@ class TestStatisticalValidationIntegration:
             "pairwise_comparisons": corrected_results,
             "sample_info": {
                 "n": len(sample_returns),
-                "period": f"{comprehensive_test_data['dates'][0].strftime('%Y-%m-%d')} to {comprehensive_test_data['dates'][-1].strftime('%Y-%m-%d')}",
+                "period": "date_range_placeholder",
                 "frequency": "Daily",
             },
         }
@@ -620,12 +622,11 @@ class TestPerformanceAndEfficiency:
 
     def test_memory_usage_reasonable(self, comprehensive_test_data):
         """Test that memory usage remains reasonable."""
-        import sys
 
         returns_dict = comprehensive_test_data["returns"]
 
         # Monitor memory usage for large operations
-        initial_objects = len(gc.get_objects()) if "gc" in sys.modules else 0
+        initial_objects = len(gc.get_objects())
 
         # Perform memory-intensive operations
         significance_tester = PerformanceSignificanceTest()
@@ -639,12 +640,9 @@ class TestPerformanceAndEfficiency:
         )
 
         # Memory should not grow excessively
-        if "gc" in sys.modules:
-            import gc
+        gc.collect()  # Force garbage collection
+        final_objects = len(gc.get_objects())
+        object_growth = final_objects - initial_objects
 
-            gc.collect()  # Force garbage collection
-            final_objects = len(gc.get_objects())
-            object_growth = final_objects - initial_objects
-
-            # Should not create excessive number of objects
-            assert object_growth < 10000, f"Excessive object creation: {object_growth}"
+        # Should not create excessive number of objects
+        assert object_growth < 10000, f"Excessive object creation: {object_growth}"
