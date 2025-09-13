@@ -420,7 +420,7 @@ class TestTurnoverTracker:
         current_weights, previous_weights = sample_rebalancing_data
 
         # Generate several rebalancing events
-        dates = pd.date_range("2023-01-01", periods=5, freq="M")
+        dates = pd.date_range("2023-01-01", periods=5, freq="ME")
 
         for date in dates:
             # Slightly modify weights for each period

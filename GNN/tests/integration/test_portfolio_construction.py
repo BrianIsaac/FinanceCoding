@@ -381,7 +381,7 @@ class TestPortfolioConstructionIntegration:
         """Test comprehensive export functionality."""
 
         # Create sample data
-        dates = pd.date_range("2022-01-01", periods=12, freq="M")
+        dates = pd.date_range("2022-01-01", periods=12, freq="ME")
         assets = [f"ASSET_{i}" for i in range(20)]
 
         weights_history = []

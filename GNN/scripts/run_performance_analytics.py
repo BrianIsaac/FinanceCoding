@@ -306,7 +306,7 @@ class PerformanceAnalyticsExecutor:
                 cvar_95 = returns[returns <= var_95].mean() if len(returns) > 0 and not np.isnan(var_95) else np.nan
 
                 # 1.3: Rolling performance metrics (monthly granularity)
-                monthly_returns = returns.resample('M').apply(lambda x: (1 + x).prod() - 1)
+                monthly_returns = returns.resample('ME').apply(lambda x: (1 + x).prod() - 1)
                 rolling_sharpe = []
 
                 for i in range(11, len(monthly_returns)):  # 12-month rolling windows
@@ -385,7 +385,8 @@ class PerformanceAnalyticsExecutor:
             raise RuntimeError("Execution constraints violated in Task 2")
 
         # 2.1: Jobson-Korkie statistical testing with Memmel correction
-        baseline_keys = ["EqualWeight", "MarketCapWeighted", "MeanReversion"]
+        potential_baselines = ["EqualWeight", "MarketCapWeighted", "MeanReversion"]
+        baseline_keys = [k for k in potential_baselines if k in returns_dict.keys()]
         [k for k in returns_dict.keys() if k not in baseline_keys]
 
         # Pairwise comparisons: ML approaches vs baselines
@@ -497,7 +498,7 @@ class PerformanceAnalyticsExecutor:
             logger.info(f"Analyzing rolling consistency for {model_name}")
 
             # Convert to monthly frequency for rolling analysis
-            monthly_returns = returns.resample('M').apply(lambda x: (1 + x).prod() - 1)
+            monthly_returns = returns.resample('ME').apply(lambda x: (1 + x).prod() - 1)
 
             rolling_metrics = []
             rolling_dates = []
@@ -727,7 +728,7 @@ class PerformanceAnalyticsExecutor:
             cost_analysis = {}
             for cost_bps in cost_scenarios:
                 # Estimate monthly rebalancing impact
-                monthly_returns = returns.resample('M').apply(lambda x: (1 + x).prod() - 1)
+                monthly_returns = returns.resample('ME').apply(lambda x: (1 + x).prod() - 1)
 
                 # Assume turnover of 10% per month (simplified)
                 monthly_turnover = 0.10

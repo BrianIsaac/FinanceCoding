@@ -37,10 +37,10 @@ from src.models.base.baselines import (
     MarketCapWeightedModel,
     MeanReversionModel,
 )
-from src.models.gat.model import GATPortfolioModel
-from src.models.hrp.model import HRPModel, HRPConfig
-from src.models.hrp.clustering import ClusteringConfig
 from src.models.base.portfolio_model import PortfolioConstraints
+from src.models.gat.model import GATPortfolioModel
+from src.models.hrp.clustering import ClusteringConfig
+from src.models.hrp.model import HRPConfig, HRPModel
 from src.models.lstm.model import LSTMPortfolioModel
 from src.utils.gpu import GPUConfig
 
@@ -138,22 +138,22 @@ def initialize_models(config: ProjectConfig, gpu_config: GPUConfig) -> dict[str,
         max_monthly_turnover=0.30,
         min_weight_threshold=0.01,
     )
-    
+
     for _i, hrp_params in enumerate(hrp_configs):
         model_name = f"HRP_{hrp_params['linkage']}_{hrp_params['distance']}_{hrp_params['lookback_days']}"
-        
+
         # Create clustering config with proper parameters
         clustering_config = ClusteringConfig(
             linkage_method=hrp_params["linkage"],
             min_observations=hrp_params["lookback_days"] // 3,  # Reasonable fraction of lookback
         )
-        
+
         # Create HRP config
         hrp_config = HRPConfig(
             lookback_days=hrp_params["lookback_days"],
             clustering_config=clustering_config,
         )
-        
+
         models[model_name] = HRPModel(
             constraints=default_constraints,
             hrp_config=hrp_config,
@@ -162,8 +162,8 @@ def initialize_models(config: ProjectConfig, gpu_config: GPUConfig) -> dict[str,
     # 2. LSTM Model (configuration interface needs full refactoring - skipped for now)
     # TODO: Fix LSTM model configuration interface
     # models["LSTM"] = LSTMPortfolioModel(...)
-    
-    # 3. GAT Models (configuration interface needs full refactoring - skipped for now)  
+
+    # 3. GAT Models (configuration interface needs full refactoring - skipped for now)
     # TODO: Fix GAT model configuration interface
     # gat_graph_methods = ["MST", "TMFG", "kNN", "threshold", "complete"]
     # for method in gat_graph_methods:

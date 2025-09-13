@@ -274,7 +274,7 @@ class DataNormalizer:
         universe_calendar = universe_builder.get_universe_for_period(start_date, end_date)
 
         # Create monthly snapshots for rebalancing alignment
-        pd.date_range(start_date, end_date, freq="M")
+        pd.date_range(start_date, end_date, freq="ME")
 
         aligned_data = {}
 

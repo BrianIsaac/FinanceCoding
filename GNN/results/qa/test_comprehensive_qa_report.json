@@ -1,0 +1,133 @@
+{
+  "overall_qa_status": "FAIL",
+  "quality_score": 0.704821729154789,
+  "validation_summary": {
+    "Overall Status": "FAIL",
+    "Quality Score": "70.5%",
+    "Failed Metrics": 3,
+    "Failed Integrations": 2,
+    "Recommendation": "REJECTED: Address critical issues before proceeding"
+  },
+  "quality_metrics": [
+    {
+      "name": "Statistical Accuracy",
+      "value": 0.0,
+      "threshold": 0.001,
+      "status": "fail",
+      "description": "Validation of statistical calculations against reference implementations",
+      "validation_method": "Reference implementation comparison with <0.1% error tolerance"
+    },
+    {
+      "name": "Data Consistency",
+      "value": 1.0,
+      "threshold": 0.95,
+      "status": "pass",
+      "description": "Consistency of data handling across all components",
+      "validation_method": "Cross-component data validation and temporal consistency checks"
+    },
+    {
+      "name": "Performance Benchmark",
+      "value": 0.895,
+      "threshold": 0.9,
+      "status": "fail",
+      "description": "Compliance with performance and resource usage requirements",
+      "validation_method": "Memory usage, processing time, and scalability validation"
+    },
+    {
+      "name": "Component Integration",
+      "value": 0.9242869166191561,
+      "threshold": 0.001,
+      "status": "fail",
+      "description": "Quality of integration between research components",
+      "validation_method": "Cross-component validation with error tolerance verification"
+    }
+  ],
+  "integration_validations": [
+    {
+      "component_name": "Project Goals Validator",
+      "validation_status": "fail",
+      "error_tolerance": 0.001,
+      "actual_error": 0.8,
+      "reference_value": 0.8,
+      "computed_value": 0.0,
+      "validation_details": {
+        "goals_validated": 0
+      }
+    },
+    {
+      "component_name": "Robustness Testing Framework",
+      "validation_status": "fail",
+      "error_tolerance": 0.05,
+      "actual_error": 0.82,
+      "reference_value": 0.82,
+      "computed_value": 0.0,
+      "validation_details": {
+        "tests_executed": 0
+      }
+    },
+    {
+      "component_name": "Comparative Analysis Engine",
+      "validation_status": "pass",
+      "error_tolerance": 0.01,
+      "actual_error": 0.00042616676168794054,
+      "reference_value": 0.849,
+      "computed_value": 0.848573833238312,
+      "validation_details": {
+        "primary_recommendation": "HRP_average_correlation_756",
+        "strategies_compared": 0
+      }
+    },
+    {
+      "component_name": "Investment Decision Support",
+      "validation_status": "pass",
+      "error_tolerance": 0.05,
+      "actual_error": 0.0,
+      "reference_value": 1.0,
+      "computed_value": 1.0,
+      "validation_details": {
+        "has_primary_recommendation": true,
+        "has_risk_assessment": true,
+        "has_implementation_guidance": true
+      }
+    }
+  ],
+  "statistical_accuracy_results": {
+    "overall_statistical_accuracy": 0.0
+  },
+  "data_consistency_results": {
+    "strategy_names_consistent": true,
+    "temporal_data_consistent": true,
+    "missing_data_handling_consistent": true,
+    "overall_consistency": 1.0
+  },
+  "performance_benchmarks": {
+    "memory_efficiency": 0.92,
+    "processing_time_compliance": 0.88,
+    "computational_efficiency": 0.91,
+    "scalability_compliance": 0.87,
+    "overall_performance_score": 0.895
+  },
+  "expert_review_checklist": {
+    "statistical_methodology_valid": true,
+    "research_design_sound": true,
+    "results_interpretation_appropriate": true,
+    "publication_standards_met": true,
+    "risk_assessment_comprehensive": true,
+    "implementation_feasible": true
+  },
+  "final_recommendations": [
+    "Critical issues must be resolved before deployment",
+    "Conduct additional validation and testing",
+    "Reassess methodology and implementation",
+    "Address Statistical Accuracy issues: Validation of statistical calculations against reference implementations",
+    "Address Performance Benchmark issues: Compliance with performance and resource usage requirements",
+    "Address Component Integration issues: Quality of integration between research components",
+    "Fix Project Goals Validator integration issues",
+    "Fix Robustness Testing Framework integration issues",
+    "Maintain comprehensive documentation for audit trail",
+    "Implement continuous monitoring in production environment",
+    "Schedule regular model performance reviews",
+    "Establish expert review process for methodology updates"
+  ],
+  "generated_date": "2025-09-14T00:36:23.932323"
+}

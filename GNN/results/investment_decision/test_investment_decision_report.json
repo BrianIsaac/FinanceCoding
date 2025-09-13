@@ -1,0 +1,135 @@
+{
+  "primary_recommendation": {
+    "strategy_name": "HRP_average_correlation_756",
+    "allocation_percentage": 60.0,
+    "confidence_level": 0.6905092755279102,
+    "expected_return": 0.21871395422052867,
+    "expected_volatility": 0.15,
+    "max_drawdown_estimate": -0.2334544677918523,
+    "implementation_priority": "Monitor",
+    "supporting_evidence": [
+      "Strong risk-adjusted returns: Sharpe 1.458",
+      "Multiple significant outperformance: 16 metrics",
+      "Controlled downside risk: -23.3% max drawdown",
+      "Statistical dominance: 94.1% win rate",
+      "Low transaction costs: 1.2x annual turnover"
+    ],
+    "risk_considerations": [],
+    "monitoring_metrics": [
+      "Monthly Sharpe ratio",
+      "Rolling 6-month returns",
+      "Maximum drawdown tracking",
+      "Portfolio turnover monitoring",
+      "Correlation matrix stability",
+      "Clustering consistency"
+    ]
+  },
+  "alternative_recommendations": [
+    {
+      "strategy_name": "GAT_TMFG",
+      "allocation_percentage": 17.27853773513309,
+      "confidence_level": 0.47850854642407464,
+      "expected_return": 0.1574552289880755,
+      "expected_volatility": 0.15,
+      "max_drawdown_estimate": -0.3470655930277626,
+      "implementation_priority": "Monitor",
+      "supporting_evidence": [
+        "Strong risk-adjusted returns: Sharpe 1.050",
+        "Multiple significant outperformance: 13 metrics",
+        "Statistical dominance: 76.5% win rate",
+        "Low transaction costs: 1.2x annual turnover"
+      ],
+      "risk_considerations": [
+        "Model complexity and overfitting risk"
+      ],
+      "monitoring_metrics": [
+        "Monthly Sharpe ratio",
+        "Rolling 6-month returns",
+        "Maximum drawdown tracking",
+        "Portfolio turnover monitoring",
+        "Model prediction accuracy",
+        "Feature importance drift",
+        "Training data staleness"
+      ]
+    },
+    {
+      "strategy_name": "MarketCapWeighted",
+      "allocation_percentage": 16.930566155875816,
+      "confidence_level": 0.4881817841802151,
+      "expected_return": 0.1605705684690794,
+      "expected_volatility": 0.15,
+      "max_drawdown_estimate": -0.2502708425804847,
+      "implementation_priority": "Monitor",
+      "supporting_evidence": [
+        "Strong risk-adjusted returns: Sharpe 1.070",
+        "Multiple significant outperformance: 11 metrics",
+        "Controlled downside risk: -25.0% max drawdown",
+        "Low transaction costs: 1.2x annual turnover"
+      ],
+      "risk_considerations": [],
+      "monitoring_metrics": [
+        "Monthly Sharpe ratio",
+        "Rolling 6-month returns",
+        "Maximum drawdown tracking",
+        "Portfolio turnover monitoring"
+      ]
+    }
+  ],
+  "risk_assessment": {
+    "market_risk_score": 0.6923257528334164,
+    "operational_risk_score": 0.35,
+    "model_risk_score": 0.13822830188106472,
+    "liquidity_risk_score": 0.1,
+    "overall_risk_rating": "Medium",
+    "risk_mitigation_measures": [
+      "Implement dynamic position sizing based on volatility",
+      "Consider portfolio hedging during high volatility periods",
+      "Diversify across multiple strategy types",
+      "Implement gradual deployment with performance monitoring",
+      "Maintain cash reserves for rebalancing flexibility"
+    ],
+    "stress_test_results": {}
+  },
+  "implementation_guidance": {
+    "deployment_timeline": "6-8 weeks",
+    "resource_requirements": [
+      "Quantitative analyst for strategy implementation",
+      "Risk management oversight",
+      "Technology infrastructure for backtesting",
+      "Data feed subscriptions",
+      "Machine learning engineering support",
+      "GPU computing resources for model training",
+      "MLOps infrastructure for model deployment"
+    ],
+    "technical_prerequisites": [
+      "Historical market data (minimum 5 years)",
+      "Portfolio management system integration",
+      "Risk monitoring dashboard",
+      "Performance reporting capabilities"
+    ],
+    "regulatory_considerations": [
+      "Investment committee approval",
+      "Risk committee review",
+      "Compliance documentation",
+      "Audit trail requirements"
+    ],
+    "monitoring_frequency": "Daily",
+    "rebalancing_schedule": "Monthly",
+    "performance_review_cycle": "Quarterly"
+  },
+  "research_summary": {
+    "project_goals_achievement": 0.0,
+    "optimal_strategy_identified": "HRP_average_correlation_756",
+    "strategy_confidence": 0.848573833238312,
+    "robustness_score": 0.0,
+    "statistical_significance": 0.0,
+    "number_of_strategies_tested": 7
+  },
+  "confidence_metrics": {
+    "overall_confidence": 0.5523998687107333,
+    "evidence_strength": 0.8666666666666666,
+    "risk_adjusted_confidence": 0.5357332020440666,
+    "recommendation_consistency": 0.5901313351817514
+  },
+  "generated_date": "2025-09-14T00:36:34.844486"
+}

@@ -270,7 +270,7 @@ class RollingPerformanceAnalyzer:
             stability_metrics["annual_consistency"] = (annual_returns > 0).mean()
 
             # Monthly consistency
-            monthly_returns = returns.resample("M").apply(lambda x: (1 + x).prod() - 1)
+            monthly_returns = returns.resample("ME").apply(lambda x: (1 + x).prod() - 1)
             stability_metrics["monthly_win_rate"] = (monthly_returns > 0).mean()
 
         # Relative stability if benchmark provided

@@ -140,22 +140,24 @@ class ConstraintEngine:
         )
         constrained_weights = self._apply_max_weight_constraint(constrained_weights, violations)
 
-        # Step 3: Final normalization - always normalize to 1.0
-        constrained_weights = self._normalize_weights(constrained_weights)
+        # Step 3: Final iterative constraint application and normalization
+        # Apply max weight constraint and normalize iteratively until convergence
+        max_iters = 5
+        for _iteration in range(max_iters):
+            # Check if max weight constraint is violated
+            if (constrained_weights > self.constraints.max_position_weight).any():
+                constrained_weights = self._apply_max_weight_constraint(constrained_weights, violations)
 
-        # Step 3.5: Re-apply max weight constraint after normalization if needed
-        constrained_weights = self._apply_max_weight_constraint(constrained_weights, violations)
+            # Normalize weights
+            constrained_weights = self._normalize_weights(constrained_weights)
 
-        # Step 3.6: Final normalization only if weights don't violate max weight constraint
-        # Check if normalization would violate max weight constraint
-        weight_sum = constrained_weights.sum()
-        if abs(weight_sum - 1.0) > 1e-10:
-            # Only normalize if it won't violate max weight constraint
-            potential_weights = constrained_weights / weight_sum if weight_sum > 0 else constrained_weights
-            max_weight_after_norm = potential_weights.max()
-            if max_weight_after_norm <= self.constraints.max_position_weight + 1e-10:
-                constrained_weights = potential_weights
-            # Otherwise, keep weights as-is to maintain constraint compliance
+            # Check convergence: if weights sum to 1.0 and no max weight violations, we're done
+            weight_sum = constrained_weights.sum()
+            max_weight_violated = (constrained_weights > self.constraints.max_position_weight + 1e-10).any()
+            weights_normalized = abs(weight_sum - 1.0) < 1e-10
+
+            if weights_normalized and not max_weight_violated:
+                break
 
         # Step 4: Log violations if date provided
         if date is not None and violations:
@@ -372,14 +374,62 @@ class ConstraintEngine:
         return weights
 
     def _normalize_weights(self, weights: pd.Series) -> pd.Series:
-        """Normalize weights to sum to 1.0 with fallback handling."""
+        """
+        Normalize weights to sum to 1.0 while respecting max position weight constraint.
+
+        If equal normalization would violate max position constraint, redistribute
+        excess to maintain constraint compliance.
+        """
         weight_sum = weights.sum()
         if weight_sum > 0:
-            return weights / weight_sum
+            normalized = weights / weight_sum
+
+            # Check if normalization violates max position weight
+            max_weight = self.constraints.max_position_weight
+            if (normalized > max_weight).any():
+                # Cap weights at max and redistribute excess
+                capped_weights = normalized.copy()
+
+                # Iteratively cap and redistribute
+                for _ in range(10):  # Prevent infinite loops
+                    violating_mask = capped_weights > max_weight
+                    if not violating_mask.any():
+                        break
+
+                    # Calculate excess from violating positions
+                    excess = (capped_weights[violating_mask] - max_weight).sum()
+                    capped_weights[violating_mask] = max_weight
+
+                    # Redistribute to non-violating positions with capacity
+                    non_violating_mask = ~violating_mask
+                    if non_violating_mask.any():
+                        available_capacity = (max_weight - capped_weights[non_violating_mask]).clip(lower=0)
+                        total_capacity = available_capacity.sum()
+
+                        if total_capacity > 0:
+                            redistribution = excess * (available_capacity / total_capacity)
+                            capped_weights[non_violating_mask] += redistribution
+                        else:
+                            # No capacity - accept sub-unity sum
+                            break
+                    else:
+                        # All positions at max - accept sub-unity sum
+                        break
+
+                return capped_weights
+            else:
+                return normalized
         else:
-            # Equal weights fallback only if no weights exist
+            # Equal weights fallback - respect max position constraint
             if len(weights) > 0:
-                return pd.Series(1.0 / len(weights), index=weights.index)
+                equal_weight = 1.0 / len(weights)
+                max_weight = self.constraints.max_position_weight
+
+                if equal_weight <= max_weight:
+                    return pd.Series(equal_weight, index=weights.index)
+                else:
+                    # Equal weights would violate constraint - use max weight
+                    return pd.Series(max_weight, index=weights.index)
             else:
                 return weights
 

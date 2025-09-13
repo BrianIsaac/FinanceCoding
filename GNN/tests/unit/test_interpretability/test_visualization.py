@@ -29,7 +29,7 @@ class TestInterpretabilityVisualizer:
     @pytest.fixture
     def sample_evolution_data(self):
         """Create sample attention evolution data."""
-        dates = pd.date_range("2023-01-01", periods=10, freq="M")
+        dates = pd.date_range("2023-01-01", periods=10, freq="ME")
         return pd.DataFrame({
             "date": dates,
             "mean_attention": np.random.rand(10) * 0.05,

@@ -342,6 +342,113 @@ class TestUnifiedConstraintEngine:
         for section in expected_sections:
             assert section in report
 
+    def test_cost_aware_adjustment(self, unified_engine):
+        """Test cost-aware constraint adjustment for high transaction costs."""
+        # Create weights that would result in high transaction costs but respect max position weight
+        weights = pd.Series([0.15, 0.15, 0.15, 0.15, 0.15, 0.15, 0.1], index=[f"ASSET_{i}" for i in range(7)])
+        previous_weights = pd.Series([0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.5], index=[f"ASSET_{i}" for i in range(7)])
+
+        constrained_weights, violations, cost_analysis = unified_engine.enforce_all_constraints(
+            weights, previous_weights, portfolio_value=100000
+        )
+
+        # Should apply cost-aware adjustment if transaction costs are high
+        assert isinstance(constrained_weights, pd.Series)
+        # The sum might be less than 1.0 if constraints require holding cash
+        assert constrained_weights.sum() <= 1.0 + 1e-10
+
+    def test_feasibility_validation_different_status_levels(self, unified_engine):
+        """Test feasibility validation with different violation severity levels."""
+        # Fully compliant portfolio
+        compliant_weights = pd.Series([0.15, 0.15, 0.15, 0.15, 0.1, 0.1, 0.1, 0.05, 0.05])
+        compliant_weights.index = [f"ASSET_{i}" for i in range(len(compliant_weights))]
+
+        feasibility_compliant = unified_engine.validate_portfolio_feasibility(compliant_weights)
+
+        # Portfolio with minor violations
+        minor_violation_weights = pd.Series([0.25, 0.25, 0.25, 0.25])
+        minor_violation_weights.index = [f"ASSET_{i}" for i in range(4)]
+
+        _ = unified_engine.validate_portfolio_feasibility(minor_violation_weights)
+
+        # Portfolio with critical violations (multiple severe violations)
+        critical_weights = pd.Series([-0.2, 0.6, 0.6])  # Negative weights + exceeds max position weight severely
+        critical_weights.index = ["A", "B", "C"]
+
+        feasibility_critical = unified_engine.validate_portfolio_feasibility(critical_weights)
+
+        # Check that different severity levels are properly classified
+        assert feasibility_critical["feasibility_status"] != feasibility_compliant["feasibility_status"]
+
+    def test_enforce_all_constraints_without_transaction_calculator(self, basic_constraints):
+        """Test constraint enforcement without transaction cost calculator."""
+        engine = UnifiedConstraintEngine(basic_constraints, None)
+
+        weights = pd.Series([0.3, 0.25, 0.2, 0.15, 0.1], index=[f"ASSET_{i}" for i in range(5)])
+
+        constrained_weights, violations, cost_analysis = engine.enforce_all_constraints(weights)
+
+        # Should work without transaction cost calculator
+        assert isinstance(constrained_weights, pd.Series)
+        assert cost_analysis == {}
+
+    def test_cost_aware_adjustment_edge_cases(self, unified_engine):
+        """Test cost-aware adjustment edge cases."""
+        # Zero turnover case
+        weights = pd.Series([0.2, 0.2, 0.2, 0.2, 0.2], index=[f"ASSET_{i}" for i in range(5)])
+        previous_weights = weights.copy()
+
+        constrained_weights, _, cost_analysis = unified_engine.enforce_all_constraints(
+            weights, previous_weights, portfolio_value=100000
+        )
+
+        # Should handle zero turnover gracefully
+        assert constrained_weights.equals(weights)
+
+    def test_feasibility_recommendations(self, unified_engine):
+        """Test generation of feasibility recommendations."""
+        # Create weights that violate multiple constraints
+        weights = pd.Series([-0.1, 0.3, 0.3, 0.3, 0.2], index=[f"ASSET_{i}" for i in range(5)])
+        previous_weights = pd.Series([0.2, 0.2, 0.2, 0.2, 0.2], index=[f"ASSET_{i}" for i in range(5)])
+
+        feasibility = unified_engine.validate_portfolio_feasibility(weights, previous_weights)
+
+        # Should have recommendations for violations
+        assert len(feasibility["recommendations"]) > 0
+        assert any("long-only" in rec.lower() for rec in feasibility["recommendations"])
+
+    def test_enforcement_report_without_previous_weights(self, unified_engine):
+        """Test enforcement report creation without previous weights."""
+        weights = pd.Series([0.4, 0.3, 0.2, 0.1], index=["A", "B", "C", "D"])
+
+        report = unified_engine.create_enforcement_report(weights, None)
+
+        # Should still create report without previous weights
+        assert "constraint_enforcement" in report
+        assert "portfolio_feasibility" in report
+        # Transaction cost analysis should be empty without previous weights
+        assert report["transaction_cost_analysis"] == {}
+
+    def test_cost_aware_adjustment_high_cost_scenario(self, unified_engine):
+        """Test cost-aware adjustment in high cost scenario with detailed logic."""
+        # Create a scenario that will trigger cost adjustment
+        weights = pd.Series([1.0, 0.0], index=["A", "B"])  # Complete portfolio change
+        previous_weights = pd.Series([0.0, 1.0], index=["A", "B"])
+
+        # Test the private method directly to verify logic
+        cost_analysis = {
+            "turnover": 2.0,  # High turnover
+            "cost_per_turnover": 0.005,  # High cost per turnover
+            "total_cost": 0.01
+        }
+
+        adjusted = unified_engine._apply_cost_aware_adjustment(
+            weights, previous_weights, cost_analysis, []
+        )
+
+        # Should blend more with previous weights when costs are high
+        assert not adjusted.equals(weights)  # Should be different from original
+
 
 class TestViolationHandler:
     """Test violation handling and remediation strategies."""

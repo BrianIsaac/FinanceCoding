@@ -262,17 +262,24 @@ class TestTimeSeriesCharts:
     def test_export_chart(self, charts):
         """Test chart export functionality."""
         with patch("src.evaluation.reporting.charts.HAS_PLOTLY", True):
-            mock_figure = Mock()
-            mock_figure.write_image = Mock()
-            mock_figure.write_html = Mock()
+            # Mock the isinstance check directly to simulate a Plotly figure
+            with patch("src.evaluation.reporting.charts.go") as mock_go:
+                # Create a mock figure that behaves like a Plotly figure
+                mock_figure = Mock()
+                mock_figure.write_image = Mock()
+                mock_figure.write_html = Mock()
 
-            # Test export
-            exported_files = charts.export_chart(mock_figure, "test_chart", ["png", "html"])
+                # Set up the type checking to return True for isinstance
+                mock_go.Figure = type('MockFigure', (), {})
+                mock_figure.__class__ = mock_go.Figure
 
-            assert "png" in exported_files
-            assert "html" in exported_files
-            mock_figure.write_image.assert_called_once()
-            mock_figure.write_html.assert_called_once()
+                # Test export
+                exported_files = charts.export_chart(mock_figure, "test_chart", ["png", "html"])
+
+                assert "png" in exported_files
+                assert "html" in exported_files
+                mock_figure.write_image.assert_called_once()
+                mock_figure.write_html.assert_called_once()
 
     def test_export_chart_matplotlib(self, charts):
         """Test chart export functionality for matplotlib figures."""

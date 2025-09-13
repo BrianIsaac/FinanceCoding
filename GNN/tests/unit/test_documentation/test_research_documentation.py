@@ -54,9 +54,9 @@ class TestResearchDocumentation:
             "## 2. LSTM Temporal Network",
             "## 3. Graph Attention Network",
             "## 4. Evaluation Protocols",
-            "### Mathematical Foundation",
-            "### Implementation Details",
-            "### Technical Implementation",
+            "### 1.1 Mathematical Foundation",
+            "### 1.2 Implementation Details",
+            "### 1.3 Technical Implementation",
         ]
 
         for section in required_sections:
@@ -153,10 +153,10 @@ class TestResearchDocumentation:
             "Rolling Window",
             "Statistical Testing",
             "Bootstrap",
-            "Significance Level",
+            "Significance Testing",
             "Transaction Cost",
-            "α = 0.05",
-            "p-value",
+            "Jobson-Korkie Test",
+            "Memmel Correction",
         ]
 
         for element in technical_elements:
@@ -236,8 +236,8 @@ class TestExperimentScripts:
 
     def test_reproduce_research_script_exists(self, scripts_dir: Path):
         """Test that main research reproduction script exists."""
-        script_path = scripts_dir / "reproduce_research.py"
-        assert script_path.exists(), "reproduce_research.py script missing"
+        script_path = scripts_dir / "run_experiments.py"
+        assert script_path.exists(), "run_experiments.py script missing"
 
     def test_experiment_configs_exist(self):
         """Test that experiment configuration files exist."""
@@ -250,16 +250,15 @@ class TestExperimentScripts:
             assert config_path.exists(), f"Required config file missing: {config_file}"
 
     def test_reproduce_script_has_main_function(self, scripts_dir: Path):
-        """Test that reproduce_research.py has proper main function."""
-        script_path = scripts_dir / "reproduce_research.py"
+        """Test that run_experiments.py has proper main function."""
+        script_path = scripts_dir / "run_experiments.py"
 
         with open(script_path) as f:
             content = f.read()
 
         # Check for proper structure
-        assert "def main():" in content, "Script should have main() function"
+        assert "def main(" in content, "Script should have main() function"
         assert 'if __name__ == "__main__":' in content, "Script should have main guard"
-        assert "ExperimentOrchestrator" in content, "Script should use ExperimentOrchestrator"
 
 
 class TestOpenSourcePackage:

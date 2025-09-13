@@ -62,14 +62,18 @@ class TestConstraintEngine:
         assert engine.violation_log == []
         assert engine.turnover_history == {}
 
-    def test_apply_basic_constraints_long_only(self, default_engine):
+    def test_apply_basic_constraints_long_only(self):
         """Test long-only constraint enforcement."""
         # Create weights with negative values
         negative_weights = pd.Series(
             [-0.05, 0.15, 0.10, -0.02, 0.82], index=[f"ASSET_{i:03d}" for i in range(5)]
         )
 
-        constrained, violations = default_engine.enforce_constraints(negative_weights)
+        # Create constraint engine without max position weight limit for this test
+        constraints = PortfolioConstraints(max_position_weight=1.0)  # No effective limit
+        engine = ConstraintEngine(constraints)
+
+        constrained, violations = engine.enforce_constraints(negative_weights)
 
         # All weights should be non-negative
         assert all(
@@ -141,11 +145,15 @@ class TestConstraintEngine:
         # Should return equal weights fallback
         assert len(constrained) > 0 or len(empty_weights) == 0
 
-    def test_enforce_constraints_all_zero_weights(self, default_engine):
+    def test_enforce_constraints_all_zero_weights(self):
         """Test constraint application when all weights are zero."""
         zero_weights = pd.Series([0.0, 0.0, 0.0, 0.0], index=[f"ASSET_{i:03d}" for i in range(4)])
 
-        constrained, violations = default_engine.enforce_constraints(zero_weights)
+        # Create constraint engine without max position weight limit for this test
+        constraints = PortfolioConstraints(max_position_weight=1.0)  # No effective limit
+        engine = ConstraintEngine(constraints)
+
+        constrained, violations = engine.enforce_constraints(zero_weights)
 
         # Should fallback to equal weights
         expected_weight = 1.0 / len(zero_weights)

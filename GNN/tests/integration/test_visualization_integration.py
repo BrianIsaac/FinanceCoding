@@ -282,7 +282,7 @@ class TestVisualizationIntegration:
         # Test passes if either significance markers are present OR all values are proper Sharpe ratios
         has_significance_markers = any("*" in str(val) for val in sharpe_col)
         has_valid_sharpe_ratios = all(
-            isinstance(val, (int, float, str)) and str(val) != "nan" 
+            isinstance(val, (int, float, str)) and str(val) != "nan"
             for val in result_table["sharpe_ratio"]
         )
         assert has_significance_markers or has_valid_sharpe_ratios

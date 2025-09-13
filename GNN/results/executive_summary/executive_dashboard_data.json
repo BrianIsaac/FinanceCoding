@@ -1,0 +1,103 @@
+{
+  "summary_metrics": {
+    "total_strategies": 7,
+    "recommended_strategies": 0,
+    "recommendation_rate": 0.0,
+    "production_readiness": "Conditional - Promising strategies require additional validation"
+  },
+  "performance_rankings": {
+    "top_5_strategies": [
+      {
+        "name": "HRP_average_correlation_756",
+        "rank": 1,
+        "sharpe_ratio": 1.4580930281368578,
+        "risk_score": 46.1527760086635,
+        "meets_criteria": true
+      },
+      {
+        "name": "GAT_TMFG",
+        "rank": 2,
+        "sharpe_ratio": 1.04970152658717,
+        "risk_score": 35.17065831213328,
+        "meets_criteria": true
+      },
+      {
+        "name": "LSTM",
+        "rank": 3,
+        "sharpe_ratio": 0.4946116457628775,
+        "risk_score": 19.200862622119175,
+        "meets_criteria": false
+      },
+      {
+        "name": "GAT_MST",
+        "rank": 4,
+        "sharpe_ratio": 0.29854156960065575,
+        "risk_score": 13.643398325494111,
+        "meets_criteria": false
+      },
+      {
+        "name": "EqualWeight",
+        "rank": 5,
+        "sharpe_ratio": 0.4057171204261395,
+        "risk_score": NaN,
+        "meets_criteria": false
+      }
+    ]
+  },
+  "recommendation_breakdown": {
+    "deploy": 0,
+    "monitor": 2,
+    "reject": 5
+  },
+  "risk_return_profile": [
+    {
+      "strategy": "HRP_average_correlation_756",
+      "sharpe_ratio": 1.4580930281368578,
+      "max_drawdown": -0.2334544677918523,
+      "annual_turnover": 1.2000000000000002,
+      "recommendation": "Monitor"
+    },
+    {
+      "strategy": "GAT_TMFG",
+      "sharpe_ratio": 1.04970152658717,
+      "max_drawdown": -0.34706559302776263,
+      "annual_turnover": 1.2000000000000002,
+      "recommendation": "Monitor"
+    },
+    {
+      "strategy": "LSTM",
+      "sharpe_ratio": 0.4946116457628775,
+      "max_drawdown": -0.942778239493089,
+      "annual_turnover": 1.2000000000000002,
+      "recommendation": "Reject"
+    },
+    {
+      "strategy": "GAT_MST",
+      "sharpe_ratio": 0.29854156960065575,
+      "max_drawdown": -0.9765211521608683,
+      "annual_turnover": 1.2000000000000002,
+      "recommendation": "Reject"
+    },
+    {
+      "strategy": "EqualWeight",
+      "sharpe_ratio": 0.4057171204261395,
+      "max_drawdown": -0.672977575634826,
+      "annual_turnover": 1.2000000000000002,
+      "recommendation": "Reject"
+    },
+    {
+      "strategy": "MarketCapWeighted",
+      "sharpe_ratio": 1.0704704564605294,
+      "max_drawdown": -0.2502708425804847,
+      "annual_turnover": 1.2000000000000002,
+      "recommendation": "Reject"
+    },
+    {
+      "strategy": "MeanReversion",
+      "sharpe_ratio": 0.7221596850885633,
+      "max_drawdown": -0.3034364900079486,
+      "annual_turnover": 1.2000000000000002,
+      "recommendation": "Reject"
+    }
+  ]
+}

@@ -205,7 +205,7 @@ class TestGATExplainer:
         # Create sample attention matrices over time
         n_assets = 4
         asset_names = [f"ASSET_{i}" for i in range(n_assets)]
-        dates = pd.date_range("2023-01-01", periods=5, freq="M")
+        dates = pd.date_range("2023-01-01", periods=5, freq="ME")
 
         attention_matrices = []
         for _ in dates:

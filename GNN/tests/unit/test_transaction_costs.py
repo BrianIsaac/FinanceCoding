@@ -207,7 +207,7 @@ class TestTransactionCostCalculator:
         # Create dummy data
         rebalancing_history = pd.DataFrame(
             {
-                "date": pd.date_range("2020-01-01", periods=12, freq="M"),
+                "date": pd.date_range("2020-01-01", periods=12, freq="ME"),
                 "weights": [{}] * 12,
                 "costs": [0.001] * 12,
             }
@@ -256,3 +256,66 @@ class TestTransactionCostCalculator:
             ratio = costs_small["fixed_cost"] / costs_large["fixed_cost"]
             expected_ratio = large_portfolio / small_portfolio
             assert abs(ratio - expected_ratio) < 1e-6
+
+    def test_apply_transaction_costs_scalar_return(self, calculator, sample_weights, target_weights):
+        """Test applying transaction costs to scalar return."""
+        gross_return = 0.015  # 1.5% gross return
+
+        net_return, cost_breakdown = calculator.apply_transaction_costs(
+            gross_return, sample_weights, target_weights, portfolio_value=1000000.0
+        )
+
+        # Net return should be gross return minus transaction costs
+        expected_net = gross_return - cost_breakdown["total_cost"]
+        assert abs(net_return - expected_net) < 1e-10
+
+        # Cost breakdown should include both gross and net returns
+        assert cost_breakdown["gross_return"] == gross_return
+        assert cost_breakdown["net_return"] == net_return
+
+    def test_estimate_annual_costs_quarterly_rebalancing(self, calculator):
+        """Test annual cost estimation with quarterly rebalancing."""
+        monthly_turnover = 0.20
+        quarterly_frequency = 4
+
+        annual_estimates = calculator.estimate_annual_costs(
+            monthly_turnover, rebalancing_frequency=quarterly_frequency
+        )
+
+        # Annual turnover should be monthly * frequency
+        expected_annual_turnover = monthly_turnover * quarterly_frequency
+        assert abs(annual_estimates["annual_turnover"] - expected_annual_turnover) < 1e-10
+
+        # Should have all required fields
+        assert "annual_fixed_cost" in annual_estimates
+        assert annual_estimates["annual_fixed_cost"] >= 0
+
+    def test_create_cost_report_comprehensive(self, calculator):
+        """Test comprehensive cost report with more realistic data."""
+        dates = pd.date_range("2023-01-01", periods=24, freq="ME")
+        rebalancing_history = pd.DataFrame(index=dates)
+        returns_history = pd.Series(0.008, index=dates)  # Monthly returns
+
+        report = calculator.create_cost_report(rebalancing_history, returns_history)
+
+        # Verify stub implementation returns
+        assert report["total_periods"] == len(rebalancing_history)
+        assert "average_turnover" in report
+        assert "average_cost_bps" in report
+        assert "total_cost_drag" in report
+        assert "cost_efficiency" in report
+
+    def test_turnover_calculation_partial_overlap(self, calculator):
+        """Test turnover with partial asset overlap."""
+        current = pd.Series([0.3, 0.4, 0.3], index=["ASSET_A", "ASSET_B", "ASSET_C"])
+        target = pd.Series([0.5, 0.2, 0.3], index=["ASSET_B", "ASSET_C", "ASSET_D"])
+
+        turnover = calculator.calculate_turnover(current, target)
+
+        # ASSET_A: 0.3 -> 0 = 0.3 change
+        # ASSET_B: 0.4 -> 0.5 = 0.1 change
+        # ASSET_C: 0.3 -> 0.2 = 0.1 change
+        # ASSET_D: 0 -> 0.3 = 0.3 change
+        # Total = 0.3 + 0.1 + 0.1 + 0.3 = 0.8
+        expected_turnover = 0.8
+        assert abs(turnover - expected_turnover) < 1e-10

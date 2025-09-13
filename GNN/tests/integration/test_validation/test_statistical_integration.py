@@ -591,7 +591,7 @@ class TestRobustnessAndReliability:
 
 class TestPerformanceAndEfficiency:
     """Test performance and efficiency of integrated framework."""
-    
+
     @pytest.fixture
     def comprehensive_test_data(self):
         """Generate comprehensive test data simulating real portfolio scenarios."""
@@ -639,7 +639,7 @@ class TestPerformanceAndEfficiency:
                 + params["beta"] * market_returns
                 + np.random.normal(0, market_vol * params["vol_multiplier"])
             )
-            
+
             returns_dict[strategy_name] = pd.Series(
                 strategy_returns, index=dates, name=strategy_name
             )

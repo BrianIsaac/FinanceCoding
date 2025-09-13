@@ -111,8 +111,9 @@ class GapFiller:
 
         # Identify gaps and their sizes
         is_na = series.isna()
-        gap_starts = is_na & ~is_na.shift(1).fillna(False)
-        gap_ends = ~is_na & is_na.shift(1).fillna(False)
+        shifted_na = is_na.shift(1).fillna(False).infer_objects(copy=False)
+        gap_starts = is_na & ~shifted_na
+        gap_ends = ~is_na & shifted_na
 
         # Find gap ranges
         gap_ranges = []
@@ -211,8 +212,8 @@ class GapFiller:
 
             # Fill gaps
             is_na = series.isna()
-            gap_starts = is_na & ~is_na.shift(1).fillna(False)
-            gap_ends = ~is_na & is_na.shift(1).fillna(False)
+            gap_starts = is_na & ~is_na.shift(1).fillna(False).infer_objects(copy=False)
+            gap_ends = ~is_na & is_na.shift(1).fillna(False).infer_objects(copy=False)
 
             start_idx = None
             for idx in series.index:
@@ -268,8 +269,9 @@ class GapFiller:
 
         # Identify gaps and categorize by size
         is_na = series.isna()
-        gap_starts = is_na & ~is_na.shift(1).fillna(False)
-        gap_ends = ~is_na & is_na.shift(1).fillna(False)
+        shifted_na = is_na.shift(1).fillna(False).infer_objects(copy=False)
+        gap_starts = is_na & ~shifted_na
+        gap_ends = ~is_na & shifted_na
 
         gap_info = []
         start_idx = None

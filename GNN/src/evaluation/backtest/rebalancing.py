@@ -94,7 +94,7 @@ class PortfolioRebalancer:
 
         elif self.config.frequency == "quarterly":
             # Generate quarter-end dates
-            date_range = pd.date_range(start=start_date, end=end_date, freq="Q")
+            date_range = pd.date_range(start=start_date, end=end_date, freq="QE")
             rebalance_dates.extend(date_range.tolist())
 
         else:

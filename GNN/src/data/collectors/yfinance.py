@@ -318,8 +318,9 @@ class YFinanceCollector:
 
             # Find gaps
             is_na = series.isna()
-            gap_starts = is_na & ~is_na.shift(1).fillna(False).infer_objects(copy=False)
-            gap_ends = ~is_na & is_na.shift(1).fillna(False).infer_objects(copy=False)
+            shifted_na = is_na.shift(1).fillna(False).infer_objects(copy=False)
+            gap_starts = is_na & ~shifted_na
+            gap_ends = ~is_na & shifted_na
 
             gaps = []
             start_idx = None

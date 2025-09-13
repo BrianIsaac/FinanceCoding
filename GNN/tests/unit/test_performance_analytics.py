@@ -235,7 +235,7 @@ class TestOperationalAnalytics:
     def sample_portfolio_data(self):
         """Generate sample portfolio weights and returns."""
         np.random.seed(42)
-        dates = pd.date_range("2020-01-01", "2022-12-31", freq="M")
+        dates = pd.date_range("2020-01-01", "2022-12-31", freq="ME")
         assets = ["AAPL", "MSFT", "GOOGL", "AMZN", "TSLA"]
 
         # Create random portfolio weights that sum to 1

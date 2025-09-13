@@ -1,0 +1,82 @@
+{
+  "optimization_timestamp": "2025-09-13T19:21:55.747765",
+  "execution_time_seconds": 0.011898279190063477,
+  "turnover_limit": 0.2,
+  "overall_results": {
+    "total_original_violations": 115,
+    "total_optimized_violations": 115,
+    "violations_eliminated": 0,
+    "violation_reduction_rate": 0.0,
+    "compliant_strategies": 0,
+    "total_strategies": 5
+  },
+  "strategy_results": [
+    {
+      "strategy": "HRP",
+      "periods_tested": 23,
+      "original_avg_turnover": 0.639522483412738,
+      "optimized_avg_turnover": 0.6395221784646544,
+      "original_max_turnover": 0.6787767012527586,
+      "optimized_max_turnover": 0.6787763775868054,
+      "original_violations": 23,
+      "optimized_violations": 23,
+      "violation_reduction": 0,
+      "turnover_reduction": 3.0494808356262837e-07,
+      "constraint_compliance": false
+    },
+    {
+      "strategy": "LSTM",
+      "periods_tested": 23,
+      "original_avg_turnover": 0.6490269908358729,
+      "optimized_avg_turnover": 0.649026681355687,
+      "original_max_turnover": 0.6958966961395161,
+      "optimized_max_turnover": 0.6958963643101133,
+      "original_violations": 23,
+      "optimized_violations": 23,
+      "violation_reduction": 0,
+      "turnover_reduction": 3.0948018592269477e-07,
+      "constraint_compliance": false
+    },
+    {
+      "strategy": "GAT",
+      "periods_tested": 23,
+      "original_avg_turnover": 0.6395224834127379,
+      "optimized_avg_turnover": 0.6395221784646544,
+      "original_max_turnover": 0.6787767012527587,
+      "optimized_max_turnover": 0.6787763775868054,
+      "original_violations": 23,
+      "optimized_violations": 23,
+      "violation_reduction": 0,
+      "turnover_reduction": 3.0494808345160607e-07,
+      "constraint_compliance": false
+    },
+    {
+      "strategy": "Equal_Weight",
+      "periods_tested": 23,
+      "original_avg_turnover": 0.6543474336666277,
+      "optimized_avg_turnover": 0.6543471216494571,
+      "original_max_turnover": 0.6984389382144334,
+      "optimized_max_turnover": 0.6984386051727949,
+      "original_violations": 23,
+      "optimized_violations": 23,
+      "violation_reduction": 0,
+      "turnover_reduction": 3.1201717065609813e-07,
+      "constraint_compliance": false
+    },
+    {
+      "strategy": "Market_Cap",
+      "periods_tested": 23,
+      "original_avg_turnover": 0.6871509339627139,
+      "optimized_avg_turnover": 0.6871506063036154,
+      "original_max_turnover": 0.7435342641675116,
+      "optimized_max_turnover": 0.7435339096227461,
+      "original_violations": 23,
+      "optimized_violations": 23,
+      "violation_reduction": 0,
+      "turnover_reduction": 3.2765909852017217e-07,
+      "constraint_compliance": false
+    }
+  ],
+  "recommended_rebalancing_frequency": "Annual",
+  "avg_optimized_turnover": 0.6539137532476136
+}

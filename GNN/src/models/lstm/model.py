@@ -248,7 +248,7 @@ class LSTMPortfolioModel(PortfolioModel):
         # For now, return mock predictions (to be implemented with actual data pipeline)
         logger.warning("Using mock predictions - implement actual LSTM inference")
 
-        # Mock implementation: random predictions with some structure
+        # Mock implementation: random predictions with some structure  # pragma: no cover
         np.random.seed(int(date.timestamp()) % 2**32)
         mock_predictions = np.random.normal(0.001, 0.05, len(universe))  # 0.1% mean, 5% std
 

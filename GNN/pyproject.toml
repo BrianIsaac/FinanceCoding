@@ -22,10 +22,8 @@ data = [
     "yfinance>=0.2.65",
 ]
 dev = [
-    "black>=25.1.0",
     "ruff>=0.12.12",
     "ipykernel>=6.30.1",
-    "isort>=6.0.1",
     "mypy>=1.17.1",
     "pre-commit>=4.3.0",
     "pytest>=8.4.2",
@@ -69,45 +67,19 @@ name = "pytorch-cu128"
 url = "https://download.pytorch.org/whl/cu128"
 explicit = true
 
-[tool.black]
-line-length = 100
-target-version = ['py39']
-include = '\.pyi?$'
-extend-exclude = '''
-(
-  /(
-      \.git
-    | \.hg
-    | \.mypy_cache
-    | \.tox
-    | \.venv
-    | _build
-    | buck-out
-    | build
-    | dist
-  )/
-)
-'''
-
-[tool.isort]
-profile = "black"
-line_length = 100
-multi_line_output = 3
-include_trailing_comma = true
-force_grid_wrap = 0
-use_parentheses = true
-ensure_newline_before_comments = true
-src_paths = ["src", "tests"]
-
 [tool.ruff]
 line-length = 100
 target-version = "py39"
 
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "auto"
+
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "N", "UP", "B", "A", "C4", "T20"]
 ignore = [
-    "E203",    # Whitespace before ':' (conflicts with Black)
-    "E501",    # Line too long (handled by Black at 100 chars)
+    "E501",    # Line too long (handled by ruff format at 100 chars)
     "N806",    # Variable in function should be lowercase (common ML: X_train, y_train)
     "N803",    # Argument name should be lowercase (common ML: X, y, etc.)
     "B023",    # Function definition does not bind loop variable (common in research code)
