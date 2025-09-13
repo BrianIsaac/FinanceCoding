@@ -1,0 +1,59 @@
+{
+  "jobson_korkie_results": "                    portfolio_a  ... is_significant_holm_sidak\n0   HRP_average_correlation_756  ...                     False\n1   HRP_average_correlation_756  ...                     False\n2   HRP_average_correlation_756  ...                     False\n3                          LSTM  ...                     False\n4                          LSTM  ...                     False\n5                          LSTM  ...                     False\n6                       GAT_MST  ...                     False\n7                       GAT_MST  ...                     False\n8                       GAT_MST  ...                     False\n9                      GAT_TMFG  ...                     False\n10                     GAT_TMFG  ...                     False\n11                     GAT_TMFG  ...                     False\n\n[12 rows x 14 columns]",
+  "bootstrap_confidence_intervals": {
+    "HRP_average_correlation_756": {
+      "ci_lower": 0.8262638472028044,
+      "ci_upper": 2.0763441120108417,
+      "bootstrap_mean": 1.460628902073526,
+      "bootstrap_std": 0.3250787443238997,
+      "original_sharpe": 1.4580930281368578
+    },
+    "LSTM": {
+      "ci_lower": -0.1552807882811973,
+      "ci_upper": 1.1421409945563497,
+      "bootstrap_mean": 0.4934505421623243,
+      "bootstrap_std": 0.32797475516588415,
+      "original_sharpe": 0.4946116457628776
+    },
+    "GAT_MST": {
+      "ci_lower": -0.3395413491536919,
+      "ci_upper": 0.9306337300066662,
+      "bootstrap_mean": 0.2983123583293168,
+      "bootstrap_std": 0.32609357517146265,
+      "original_sharpe": 0.2985415696006558
+    },
+    "GAT_TMFG": {
+      "ci_lower": 0.40929964615093795,
+      "ci_upper": 1.6842913446893253,
+      "bootstrap_mean": 1.0468406342462488,
+      "bootstrap_std": 0.32778892386710645,
+      "original_sharpe": 1.04970152658717
+    },
+    "EqualWeight": {
+      "ci_lower": -0.24135466942934905,
+      "ci_upper": 1.0382061499049449,
+      "bootstrap_mean": 0.4102672056544019,
+      "bootstrap_std": 0.3271264212931127,
+      "original_sharpe": 0.40571712042613955
+    },
+    "MarketCapWeighted": {
+      "ci_lower": 0.42506130143279164,
+      "ci_upper": 1.7149516841095152,
+      "bootstrap_mean": 1.0710254697441688,
+      "bootstrap_std": 0.3287928732179613,
+      "original_sharpe": 1.0704704564605294
+    },
+    "MeanReversion": {
+      "ci_lower": 0.08629497259806616,
+      "ci_upper": 1.3782879421338727,
+      "bootstrap_mean": 0.7207739921223625,
+      "bootstrap_std": 0.3305909012610079,
+      "original_sharpe": 0.7221596850885633
+    }
+  },
+  "multiple_comparison_corrections": {
+    "bonferroni_alpha": 0.004166666666666667,
+    "holm_sidak_alpha": 0.05
+  },
+  "sharpe_improvement_tests": {}
+}

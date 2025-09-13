@@ -28,8 +28,8 @@ import yaml
 # Add project root to path
 sys.path.append(str(Path(__file__).parent.parent))
 
-from src.config.base import Config
-from src.data.loaders.parquet_manager import ParquetDataManager
+from src.config.base import ProjectConfig, load_config
+from src.data.loaders.parquet_manager import ParquetManager
 from src.evaluation.backtest.rolling_engine import RollingBacktestConfig, RollingBacktestEngine
 from src.evaluation.validation.temporal_integrity import TemporalIntegrityValidator
 from src.models.base.baselines import (

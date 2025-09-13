@@ -15,9 +15,187 @@ knn_k10:
     - -1
     - 0
   - !!binary |
-    VVXlCDdEZb8=
+    VVVVOUZeZL8=
   device: cuda
   graph_config_name: knn_k10
+  memory_usage:
+    allocated: 0.01885509490966797
+    available: 10.981144905090332
+    max_allowed: 11.0
+    reserved: 0.029296875
+  model_parameters: 198177
+  total_epochs: 18
+  training_history:
+  - !!python/object/apply:numpy._core.multiarray.scalar
+    - *id001
+    - !!binary |
+      VVVVVUT5Aj8=
+  - !!python/object/apply:numpy._core.multiarray.scalar
+    - *id001
+    - !!binary |
+      VVXV0hwMUb8=
+  - !!python/object/apply:numpy._core.multiarray.scalar
+    - *id001
+    - !!binary |
+      VVVVOUZeZL8=
+  - !!python/object/apply:numpy._core.multiarray.scalar
+    - *id001
+    - !!binary |
+      VVVV3djARb8=
+  - !!python/object/apply:numpy._core.multiarray.scalar
+    - *id001
+    - !!binary |
+      AAAAVhoZWL8=
+  - !!python/object/apply:numpy._core.multiarray.scalar
+    - *id001
+    - !!binary |
+      VVVVAHCyUL8=
+  - !!python/object/apply:numpy._core.multiarray.scalar
+    - *id001
+    - !!binary |
+      AAAArEeQUr8=
+  - !!python/object/apply:numpy._core.multiarray.scalar
+    - *id001
+    - !!binary |
+      q6oqr6ZqWL8=
+  - !!python/object/apply:numpy._core.multiarray.scalar
+    - *id001
+    - !!binary |
+      q6qqPh0WX78=
+  - !!python/object/apply:numpy._core.multiarray.scalar
+    - *id001
+    - !!binary |
+      q6qq5jxCVr8=
+  - !!python/object/apply:numpy._core.multiarray.scalar
+    - *id001
+    - !!binary |
+      q6qq0h/kT78=
+  - !!python/object/apply:numpy._core.multiarray.scalar
+    - *id001
+    - !!binary |
+      AAAAfNAYUr8=
+  - !!python/object/apply:numpy._core.multiarray.scalar
+    - *id001
+    - !!binary |
+      q6oqTBPLTr8=
+  - !!python/object/apply:numpy._core.multiarray.scalar
+    - *id001
+    - !!binary |
+      q6qqShMqT78=
+  - !!python/object/apply:numpy._core.multiarray.scalar
+    - *id001
+    - !!binary |
+      AAAAAK+Hwr4=
+  - !!python/object/apply:numpy._core.multiarray.scalar
+    - *id001
+    - !!binary |
+      AAAAKDE+Pb8=
+  - !!python/object/apply:numpy._core.multiarray.scalar
+    - *id001
+    - !!binary |
+      VVVV6WwrWL8=
+  - !!python/object/apply:numpy._core.multiarray.scalar
+    - *id001
+    - !!binary |
+      VVVVLRyDM78=
+knn_k15:
+  best_loss: !!python/object/apply:numpy._core.multiarray.scalar
+  - *id001
+  - !!binary |
+    VVVVoyq9Y78=
+  device: cuda
+  graph_config_name: knn_k15
+  memory_usage:
+    allocated: 0.01885509490966797
+    available: 10.981144905090332
+    max_allowed: 11.0
+    reserved: 0.029296875
+  model_parameters: 198177
+  total_epochs: 19
+  training_history:
+  - !!python/object/apply:numpy._core.multiarray.scalar
+    - *id001
+    - !!binary |
+      VVVVRVmwNb8=
+  - !!python/object/apply:numpy._core.multiarray.scalar
+    - *id001
+    - !!binary |
+      VVVVLT53Ub8=
+  - !!python/object/apply:numpy._core.multiarray.scalar
+    - *id001
+    - !!binary |
+      AAAA+EZpXb8=
+  - !!python/object/apply:numpy._core.multiarray.scalar
+    - *id001
+    - !!binary |
+      VVVVoyq9Y78=
+  - !!python/object/apply:numpy._core.multiarray.scalar
+    - *id001
+    - !!binary |
+      VVVVT/ciWr8=
+  - !!python/object/apply:numpy._core.multiarray.scalar
+    - *id001
+    - !!binary |
+      AAAAgIQhVb8=
+  - !!python/object/apply:numpy._core.multiarray.scalar
+    - *id001
+    - !!binary |
+      q6qqKtH9Jr8=
+  - !!python/object/apply:numpy._core.multiarray.scalar
+    - *id001
+    - !!binary |
+      q6qq+g/fT78=
+  - !!python/object/apply:numpy._core.multiarray.scalar
+    - *id001
+    - !!binary |
+      AACA99GKR78=
+  - !!python/object/apply:numpy._core.multiarray.scalar
+    - *id001
+    - !!binary |
+      q6qqvnDXXL8=
+  - !!python/object/apply:numpy._core.multiarray.scalar
+    - *id001
+    - !!binary |
+      q6qqStUjNL8=
+  - !!python/object/apply:numpy._core.multiarray.scalar
+    - *id001
+    - !!binary |
+      AAAAIHEpWb8=
+  - !!python/object/apply:numpy._core.multiarray.scalar
+    - *id001
+    - !!binary |
+      q6qq4j2wOr8=
+  - !!python/object/apply:numpy._core.multiarray.scalar
+    - *id001
+    - !!binary |
+      AAAAAERa274=
+  - !!python/object/apply:numpy._core.multiarray.scalar
+    - *id001
+    - !!binary |
+      AACAjjmMYD8=
+  - !!python/object/apply:numpy._core.multiarray.scalar
+    - *id001
+    - !!binary |
+      VVU1Ha46N78=
+  - !!python/object/apply:numpy._core.multiarray.scalar
+    - *id001
+    - !!binary |
+      q6qqmgv0Tb8=
+  - !!python/object/apply:numpy._core.multiarray.scalar
+    - *id001
+    - !!binary |
+      q6qqmpLUKD8=
+  - !!python/object/apply:numpy._core.multiarray.scalar
+    - *id001
+    - !!binary |
+      AAAAY7H9Ub8=
+knn_k5:
+  best_loss: !!python/object/apply:numpy._core.multiarray.scalar
+  - *id001
+  - !!binary |
+    q6qqt4K2ar8=
+  device: cuda
+  graph_config_name: knn_k5
   memory_usage:
     allocated: 0.01885509490966797
     available: 10.981144905090332
@@ -29,378 +207,76 @@ knn_k10:
   - !!python/object/apply:numpy._core.multiarray.scalar
     - *id001
     - !!binary |
-      VVVV0y6mYL8=
+      AAAAyPFQMb8=
   - !!python/object/apply:numpy._core.multiarray.scalar
     - *id001
     - !!binary |
-      VVXlCDdEZb8=
+      q6qqt4K2ar8=
   - !!python/object/apply:numpy._core.multiarray.scalar
     - *id001
     - !!binary |
-      q6qaliZ0Yb8=
+      VVVVVTvDS78=
   - !!python/object/apply:numpy._core.multiarray.scalar
     - *id001
     - !!binary |
-      VVWV1r59ZL8=
+      VVVV5dqRV78=
   - !!python/object/apply:numpy._core.multiarray.scalar
     - *id001
     - !!binary |
-      q6qqKvMuS78=
+      AAAARAGLQr8=
   - !!python/object/apply:numpy._core.multiarray.scalar
     - *id001
     - !!binary |
-      VVVV0w/QTz8=
+      AAAAm949UL8=
   - !!python/object/apply:numpy._core.multiarray.scalar
     - *id001
     - !!binary |
-      AACA3nB0UL8=
+      AAAAZMn0M78=
   - !!python/object/apply:numpy._core.multiarray.scalar
     - *id001
     - !!binary |
-      VVVVVYdaTD8=
+      AAAAUJNASr8=
   - !!python/object/apply:numpy._core.multiarray.scalar
     - *id001
     - !!binary |
-      VVVVVWpGyr4=
+      q6qq8AxLU78=
   - !!python/object/apply:numpy._core.multiarray.scalar
     - *id001
     - !!binary |
-      q6qqikNfKL8=
+      VVVVRbeYFb8=
   - !!python/object/apply:numpy._core.multiarray.scalar
     - *id001
     - !!binary |
-      VVUdDf2/VD8=
+      VVVVRc/GXL8=
   - !!python/object/apply:numpy._core.multiarray.scalar
     - *id001
     - !!binary |
-      VVVVtVRpFz8=
+      AAAAoFQZXr8=
   - !!python/object/apply:numpy._core.multiarray.scalar
     - *id001
     - !!binary |
-      q6qqoo9pTj8=
+      VVVVVc+YMT8=
   - !!python/object/apply:numpy._core.multiarray.scalar
     - *id001
     - !!binary |
-      AACA5qiqWb8=
+      q6qqKvXkDT8=
   - !!python/object/apply:numpy._core.multiarray.scalar
     - *id001
     - !!binary |
-      AACAyU5oWb8=
+      VVVVpeR8Nr8=
   - !!python/object/apply:numpy._core.multiarray.scalar
     - *id001
     - !!binary |
-      AAAAOK3+Tr8=
+      VVVVDJStVr8=
   - !!python/object/apply:numpy._core.multiarray.scalar
     - *id001
     - !!binary |
-      AACApqW8ST8=
-knn_k15:
-  best_loss: !!python/object/apply:numpy._core.multiarray.scalar
-  - *id001
-  - !!binary |
-    q6qqaEnUZL8=
-  device: cuda
-  graph_config_name: knn_k15
-  memory_usage:
-    allocated: 0.01885509490966797
-    available: 10.981144905090332
-    max_allowed: 11.0
-    reserved: 0.029296875
-  model_parameters: 198177
-  total_epochs: 48
-  training_history:
-  - !!python/object/apply:numpy._core.multiarray.scalar
-    - *id001
-    - !!binary |
-      VVVVpSYSJ78=
-  - !!python/object/apply:numpy._core.multiarray.scalar
-    - *id001
-    - !!binary |
-      AAAAaNUGWr8=
-  - !!python/object/apply:numpy._core.multiarray.scalar
-    - *id001
-    - !!binary |
-      q6qqLuokUL8=
-  - !!python/object/apply:numpy._core.multiarray.scalar
-    - *id001
-    - !!binary |
-      q6qqClaZPL8=
-  - !!python/object/apply:numpy._core.multiarray.scalar
-    - *id001
-    - !!binary |
-      AAAAZoQWUb8=
-  - !!python/object/apply:numpy._core.multiarray.scalar
-    - *id001
-    - !!binary |
-      AAAAkBW7N78=
-  - !!python/object/apply:numpy._core.multiarray.scalar
-    - *id001
-    - !!binary |
-      VVVV0T2vUL8=
-  - !!python/object/apply:numpy._core.multiarray.scalar
-    - *id001
-    - !!binary |
-      VVVVHbXqWr8=
-  - !!python/object/apply:numpy._core.multiarray.scalar
-    - *id001
-    - !!binary |
-      q6qqBCGNYb8=
-  - !!python/object/apply:numpy._core.multiarray.scalar
-    - *id001
-    - !!binary |
-      q6qq1kVDYL8=
-  - !!python/object/apply:numpy._core.multiarray.scalar
-    - *id001
-    - !!binary |
-      q6qqEKWpU78=
-  - !!python/object/apply:numpy._core.multiarray.scalar
-    - *id001
-    - !!binary |
-      VVVVaTlUYL8=
-  - !!python/object/apply:numpy._core.multiarray.scalar
-    - *id001
-    - !!binary |
-      q6qqqpVgSL8=
-  - !!python/object/apply:numpy._core.multiarray.scalar
-    - *id001
-    - !!binary |
-      q6qq+gGcWb8=
-  - !!python/object/apply:numpy._core.multiarray.scalar
-    - *id001
-    - !!binary |
-      VVVVOetEYr8=
-  - !!python/object/apply:numpy._core.multiarray.scalar
-    - *id001
-    - !!binary |
-      q6qq2gzZV78=
-  - !!python/object/apply:numpy._core.multiarray.scalar
-    - *id001
-    - !!binary |
-      AAAAvHtaR78=
-  - !!python/object/apply:numpy._core.multiarray.scalar
-    - *id001
-    - !!binary |
-      q6qqqsBPX78=
-  - !!python/object/apply:numpy._core.multiarray.scalar
-    - *id001
-    - !!binary |
-      VVVVpS31UL8=
-  - !!python/object/apply:numpy._core.multiarray.scalar
-    - *id001
-    - !!binary |
-      VVVVvWy1U78=
-  - !!python/object/apply:numpy._core.multiarray.scalar
-    - *id001
-    - !!binary |
-      q6qqqmiNPb8=
-  - !!python/object/apply:numpy._core.multiarray.scalar
-    - *id001
-    - !!binary |
-      VVVVQizTV78=
-  - !!python/object/apply:numpy._core.multiarray.scalar
-    - *id001
-    - !!binary |
-      VVVVM5dKQb8=
-  - !!python/object/apply:numpy._core.multiarray.scalar
-    - *id001
-    - !!binary |
-      VVXVBNfIZL8=
-  - !!python/object/apply:numpy._core.multiarray.scalar
-    - *id001
-    - !!binary |
-      VVVVtwZrVb8=
-  - !!python/object/apply:numpy._core.multiarray.scalar
-    - *id001
-    - !!binary |
-      q6qq6uj5Wb8=
-  - !!python/object/apply:numpy._core.multiarray.scalar
-    - *id001
-    - !!binary |
-      q6qqnlWtY78=
-  - !!python/object/apply:numpy._core.multiarray.scalar
-    - *id001
-    - !!binary |
-      q6qqSmlbT78=
-  - !!python/object/apply:numpy._core.multiarray.scalar
-    - *id001
-    - !!binary |
-      q6qqJFlaPb8=
-  - !!python/object/apply:numpy._core.multiarray.scalar
-    - *id001
-    - !!binary |
-      AAAASBNQTb8=
-  - !!python/object/apply:numpy._core.multiarray.scalar
-    - *id001
-    - !!binary |
-      VVVVBR8qY78=
-  - !!python/object/apply:numpy._core.multiarray.scalar
-    - *id001
-    - !!binary |
-      q6qqageBDr8=
-  - !!python/object/apply:numpy._core.multiarray.scalar
-    - *id001
-    - !!binary |
-      q6qqaEnUZL8=
-  - !!python/object/apply:numpy._core.multiarray.scalar
-    - *id001
-    - !!binary |
-      VVVVFXHyVL8=
-  - !!python/object/apply:numpy._core.multiarray.scalar
-    - *id001
-    - !!binary |
-      q6qqtOgrUb8=
-  - !!python/object/apply:numpy._core.multiarray.scalar
-    - *id001
-    - !!binary |
-      VVVVCSJATr8=
-  - !!python/object/apply:numpy._core.multiarray.scalar
-    - *id001
-    - !!binary |
-      VVVVlYVnCL8=
-  - !!python/object/apply:numpy._core.multiarray.scalar
-    - *id001
-    - !!binary |
-      AAAAHAGyQ78=
-  - !!python/object/apply:numpy._core.multiarray.scalar
-    - *id001
-    - !!binary |
-      VVVV9VmDUr8=
-  - !!python/object/apply:numpy._core.multiarray.scalar
-    - *id001
-    - !!binary |
-      q6qqQjQURD8=
-  - !!python/object/apply:numpy._core.multiarray.scalar
-    - *id001
-    - !!binary |
-      AAAAMO1/JL8=
-  - !!python/object/apply:numpy._core.multiarray.scalar
-    - *id001
-    - !!binary |
-      AAAAUOtKJr8=
-  - !!python/object/apply:numpy._core.multiarray.scalar
-    - *id001
-    - !!binary |
-      AAAAoj1+U78=
-  - !!python/object/apply:numpy._core.multiarray.scalar
-    - *id001
-    - !!binary |
-      q6qqsy5uX78=
-  - !!python/object/apply:numpy._core.multiarray.scalar
-    - *id001
-    - !!binary |
-      q6qqLrOITL8=
-  - !!python/object/apply:numpy._core.multiarray.scalar
-    - *id001
-    - !!binary |
-      VVVVLqosYr8=
-  - !!python/object/apply:numpy._core.multiarray.scalar
-    - *id001
-    - !!binary |
-      q6qqyri1HD8=
-  - !!python/object/apply:numpy._core.multiarray.scalar
-    - *id001
-    - !!binary |
-      q6qqokp5ND8=
-knn_k5:
-  best_loss: !!python/object/apply:numpy._core.multiarray.scalar
-  - *id001
-  - !!binary |
-    q6qKLHx7br8=
-  device: cuda
-  graph_config_name: knn_k5
-  memory_usage:
-    allocated: 0.01885509490966797
-    available: 10.981144905090332
-    max_allowed: 11.0
-    reserved: 0.029296875
-  model_parameters: 198177
-  total_epochs: 20
-  training_history:
-  - !!python/object/apply:numpy._core.multiarray.scalar
-    - *id001
-    - !!binary |
-      AAAAbgnoXr8=
-  - !!python/object/apply:numpy._core.multiarray.scalar
-    - *id001
-    - !!binary |
-      AAAAvEEWVr8=
-  - !!python/object/apply:numpy._core.multiarray.scalar
-    - *id001
-    - !!binary |
-      AAAAwFEbWL8=
-  - !!python/object/apply:numpy._core.multiarray.scalar
-    - *id001
-    - !!binary |
-      AAAAUtq5Lb8=
-  - !!python/object/apply:numpy._core.multiarray.scalar
-    - *id001
-    - !!binary |
-      q6qKLHx7br8=
-  - !!python/object/apply:numpy._core.multiarray.scalar
-    - *id001
-    - !!binary |
-      VVVV0T/2V78=
-  - !!python/object/apply:numpy._core.multiarray.scalar
-    - *id001
-    - !!binary |
-      VVVVnUiqQL8=
-  - !!python/object/apply:numpy._core.multiarray.scalar
-    - *id001
-    - !!binary |
-      VVXV6j+sPD8=
-  - !!python/object/apply:numpy._core.multiarray.scalar
-    - *id001
-    - !!binary |
-      AAAAcO0eZb8=
-  - !!python/object/apply:numpy._core.multiarray.scalar
-    - *id001
-    - !!binary |
-      VVVVhd++V78=
-  - !!python/object/apply:numpy._core.multiarray.scalar
-    - *id001
-    - !!binary |
-      q6qqYr3iNj8=
-  - !!python/object/apply:numpy._core.multiarray.scalar
-    - *id001
-    - !!binary |
-      q6qqCk6vJD8=
-  - !!python/object/apply:numpy._core.multiarray.scalar
-    - *id001
-    - !!binary |
-      q6qq6kSeFD8=
-  - !!python/object/apply:numpy._core.multiarray.scalar
-    - *id001
-    - !!binary |
-      VVVVNa4eSr8=
-  - !!python/object/apply:numpy._core.multiarray.scalar
-    - *id001
-    - !!binary |
-      q6qqSiOVJ78=
-  - !!python/object/apply:numpy._core.multiarray.scalar
-    - *id001
-    - !!binary |
-      AAAAqB+mRL8=
-  - !!python/object/apply:numpy._core.multiarray.scalar
-    - *id001
-    - !!binary |
-      VVVVjfnFQb8=
-  - !!python/object/apply:numpy._core.multiarray.scalar
-    - *id001
-    - !!binary |
-      VVVVyexKYj8=
-  - !!python/object/apply:numpy._core.multiarray.scalar
-    - *id001
-    - !!binary |
-      VVVVON9FYz8=
-  - !!python/object/apply:numpy._core.multiarray.scalar
-    - *id001
-    - !!binary |
-      VVVVhV3EW78=
+      VVVVFUrXAj8=
 mst:
   best_loss: !!python/object/apply:numpy._core.multiarray.scalar
   - *id001
   - !!binary |
-    AAAAErzaY78=
+    VVXV82ixbb8=
   device: cuda
   graph_config_name: mst
   memory_usage:
@@ -409,153 +285,117 @@ mst:
     max_allowed: 11.0
     reserved: 0.02734375
   model_parameters: 198177
-  total_epochs: 35
+  total_epochs: 26
   training_history:
   - !!python/object/apply:numpy._core.multiarray.scalar
     - *id001
     - !!binary |
-      AAAAour0RL8=
+      q6qqKuPlL78=
   - !!python/object/apply:numpy._core.multiarray.scalar
     - *id001
     - !!binary |
-      VVVV2an5Sr8=
+      AAAAa1b+aL8=
   - !!python/object/apply:numpy._core.multiarray.scalar
     - *id001
     - !!binary |
-      q6qqaimBOT8=
+      q6qqSHEIab8=
   - !!python/object/apply:numpy._core.multiarray.scalar
     - *id001
     - !!binary |
-      VVVVcaBnTr8=
+      q6qqc99nSj8=
   - !!python/object/apply:numpy._core.multiarray.scalar
     - *id001
     - !!binary |
-      VVVVVDwkUb8=
+      q6qqSg/wUL8=
   - !!python/object/apply:numpy._core.multiarray.scalar
     - *id001
     - !!binary |
-      AAAA7qBvXL8=
+      VVVVbWRtT78=
   - !!python/object/apply:numpy._core.multiarray.scalar
     - *id001
     - !!binary |
-      q6qqTJc+YL8=
+      q6qqrKyGYL8=
   - !!python/object/apply:numpy._core.multiarray.scalar
     - *id001
     - !!binary |
-      VVVVk5BtU78=
+      AAAAsHJ9QL8=
   - !!python/object/apply:numpy._core.multiarray.scalar
     - *id001
     - !!binary |
-      AAAAYCeOMT8=
+      q6qqItHJPr8=
   - !!python/object/apply:numpy._core.multiarray.scalar
     - *id001
     - !!binary |
-      q6qqmgZuL78=
+      VVVVHdATUD8=
   - !!python/object/apply:numpy._core.multiarray.scalar
     - *id001
     - !!binary |
-      AAAA6st0Xr8=
+      VVXV82ixbb8=
   - !!python/object/apply:numpy._core.multiarray.scalar
     - *id001
     - !!binary |
-      q6qqchgIXr8=
+      AAAAIC4SNj8=
   - !!python/object/apply:numpy._core.multiarray.scalar
     - *id001
     - !!binary |
-      q6qqAXQAOL8=
+      q6qqLphkUL8=
   - !!python/object/apply:numpy._core.multiarray.scalar
     - *id001
     - !!binary |
-      q6qq+m4TQj8=
+      q6oqt7VbWb8=
   - !!python/object/apply:numpy._core.multiarray.scalar
     - *id001
     - !!binary |
-      q6qqgELNU78=
+      q6qqxsc1T78=
   - !!python/object/apply:numpy._core.multiarray.scalar
     - *id001
     - !!binary |
-      q6qqsiguSr8=
+      AAAA8N4jOb8=
   - !!python/object/apply:numpy._core.multiarray.scalar
     - *id001
     - !!binary |
-      q6qqhhiwWr8=
+      q6qquHPpSr8=
   - !!python/object/apply:numpy._core.multiarray.scalar
     - *id001
     - !!binary |
-      q6qq4loWVL8=
+      VVVV2b/dR78=
   - !!python/object/apply:numpy._core.multiarray.scalar
     - *id001
     - !!binary |
-      VVVVUUOcR78=
+      VVVVGYIVY78=
   - !!python/object/apply:numpy._core.multiarray.scalar
     - *id001
     - !!binary |
-      AAAAErzaY78=
+      AAAA0ovRRb8=
   - !!python/object/apply:numpy._core.multiarray.scalar
     - *id001
     - !!binary |
-      VVVV3zq+W78=
+      AAAAwB6LN78=
   - !!python/object/apply:numpy._core.multiarray.scalar
     - *id001
     - !!binary |
-      q6qqRixHXr8=
+      VVWVx1PsZ78=
   - !!python/object/apply:numpy._core.multiarray.scalar
     - *id001
     - !!binary |
-      AAAAzCpYQT8=
+      q6qqBtqsRr8=
   - !!python/object/apply:numpy._core.multiarray.scalar
     - *id001
     - !!binary |
-      q6qqUmplUr8=
+      VVVVcR2lVL8=
   - !!python/object/apply:numpy._core.multiarray.scalar
     - *id001
     - !!binary |
-      AAAAHLirWb8=
+      q6qq8ujZWj8=
   - !!python/object/apply:numpy._core.multiarray.scalar
     - *id001
     - !!binary |
-      q6qq8tYuS78=
-  - !!python/object/apply:numpy._core.multiarray.scalar
-    - *id001
-    - !!binary |
-      AABAeSBbYr8=
-  - !!python/object/apply:numpy._core.multiarray.scalar
-    - *id001
-    - !!binary |
-      VVVVNUuEFT8=
-  - !!python/object/apply:numpy._core.multiarray.scalar
-    - *id001
-    - !!binary |
-      VVVVdc2FVL8=
-  - !!python/object/apply:numpy._core.multiarray.scalar
-    - *id001
-    - !!binary |
-      q6qqHn6NS78=
-  - !!python/object/apply:numpy._core.multiarray.scalar
-    - *id001
-    - !!binary |
-      VVVVBzvEYb8=
-  - !!python/object/apply:numpy._core.multiarray.scalar
-    - *id001
-    - !!binary |
-      AAAAXtFCU78=
-  - !!python/object/apply:numpy._core.multiarray.scalar
-    - *id001
-    - !!binary |
-      AAAAtI+RV78=
-  - !!python/object/apply:numpy._core.multiarray.scalar
-    - *id001
-    - !!binary |
-      q6qqdGDRVr8=
-  - !!python/object/apply:numpy._core.multiarray.scalar
-    - *id001
-    - !!binary |
-      VVVVRYp8P78=
+      VVVVTh/cZb8=
 tmfg:
   best_loss: !!python/object/apply:numpy._core.multiarray.scalar
   - *id001
   - !!binary |
-    q6oqjfGub78=
+    AAAAO406ar8=
   device: cuda
   graph_config_name: tmfg
   memory_usage:
@@ -564,157 +404,169 @@ tmfg:
     max_allowed: 11.0
     reserved: 0.029296875
   model_parameters: 198177
-  total_epochs: 38
+  total_epochs: 41
   training_history:
   - !!python/object/apply:numpy._core.multiarray.scalar
     - *id001
     - !!binary |
-      VVVVJfi+Q78=
+      AAAANFB2RD8=
   - !!python/object/apply:numpy._core.multiarray.scalar
     - *id001
     - !!binary |
-      VVVVPUUwYb8=
+      VVVVlWokP78=
   - !!python/object/apply:numpy._core.multiarray.scalar
     - *id001
     - !!binary |
-      VVVVFcppJ78=
+      VVVVNXJ0KD8=
   - !!python/object/apply:numpy._core.multiarray.scalar
     - *id001
     - !!binary |
-      AAAAUNLvS78=
+      AAAAXA5fVL8=
   - !!python/object/apply:numpy._core.multiarray.scalar
     - *id001
     - !!binary |
-      VVVV1f29KT8=
+      q6qqMGE6Ub8=
   - !!python/object/apply:numpy._core.multiarray.scalar
     - *id001
     - !!binary |
-      VVVVnRM7Xr8=
+      VVVVJXfhTL8=
   - !!python/object/apply:numpy._core.multiarray.scalar
     - *id001
     - !!binary |
-      VVVVCT2NTb8=
+      q6qq2hVTIb8=
   - !!python/object/apply:numpy._core.multiarray.scalar
     - *id001
     - !!binary |
-      q6qqRvFkQ78=
+      q6pqJ1B9Yb8=
   - !!python/object/apply:numpy._core.multiarray.scalar
     - *id001
     - !!binary |
-      VVVVJd6TaL8=
+      AAAAwszmWr8=
   - !!python/object/apply:numpy._core.multiarray.scalar
     - *id001
     - !!binary |
-      AAAA3EJUUb8=
+      VVVVBazhJb8=
   - !!python/object/apply:numpy._core.multiarray.scalar
     - *id001
     - !!binary |
-      q6qq+pkfMb8=
+      VVVVncoER78=
   - !!python/object/apply:numpy._core.multiarray.scalar
     - *id001
     - !!binary |
-      VVVV6cIdWr8=
+      AAAAqR7YST8=
   - !!python/object/apply:numpy._core.multiarray.scalar
     - *id001
     - !!binary |
-      VVVVh2iSWb8=
+      AAAAdlD5Y78=
   - !!python/object/apply:numpy._core.multiarray.scalar
     - *id001
     - !!binary |
-      VVVVQdf+Rr8=
+      AAAAZm/4Yr8=
   - !!python/object/apply:numpy._core.multiarray.scalar
     - *id001
     - !!binary |
-      q6qqKGVrXr8=
+      AAAAu3ZMVr8=
   - !!python/object/apply:numpy._core.multiarray.scalar
     - *id001
     - !!binary |
-      AAB42A6EVr8=
+      AAAANPYeWr8=
   - !!python/object/apply:numpy._core.multiarray.scalar
     - *id001
     - !!binary |
-      AACAaNCiYL8=
+      q6qqun+UUr8=
   - !!python/object/apply:numpy._core.multiarray.scalar
     - *id001
     - !!binary |
-      VVVVfWNXR78=
+      AAAA6NpmQb8=
   - !!python/object/apply:numpy._core.multiarray.scalar
     - *id001
     - !!binary |
-      AAAASNr/Yb8=
+      VVVVUcs9S78=
   - !!python/object/apply:numpy._core.multiarray.scalar
     - *id001
     - !!binary |
-      AAAAAI6oPb8=
+      q6qqmly0WL8=
   - !!python/object/apply:numpy._core.multiarray.scalar
     - *id001
     - !!binary |
-      VVVVuyfhQr8=
+      VVXVG5RtWb8=
   - !!python/object/apply:numpy._core.multiarray.scalar
     - *id001
     - !!binary |
-      AAAAsPcUNL8=
+      AAAAlGoTD78=
   - !!python/object/apply:numpy._core.multiarray.scalar
     - *id001
     - !!binary |
-      q6oqjfGub78=
+      VVVViQ7dYr8=
   - !!python/object/apply:numpy._core.multiarray.scalar
     - *id001
     - !!binary |
-      VVVVkfFmS78=
+      VVXVWvbJY78=
   - !!python/object/apply:numpy._core.multiarray.scalar
     - *id001
     - !!binary |
-      q6qqavXeOb8=
+      q6qq5eirYb8=
   - !!python/object/apply:numpy._core.multiarray.scalar
     - *id001
     - !!binary |
-      AAAAeUbFVL8=
+      AAAAO406ar8=
   - !!python/object/apply:numpy._core.multiarray.scalar
     - *id001
     - !!binary |
-      q6qqqvH3O78=
+      q6qqggGWXL8=
   - !!python/object/apply:numpy._core.multiarray.scalar
     - *id001
     - !!binary |
-      VVVVVY/74D4=
+      VVVVCx98Ub8=
   - !!python/object/apply:numpy._core.multiarray.scalar
     - *id001
     - !!binary |
-      q6qqVt1HW78=
+      q6qqqMPIUb8=
   - !!python/object/apply:numpy._core.multiarray.scalar
     - *id001
     - !!binary |
-      q6qqJ+UgYb8=
+      VVVVw4yoUr8=
   - !!python/object/apply:numpy._core.multiarray.scalar
     - *id001
     - !!binary |
-      VVVVaRJiWr8=
+      VVVVRQJJKD8=
   - !!python/object/apply:numpy._core.multiarray.scalar
     - *id001
     - !!binary |
-      VVVVZxAbUb8=
+      q6qqqA0tV78=
   - !!python/object/apply:numpy._core.multiarray.scalar
     - *id001
     - !!binary |
-      VVVVSXpaV78=
+      q6qqhgmPW78=
   - !!python/object/apply:numpy._core.multiarray.scalar
     - *id001
     - !!binary |
-      AAAAWDAlYb8=
+      VVVVf09jXb8=
   - !!python/object/apply:numpy._core.multiarray.scalar
     - *id001
     - !!binary |
-      VVVVCTsgPj8=
+      AAAA9OmLRb8=
   - !!python/object/apply:numpy._core.multiarray.scalar
     - *id001
     - !!binary |
-      VVVVHImwbb8=
+      AAAA3BafQb8=
   - !!python/object/apply:numpy._core.multiarray.scalar
     - *id001
     - !!binary |
-      VVVV5YItK78=
+      AACAsMM8U78=
   - !!python/object/apply:numpy._core.multiarray.scalar
     - *id001
     - !!binary |
-      AAAAaGxHSr8=
+      VVVVvS1mTb8=
+  - !!python/object/apply:numpy._core.multiarray.scalar
+    - *id001
+    - !!binary |
+      AAAAAHwc5L4=
+  - !!python/object/apply:numpy._core.multiarray.scalar
+    - *id001
+    - !!binary |
+      q6qqIt2NW78=
+  - !!python/object/apply:numpy._core.multiarray.scalar
+    - *id001
+    - !!binary |
+      VVVVipVAaL8=
