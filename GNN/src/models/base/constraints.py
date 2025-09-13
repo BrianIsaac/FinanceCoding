@@ -127,6 +127,10 @@ class ConstraintEngine:
         violations.extend(self.check_violations(constrained_weights, previous_weights))
 
         # Step 2: Apply constraints in priority order
+        # Apply turnover constraint first to preserve asset universe continuity
+        constrained_weights = self._apply_turnover_constraint(
+            constrained_weights, previous_weights, violations
+        )
         constrained_weights = self._apply_long_only_constraint(constrained_weights, violations)
         constrained_weights = self._apply_weight_threshold_constraint(
             constrained_weights, violations
@@ -135,9 +139,6 @@ class ConstraintEngine:
             constrained_weights, model_scores, violations
         )
         constrained_weights = self._apply_max_weight_constraint(constrained_weights, violations)
-        constrained_weights = self._apply_turnover_constraint(
-            constrained_weights, previous_weights, violations
-        )
 
         # Step 3: Final normalization - always normalize to 1.0
         constrained_weights = self._normalize_weights(constrained_weights)
@@ -342,17 +343,31 @@ class ConstraintEngine:
         turnover = self.calculate_turnover(weights, previous_weights)
 
         if turnover > self.constraints.max_monthly_turnover:
-            # Calculate blending factor to achieve target turnover
+            # Calculate correct blending factor to achieve target turnover
+            # If target_turnover = α * current_turnover, then α = target/current
             target_turnover = self.constraints.max_monthly_turnover
-            blend_factor = target_turnover / turnover if turnover > 0 else 1.0
 
-            # Only blend among assets that are in current weights (preserve top-k constraint)
-            current_assets = weights.index
-            previous_aligned = previous_weights.reindex(current_assets, fill_value=0.0)
+            # Align weights to common universe
+            all_assets = weights.index.union(previous_weights.index)
+            current_aligned = weights.reindex(all_assets, fill_value=0.0)
+            previous_aligned = previous_weights.reindex(all_assets, fill_value=0.0)
 
-            # Blend weights only for assets in current portfolio
-            blended_weights = blend_factor * weights + (1 - blend_factor) * previous_aligned
-            weights = blended_weights
+            # Calculate the scaling factor needed
+            # If we move α fraction towards new weights: (1-α)*prev + α*new
+            # The turnover will be α * original_turnover
+            alpha = target_turnover / turnover if turnover > 0 else 0.0
+            alpha = min(alpha, 1.0)  # Cap at 1.0
+
+            # Apply constrained blending
+            blended_weights = (1 - alpha) * previous_aligned + alpha * current_aligned
+
+            # Only keep assets that were in the original weights (preserve other constraints)
+            weights = blended_weights.reindex(weights.index, fill_value=0.0)
+
+            # Ensure weights sum to 1.0 to prevent subsequent normalization from undoing turnover constraint
+            weight_sum = weights.sum()
+            if weight_sum > 0:
+                weights = weights / weight_sum
 
         return weights
 

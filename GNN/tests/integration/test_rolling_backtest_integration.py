@@ -453,7 +453,7 @@ class TestRollingBacktestIntegration:
         config = RollingBacktestConfig(
             start_date=pd.Timestamp("2021-01-01"),
             end_date=pd.Timestamp("2023-12-31"),
-            training_months=6,  # Smaller windows for memory efficiency
+            training_months=12,  # Minimum required training period
             validation_months=3,
             test_months=3,
             step_months=3,
@@ -514,7 +514,7 @@ class TestRollingBacktestIntegration:
         config = RollingBacktestConfig(
             start_date=pd.Timestamp("2021-01-01"),
             end_date=pd.Timestamp("2022-12-31"),
-            training_months=6,
+            training_months=12,  # Minimum required training period
             validation_months=3,
             test_months=3,
         )

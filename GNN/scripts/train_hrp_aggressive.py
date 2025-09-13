@@ -307,7 +307,7 @@ class AggressiveHRPTraining:
                     best_score = score
                     best_n_clusters = n_clusters
                     best_labels = labels
-            except:
+            except (ValueError, RuntimeError):
                 continue
 
         if best_labels is None:

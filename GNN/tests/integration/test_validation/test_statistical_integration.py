@@ -213,9 +213,13 @@ class TestStatisticalValidationIntegration:
         bootstrap_significant = bootstrap_result["bootstrap_p_value"] < 0.05
         hypothesis_significant = hypothesis_result.is_significant
 
-        # At least two methods should agree (allowing for some variation in p-values near boundary)
+        # All methods should agree (either all find significance or all don't)
+        # Allow for boundary cases where p-values are very close to 0.05
         agreement_count = sum([jk_significant, bootstrap_significant, hypothesis_significant])
-        assert agreement_count >= 2 or (
+
+        # Perfect agreement: all methods agree (either 0 or 3)
+        # Or boundary case: p-values close to significance threshold
+        assert agreement_count in [0, 3] or (
             abs(jk_result["p_value"] - 0.05) < 0.02
             or abs(bootstrap_result["bootstrap_p_value"] - 0.05) < 0.02
             or abs(hypothesis_result.p_value - 0.05) < 0.02
@@ -425,7 +429,13 @@ class TestStatisticalValidationIntegration:
                 "n_comparisons": len(corrected_results),
                 "n_significant": corrected_results["rejected_benjamini_hochberg"].sum(),
             },
-            "effect_sizes": {"effect_sizes": corrected_results.get("effect_size", []).tolist()},
+            "effect_sizes": {
+                "effect_sizes": (
+                    corrected_results.get("effect_size", []).tolist()
+                    if hasattr(corrected_results.get("effect_size", []), "tolist")
+                    else corrected_results.get("effect_size", [])
+                )
+            },
         }
 
         # Generate comprehensive report
@@ -581,6 +591,60 @@ class TestRobustnessAndReliability:
 
 class TestPerformanceAndEfficiency:
     """Test performance and efficiency of integrated framework."""
+    
+    @pytest.fixture
+    def comprehensive_test_data(self):
+        """Generate comprehensive test data simulating real portfolio scenarios."""
+        np.random.seed(42)
+
+        # Date range
+        start_date = datetime(2020, 1, 1)
+        end_date = datetime(2023, 12, 31)
+        dates = pd.date_range(start_date, end_date, freq="D")
+        n_days = len(dates)
+
+        # Market regimes (bull/bear)
+        regime_changes = [252, 504, 756]  # Change points
+        regimes = np.ones(n_days)
+        for change in regime_changes:
+            if change < n_days:
+                regimes[change:] = -regimes[change - 1]
+
+        # Base market returns with regime dependency
+        market_base = np.where(regimes > 0, 0.0008, -0.0002)  # Bull/bear base returns
+        market_vol = np.where(regimes > 0, 0.015, 0.025)  # Lower vol in bull markets
+
+        market_returns = np.random.normal(market_base, market_vol)
+
+        # Strategy returns with different characteristics
+        strategies = {
+            "HRP": {
+                "alpha": 0.0002,
+                "beta": 0.8,
+                "vol_multiplier": 0.9,
+                "skill_decay": 0.0,  # Consistent performance
+            },
+            "LSTM": {
+                "alpha": 0.0004,
+                "beta": 1.1,
+                "vol_multiplier": 1.2,
+                "skill_decay": 0.000001,  # Slight decay
+            },
+        }
+
+        returns_dict = {}
+        for strategy_name, params in strategies.items():
+            strategy_returns = (
+                params["alpha"]
+                + params["beta"] * market_returns
+                + np.random.normal(0, market_vol * params["vol_multiplier"])
+            )
+            
+            returns_dict[strategy_name] = pd.Series(
+                strategy_returns, index=dates, name=strategy_name
+            )
+
+        return {"returns": returns_dict, "dates": dates, "market_returns": market_returns}
 
     def test_computational_time_reasonable(self, comprehensive_test_data):
         """Test that computations complete in reasonable time."""

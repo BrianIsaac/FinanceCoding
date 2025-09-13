@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 class EqualWeightModel(PortfolioModel):
     """
     Equal weight baseline model.
-    
+
     Allocates equal weights to all assets in the universe.
     This serves as a naive baseline for comparison.
     """
@@ -43,7 +43,7 @@ class EqualWeightModel(PortfolioModel):
     ) -> None:
         """
         Fit equal weight model (no actual training required).
-        
+
         Args:
             returns: Historical returns data
             universe: Asset universe
@@ -60,11 +60,11 @@ class EqualWeightModel(PortfolioModel):
     ) -> pd.Series:
         """
         Generate equal weights for universe.
-        
+
         Args:
             date: Prediction date
             universe: Asset universe (uses fitted universe if None)
-            
+
         Returns:
             Equal weights for all assets
         """
@@ -98,7 +98,7 @@ class EqualWeightModel(PortfolioModel):
 class MarketCapWeightedModel(PortfolioModel):
     """
     Market capitalization weighted baseline model.
-    
+
     Allocates weights proportional to market capitalisation.
     Uses returns volatility as a proxy for market cap when actual
     market cap data is not available.
@@ -107,7 +107,7 @@ class MarketCapWeightedModel(PortfolioModel):
     def __init__(self, lookback_days: int = 252, constraints: PortfolioConstraints | None = None):
         """
         Initialize market cap weighted model.
-        
+
         Args:
             lookback_days: Days to use for volatility calculation
             constraints: Portfolio constraints
@@ -127,7 +127,7 @@ class MarketCapWeightedModel(PortfolioModel):
     ) -> None:
         """
         Fit market cap weighted model.
-        
+
         Args:
             returns: Historical returns data
             universe: Asset universe
@@ -145,14 +145,14 @@ class MarketCapWeightedModel(PortfolioModel):
     ) -> pd.Series:
         """
         Generate market cap weighted portfolio.
-        
+
         Uses inverse volatility as proxy for market cap when actual
         market cap data is unavailable.
-        
+
         Args:
             date: Prediction date
             universe: Asset universe (uses fitted universe if None)
-            
+
         Returns:
             Market cap weighted portfolio
         """
@@ -207,7 +207,7 @@ class MarketCapWeightedModel(PortfolioModel):
 class MeanReversionModel(PortfolioModel):
     """
     Mean reversion baseline model.
-    
+
     Allocates higher weights to assets that have underperformed
     recently, based on mean reversion principle.
     """
@@ -215,7 +215,7 @@ class MeanReversionModel(PortfolioModel):
     def __init__(self, lookback_days: int = 21, reversion_strength: float = 1.0, constraints: PortfolioConstraints | None = None):
         """
         Initialize mean reversion model.
-        
+
         Args:
             lookback_days: Days to look back for performance calculation
             reversion_strength: Strength of mean reversion signal (1.0 = full reversion)
@@ -237,7 +237,7 @@ class MeanReversionModel(PortfolioModel):
     ) -> None:
         """
         Fit mean reversion model.
-        
+
         Args:
             returns: Historical returns data
             universe: Asset universe
@@ -255,13 +255,13 @@ class MeanReversionModel(PortfolioModel):
     ) -> pd.Series:
         """
         Generate mean reversion weighted portfolio.
-        
+
         Assets with worse recent performance receive higher weights.
-        
+
         Args:
             date: Prediction date
             universe: Asset universe (uses fitted universe if None)
-            
+
         Returns:
             Mean reversion weighted portfolio
         """
@@ -325,7 +325,7 @@ class MeanReversionModel(PortfolioModel):
 class MinimumVarianceModel(PortfolioModel):
     """
     Minimum variance baseline model.
-    
+
     Constructs a portfolio that minimises variance based on
     historical covariance matrix.
     """
@@ -333,7 +333,7 @@ class MinimumVarianceModel(PortfolioModel):
     def __init__(self, lookback_days: int = 252, regularization: float = 1e-4, constraints: PortfolioConstraints | None = None):
         """
         Initialize minimum variance model.
-        
+
         Args:
             lookback_days: Days to use for covariance estimation
             regularization: Regularization parameter for covariance matrix
@@ -355,7 +355,7 @@ class MinimumVarianceModel(PortfolioModel):
     ) -> None:
         """
         Fit minimum variance model.
-        
+
         Args:
             returns: Historical returns data
             universe: Asset universe
@@ -373,11 +373,11 @@ class MinimumVarianceModel(PortfolioModel):
     ) -> pd.Series:
         """
         Generate minimum variance portfolio.
-        
+
         Args:
             date: Prediction date
             universe: Asset universe (uses fitted universe if None)
-            
+
         Returns:
             Minimum variance weighted portfolio
         """
@@ -462,7 +462,7 @@ class MinimumVarianceModel(PortfolioModel):
 class MomentumModel(PortfolioModel):
     """
     Momentum baseline model.
-    
+
     Allocates higher weights to assets with strong recent performance,
     based on momentum principle.
     """
@@ -470,7 +470,7 @@ class MomentumModel(PortfolioModel):
     def __init__(self, lookback_days: int = 63, momentum_strength: float = 1.0, constraints: PortfolioConstraints | None = None):
         """
         Initialize momentum model.
-        
+
         Args:
             lookback_days: Days to look back for momentum calculation
             momentum_strength: Strength of momentum signal
@@ -492,7 +492,7 @@ class MomentumModel(PortfolioModel):
     ) -> None:
         """
         Fit momentum model.
-        
+
         Args:
             returns: Historical returns data
             universe: Asset universe
@@ -510,13 +510,13 @@ class MomentumModel(PortfolioModel):
     ) -> pd.Series:
         """
         Generate momentum weighted portfolio.
-        
+
         Assets with better recent performance receive higher weights.
-        
+
         Args:
             date: Prediction date
             universe: Asset universe (uses fitted universe if None)
-            
+
         Returns:
             Momentum weighted portfolio
         """
