@@ -14,10 +14,13 @@ Key features added/kept vs. your previous version:
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 
 import torch
 from torch import nn
 from torch.nn import functional as F
+
+logger = logging.getLogger(__name__)
 
 try:
     from torch_geometric.nn import GATConv, GATv2Conv  # type: ignore
@@ -30,38 +33,96 @@ except Exception:  # pragma: no cover
 
 def masked_softmax(logits: torch.Tensor, mask: torch.Tensor, dim: int = -1) -> torch.Tensor:
     """
-    Softmax over only True entries of mask (boolean). Zeros elsewhere.
+    Numerically stable softmax over only True entries of mask (boolean). Zeros elsewhere.
     """
-    very_neg = torch.finfo(logits.dtype).min / 4.0
+    # Clamp input logits to prevent extreme values
+    logits = torch.clamp(logits, min=-50.0, max=50.0)
+
+    # Use a more conservative negative value
+    very_neg = -100.0  # Stable value instead of dtype min
     z = torch.where(mask, logits, torch.full_like(logits, very_neg))
-    p = F.softmax(z, dim=dim)
-    p = torch.where(mask, p, torch.zeros_like(p))
-    s = p.sum(dim=dim, keepdim=True).clamp_min(1e-12)
-    return p / s
+
+    # Numerically stable softmax with max subtraction
+    z_max = z.max(dim=dim, keepdim=True)[0]
+    z_stable = z - z_max
+
+    # Apply softmax with numerical stability
+    exp_z = torch.exp(torch.clamp(z_stable, min=-50.0, max=50.0))
+    exp_z = torch.where(mask, exp_z, torch.zeros_like(exp_z))
+
+    # Normalize with numerical stability
+    s = exp_z.sum(dim=dim, keepdim=True).clamp_min(1e-12)
+    p = exp_z / s
+
+    # Final validation - ensure no NaN or Inf values
+    p = torch.where(torch.isfinite(p), p, torch.zeros_like(p))
+
+    return p
 
 
 def sparsemax(tensor: torch.Tensor, dim: int = -1) -> torch.Tensor:
-    # after
+    """
+    Numerically stable sparsemax implementation.
+    """
+    # Clamp input tensor to prevent extreme values
+    tensor = torch.clamp(tensor, min=-100.0, max=100.0)
+
     tensor = tensor.transpose(dim, -1)
     input_flat = tensor.reshape(-1, tensor.size(-1))
+
+    # Numerically stable sorting and computation
     zs = torch.sort(input_flat, descending=True, dim=-1).values
+    zs = torch.clamp(zs, min=-100.0, max=100.0)  # Additional stability
+
     range_ = torch.arange(1, zs.size(-1) + 1, device=tensor.device, dtype=tensor.dtype).view(1, -1)
     cssv = zs.cumsum(dim=-1) - 1
-    cond = zs - cssv / range_ > 0
+
+    # Prevent division by zero and extreme values
+    range_safe = range_.clamp(min=1e-12)
+    cond = zs - cssv / range_safe > 0
     k = cond.sum(dim=-1).clamp(min=1)
-    tau = cssv.gather(1, (k - 1).unsqueeze(1)).squeeze(1) / k
-    output_flat = torch.clamp(input_flat - tau.unsqueeze(1), min=0.0)
+
+    # Numerically stable tau computation
+    tau = cssv.gather(1, (k - 1).unsqueeze(1)).squeeze(1) / k.clamp(min=1e-12)
+    tau = torch.clamp(tau, min=-100.0, max=100.0)
+
+    output_flat = torch.clamp(input_flat - tau.unsqueeze(1), min=0.0, max=1.0)
     output = output_flat.view_as(tensor)
     output = output.transpose(dim, -1)
+
+    # Ensure proper normalization with numerical stability
     s = output.sum(dim=dim, keepdim=True).clamp_min(1e-12)
-    return output / s
+    output = output / s
+
+    # Final validation - ensure no NaN or Inf values
+    output = torch.where(torch.isfinite(output), output, torch.zeros_like(output))
+
+    return output
 
 
 def masked_sparsemax(logits: torch.Tensor, mask: torch.Tensor, dim: int = -1) -> torch.Tensor:
-    very_neg = torch.finfo(logits.dtype).min / 4.0
+    """
+    Numerically stable sparsemax over only True entries of mask (boolean). Zeros elsewhere.
+    """
+    # Clamp input logits to prevent extreme values
+    logits = torch.clamp(logits, min=-50.0, max=50.0)
+
+    # Use a more conservative negative value
+    very_neg = -100.0
     z = torch.where(mask, logits, torch.full_like(logits, very_neg))
+
+    # Apply sparsemax (now numerically stable)
     p = sparsemax(z, dim=dim)
-    return torch.where(mask, p, torch.zeros_like(p))
+
+    # Ensure zeros where mask is False
+    p = torch.where(mask, p, torch.zeros_like(p))
+
+    # Renormalize to ensure sum = 1 for valid entries
+    s = p.sum(dim=dim, keepdim=True).clamp_min(1e-12)
+    output = p / s
+
+    # Final validation
+    return torch.where(torch.isfinite(output), output, torch.zeros_like(output))
 
 
 # ---------------------------- portfolio-specific layers ----------------------------
@@ -96,8 +157,13 @@ class PortfolioConstraintLayer(nn.Module):
         Returns:
             Constrained portfolio weights
         """
-        # Scale by temperature
-        scaled_logits = logits / self.temperature
+        # Clamp input logits to prevent extreme values before processing
+        logits = torch.clamp(logits, min=-50.0, max=50.0)
+
+        # Scale by temperature with bounds checking
+        temperature = max(self.temperature, 1e-6)  # Prevent division by zero
+        scaled_logits = logits / temperature
+        scaled_logits = torch.clamp(scaled_logits, min=-50.0, max=50.0)
 
         # Apply constraint-aware activation
         if activation.lower() == "sparsemax":
@@ -105,12 +171,23 @@ class PortfolioConstraintLayer(nn.Module):
         else:
             weights = masked_softmax(scaled_logits, mask.bool(), dim=-1)
 
+        # Validate weights before threshold application
+        weights = torch.where(torch.isfinite(weights), weights, torch.zeros_like(weights))
+
         # Apply minimum weight threshold
         weights = torch.where(weights < self.min_weight, torch.zeros_like(weights), weights)
 
-        # Renormalize to ensure sum = 1
+        # Renormalize to ensure sum = 1 with numerical stability
         weight_sum = weights.sum(dim=-1, keepdim=True).clamp(min=1e-12)
         weights = weights / weight_sum
+
+        # Final validation and clamping
+        weights = torch.clamp(weights, min=0.0, max=1.0)
+        weights = torch.where(torch.isfinite(weights), weights, torch.zeros_like(weights))
+
+        # Ensure weights sum to approximately 1.0
+        final_sum = weights.sum(dim=-1, keepdim=True).clamp(min=1e-12)
+        weights = weights / final_sum
 
         return weights
 
@@ -243,7 +320,7 @@ class GATBlock(nn.Module):
         if self.residual:
             h = h + x
 
-        h = F.elu(h)  # Using ELU for better gradient flow
+        h = F.gelu(h)  # Using GELU for better gradient flow
         h = self.ln(h)
         h = self.dropout(h)
         return h
@@ -260,11 +337,15 @@ class HeadCfg:
 
 class GATPortfolio(nn.Module):
     """
-    Enhanced GAT model for portfolio optimization with portfolio-specific optimizations.
+    CORRECTED GAT model for portfolio optimization with proper two-stage architecture.
+
+    Key fix: Implements the missing simplex projection head from the proposal.
+    GAT layers create relationship-aware embeddings, then a separate projection
+    head transforms these to portfolio weights.
 
     Returns:
-        if head == "direct":  (weights[N], new_mem[N, mem_dim])
-        if head == "markowitz": (mu_hat[N], new_mem[N, mem_dim])
+        if head == "direct":  (weights[N], new_mem[N, mem_dim], regularization_loss)
+        if head == "markowitz": (mu_hat[N], new_mem[N, mem_dim], regularization_loss)
     """
 
     def __init__(
@@ -282,8 +363,10 @@ class GATPortfolio(nn.Module):
         mem_hidden: int | None = None,
         constraint_aware: bool = True,
         portfolio_temperature: float = 1.0,
+        graph_type: str = "default",  # For selecting appropriate projection head
     ) -> None:
         super().__init__()
+        self.graph_type = graph_type
         self.use_edge_attr = use_edge_attr
         self.head_mode = head
         self.head_activation = activation if head == "direct" else "none"
@@ -320,10 +403,10 @@ class GATPortfolio(nn.Module):
             self.readout = nn.Sequential(
                 nn.Linear(self.head_in_dim, self.head_in_dim * 2),
                 nn.BatchNorm1d(self.head_in_dim * 2),
-                nn.ReLU(inplace=True),
+                nn.GELU(),
                 nn.Dropout(dropout),
                 nn.Linear(self.head_in_dim * 2, hidden_dim),
-                nn.ReLU(inplace=True),
+                nn.GELU(),
                 nn.Dropout(dropout * 0.5),  # Reduced dropout for final layer
                 nn.Linear(hidden_dim, 1),
             )
@@ -331,7 +414,7 @@ class GATPortfolio(nn.Module):
             # Standard readout for Markowitz head
             self.readout = nn.Sequential(
                 nn.Linear(self.head_in_dim, self.head_in_dim),
-                nn.ReLU(inplace=True),
+                nn.GELU(),
                 nn.Dropout(dropout),
                 nn.Linear(self.head_in_dim, 1),
             )
@@ -355,6 +438,61 @@ class GATPortfolio(nn.Module):
         # Portfolio-specific regularization
         self.portfolio_reg = PortfolioRegularization() if constraint_aware else None
 
+        # CRITICAL FIX: Add proper simplex projection head
+        # This is the missing component from the proposal!
+        if head == "direct":
+            # Import at top of module if not already there
+            try:
+                from .simplex_projection_head import (
+                    SimplexProjectionHead,
+                    RelationAwareAllocationHead,
+                    DiversificationAwareProjectionHead
+                )
+            except ImportError:
+                logger.warning("Simplex projection heads not found, using fallback")
+                SimplexProjectionHead = None
+
+            if SimplexProjectionHead is not None:
+                # Select projection head based on graph type
+                if graph_type.lower() in ['tmfg', 'knn']:
+                    # These graphs tend to concentrate - use stronger diversification
+                    self.simplex_projection_head = DiversificationAwareProjectionHead(
+                        input_dim=self.head_in_dim,
+                        hidden_dim=hidden_dim,
+                        num_layers=3,
+                        min_effective_assets=20,
+                        diversification_strength=2.0,
+                        dropout=dropout,
+                        temperature=portfolio_temperature,
+                    )
+                    logger.info(f"Using DiversificationAwareProjectionHead for {graph_type}")
+                elif graph_type.lower() == 'mst':
+                    # MST benefits from relation-aware allocation
+                    self.simplex_projection_head = RelationAwareAllocationHead(
+                        input_dim=self.head_in_dim,
+                        hidden_dim=hidden_dim,
+                        num_layers=3,
+                        attention_dim=heads,
+                        dropout=dropout,
+                        temperature=portfolio_temperature,
+                    )
+                    logger.info(f"Using RelationAwareAllocationHead for {graph_type}")
+                else:
+                    # Default simplex projection
+                    self.simplex_projection_head = SimplexProjectionHead(
+                        input_dim=self.head_in_dim,
+                        hidden_dim=hidden_dim,
+                        num_layers=2,
+                        dropout=dropout,
+                        temperature=portfolio_temperature,
+                    )
+                    logger.info("Using standard SimplexProjectionHead")
+            else:
+                self.simplex_projection_head = None
+                logger.warning("Falling back to direct attention weights (incorrect but compatible)")
+        else:
+            self.simplex_projection_head = None
+
         self.reset_parameters()
 
     # ----------------- properties -----------------
@@ -366,9 +504,10 @@ class GATPortfolio(nn.Module):
     def reset_parameters(self) -> None:
         for m in self.modules():
             if isinstance(m, nn.Linear):
-                nn.init.xavier_uniform_(m.weight)
+                # Use Kaiming initialization for better gradient flow with GELU
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
                 if m.bias is not None:
-                    nn.init.zeros_(m.bias)
+                    nn.init.constant_(m.bias, 0.01)  # Small positive bias to prevent dead neurons
 
     def forward(
         self,
@@ -390,7 +529,7 @@ class GATPortfolio(nn.Module):
                 prev_mem = torch.zeros(h.size(0), self._mem_dim, device=h.device, dtype=h.dtype)
             m_new = self.mem_gru(h, prev_mem)
             h = torch.cat([h, m_new], dim=-1)
-            h = F.relu(self.mem_fuse(h))
+            h = F.gelu(self.mem_fuse(h))
         else:
             m_new = torch.zeros(h.size(0), 0, device=h.device, dtype=h.dtype)
 
@@ -403,9 +542,57 @@ class GATPortfolio(nn.Module):
         reg_loss = None
 
         if self.head_mode == "direct":
-            # Enhanced direct weight prediction with constraint layer
-            if self.constraint_layer is not None:
-                # Use constraint-aware layer for better weight prediction
+            # CRITICAL FIX: Use simplex projection head instead of direct attention weights
+            if hasattr(self, 'simplex_projection_head') and self.simplex_projection_head is not None:
+                # This is the correct two-stage process:
+                # 1. GAT creates node embeddings (h)
+                # 2. Simplex projection transforms embeddings to weights
+
+                # Get correlation matrix if using DiversificationAwareProjectionHead
+                correlation_matrix = None
+                if hasattr(self.simplex_projection_head, 'min_effective_assets'):
+                    # For diversification-aware head, we might want to pass correlation
+                    # This would need to be passed in from the model wrapper
+                    correlation_matrix = None  # Would be passed from caller if available
+
+                # Apply projection head to get portfolio weights
+                # Different projection heads expect different parameters
+                if hasattr(self.simplex_projection_head, 'min_effective_assets'):
+                    # DiversificationAwareProjectionHead expects correlation_matrix
+                    w = self.simplex_projection_head(
+                        h,
+                        correlation_matrix=correlation_matrix,
+                        mask=mask_valid
+                    )
+                elif hasattr(self.simplex_projection_head, 'attention_processor'):
+                    # RelationAwareAllocationHead expects attention_weights
+                    # For now, pass None as we don't track attention weights separately
+                    w = self.simplex_projection_head(
+                        h,
+                        attention_weights=None,
+                        mask=mask_valid
+                    )
+                else:
+                    # SimplexProjectionHead only needs embeddings and mask
+                    w = self.simplex_projection_head(
+                        h,
+                        mask=mask_valid
+                    )
+
+                # Compute portfolio regularization if enabled
+                if self.portfolio_reg is not None:
+                    if prev_weights is not None:
+                        reg_loss = self.portfolio_reg(
+                            w.unsqueeze(0) if w.dim() == 1 else w,
+                            prev_weights.unsqueeze(0) if prev_weights.dim() == 1 else prev_weights,
+                        )
+                    else:
+                        reg_loss = self.portfolio_reg(w.unsqueeze(0) if w.dim() == 1 else w)
+
+                logger.debug(f"Using simplex projection head: max weight={w.max():.3f}, effective assets={1.0/((w**2).sum()):.1f}")
+
+            elif self.constraint_layer is not None:
+                # Fallback to constraint layer if no projection head
                 if scores.dim() == 1:
                     scores = scores.unsqueeze(0)
                     mask_valid = mask_valid.unsqueeze(0)
@@ -427,12 +614,17 @@ class GATPortfolio(nn.Module):
                         )
                     else:
                         reg_loss = self.portfolio_reg(w.unsqueeze(0) if w.dim() == 1 else w)
+
+                logger.warning("Using constraint layer fallback (not ideal)")
+
             else:
-                # Fallback to original implementation
+                # Final fallback to original incorrect implementation
                 if self.head_activation.lower() == "softmax":
                     w = masked_softmax(scores, mask_valid.bool(), dim=-1)
                 else:
                     w = masked_sparsemax(scores, mask_valid.bool(), dim=-1)
+
+                logger.warning("Using direct attention scores as weights (INCORRECT - proposal mismatch!)")
 
             return w, m_new, reg_loss
 

@@ -101,19 +101,78 @@ class PortfolioModel(ABC):
         """
         pass
 
+    def rolling_fit(
+        self,
+        returns: pd.DataFrame,
+        universe: list[str],
+        rebalance_date: pd.Timestamp,
+        lookback_months: int = 36,
+        min_observations: int = 252,
+    ) -> None:
+        """
+        Perform rolling fit for monthly retraining.
+
+        This method enables models to retrain on a rolling window of data,
+        updating model parameters based on recent market conditions while
+        maintaining computational efficiency.
+
+        Args:
+            returns: Full historical returns DataFrame
+            universe: Dynamic universe of assets for this rebalancing period
+            rebalance_date: Date for which we're rebalancing (training uses data up to this date - 1)
+            lookback_months: Number of months to look back for training data
+            min_observations: Minimum number of observations required for training
+
+        Raises:
+            NotImplementedError: If model doesn't support rolling retraining
+            ValueError: If insufficient data for rolling window
+        """
+        # Default implementation - call regular fit with rolling window
+        end_date = rebalance_date - pd.Timedelta(days=1)
+        start_date = end_date - pd.Timedelta(days=lookback_months * 30)
+
+        # Filter returns for rolling window
+        mask = (returns.index >= start_date) & (returns.index <= end_date)
+        rolling_returns = returns[mask]
+
+        if len(rolling_returns) < min_observations:
+            raise ValueError(
+                f"Insufficient data for rolling fit: {len(rolling_returns)} < {min_observations}"
+            )
+
+        # Call regular fit with rolling window
+        self.fit(rolling_returns, universe, (start_date, end_date))
+
+    def supports_rolling_retraining(self) -> bool:
+        """
+        Check if model supports rolling retraining.
+
+        Returns:
+            True if model supports efficient rolling retraining,
+            False if model should use static training only
+        """
+        # Models can override this to indicate rolling support
+        return False
+
     def validate_weights(
         self,
         weights: pd.Series,
         previous_weights: pd.Series | None = None,
         model_scores: pd.Series | None = None,
         date: pd.Timestamp | None = None,
+        use_soft_constraints: bool = True,
     ) -> pd.Series:
         """
         Validate and enforce portfolio constraints using unified constraint engine.
 
+        Now supports soft constraints for better real-world flexibility.
+
         Args:
             weights: Raw portfolio weights
             previous_weights: Previous period weights for turnover calculation
+            model_scores: Model confidence scores (optional)
+            date: Current date for adaptive constraints
+            use_soft_constraints: Use soft penalties instead of hard limits
             model_scores: Model confidence scores for position ranking
             date: Current rebalancing date for logging
 

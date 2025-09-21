@@ -50,7 +50,7 @@ class HRPClustering:
 
     def build_correlation_distance(
         self, returns: pd.DataFrame, method: str | None = None
-    ) -> np.ndarray:
+    ) -> tuple[np.ndarray, list[str]]:
         """
         Convert correlation matrix to distance metric using (1 - correlation)/2.
 
@@ -59,7 +59,7 @@ class HRPClustering:
             method: Correlation method override (pearson, spearman, kendall)
 
         Returns:
-            Distance matrix as 2D numpy array
+            Tuple of (distance matrix as 2D numpy array, list of valid asset names)
 
         Raises:
             ValueError: If returns data is insufficient
@@ -75,11 +75,23 @@ class HRPClustering:
                 f"Insufficient observations: {len(returns)} < {self.config.min_observations}"
             )
 
-        # Calculate correlation matrix
-        correlation_matrix = returns.corr(method=correlation_method)
+        # Remove assets with zero variance (constant returns)
+        returns_std = returns.std()
+        valid_assets = returns_std[returns_std > 1e-8].index
+        if len(valid_assets) < 2:
+            raise ValueError("Insufficient assets with non-zero variance")
 
-        # Handle NaN values in correlation matrix
-        correlation_matrix = correlation_matrix.fillna(0.0)
+        returns_clean = returns[valid_assets].copy()
+
+        # Calculate correlation matrix
+        correlation_matrix = returns_clean.corr(method=correlation_method)
+
+        # Handle NaN values in correlation matrix (shouldn't happen after cleaning)
+        if correlation_matrix.isna().any().any():
+            # Fill NaN values with 0 correlation
+            correlation_matrix = correlation_matrix.fillna(0.0)
+            # Set diagonal to 1
+            np.fill_diagonal(correlation_matrix.values, 1.0)
 
         # Apply minimum correlation threshold if specified
         if self.config.min_correlation_threshold is not None:
@@ -97,7 +109,8 @@ class HRPClustering:
         distance_matrix = np.clip(distance_matrix, 0.0, 1.0)
 
         self._distance_matrix = distance_matrix
-        return distance_matrix
+        self._valid_assets = valid_assets.tolist()
+        return distance_matrix, valid_assets.tolist()
 
     def hierarchical_clustering(
         self, distance_matrix: np.ndarray | None = None, linkage_method: str | None = None

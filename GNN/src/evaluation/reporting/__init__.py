@@ -28,10 +28,21 @@ from src.evaluation.reporting.regime_analysis import MarketRegimeAnalysis, Regim
 from src.evaluation.reporting.risk_return import RiskReturnAnalysis, RiskReturnConfig
 from src.evaluation.reporting.strategy import StrategyConfig, StrategyRecommendationEngine
 
+# Academic reporting with flexible framework
+from src.evaluation.reporting.academic_report_generator import (
+    AcademicReportConfig,
+    AcademicReportGenerator,
+    create_academic_report_generator,
+)
+
 # Legacy components
 from src.evaluation.reporting.tables import PerformanceComparisonTables, TableConfig
 
 __all__ = [
+    # Academic reporting with flexible framework
+    "AcademicReportConfig",
+    "AcademicReportGenerator",
+    "create_academic_report_generator",
     # New comprehensive reporting framework
     "ComprehensiveReportGenerator",
     "ReportConfig",

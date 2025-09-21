@@ -71,6 +71,9 @@ class GapFiller:
     ) -> pd.Series:
         """Backward fill with optional volume validation.
 
+        WARNING: This method creates temporal leakage by using future data
+        to fill past missing values. Use forward_fill() instead for model training.
+
         Args:
             series: Price series to fill
             limit: Maximum number of consecutive fills

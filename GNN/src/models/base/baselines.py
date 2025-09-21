@@ -34,6 +34,7 @@ class EqualWeightModel(PortfolioModel):
             constraints = PortfolioConstraints()
         super().__init__(constraints)
         self.name = "EqualWeight"
+        self._is_baseline = True  # Mark as baseline model for rolling engine
 
     def fit(
         self,
@@ -117,6 +118,7 @@ class MarketCapWeightedModel(PortfolioModel):
         super().__init__(constraints)
         self.name = "MarketCapWeighted"
         self.lookback_days = lookback_days
+        self._is_baseline = True  # Mark as baseline model for rolling engine
         self.returns_data = None
 
     def fit(
@@ -157,22 +159,39 @@ class MarketCapWeightedModel(PortfolioModel):
             Market cap weighted portfolio
         """
         if not self.is_fitted or self.returns_data is None:
+            logger.error(f"MarketCapWeighted model not fitted properly: is_fitted={self.is_fitted}, has_returns_data={self.returns_data is not None}")
             raise ValueError("Model must be fitted before prediction")
 
         target_universe = universe or self.universe
         if not target_universe:
+            logger.warning(f"MarketCapWeighted: Empty target universe")
             return pd.Series(dtype=float)
+
+        # Handle dynamic universe - filter to available assets
+        available_assets = [asset for asset in target_universe if asset in self.returns_data.columns]
+        unavailable_assets = [asset for asset in target_universe if asset not in self.returns_data.columns]
+
+        if not available_assets:
+            logger.warning(f"MarketCapWeighted: No assets from target universe available in fitted data. Using equal weights.")
+            equal_weight = 1.0 / len(target_universe)
+            return pd.Series(equal_weight, index=target_universe, name="market_cap_weights")
+
+        if unavailable_assets:
+            logger.debug(f"MarketCapWeighted: {len(unavailable_assets)} assets not in fitted data: {unavailable_assets[:5]}...")
 
         # Get historical returns up to prediction date
         end_date = date
         start_date = end_date - pd.Timedelta(days=self.lookback_days)
 
         historical_returns = self.returns_data.loc[
-            start_date:end_date, target_universe
+            start_date:end_date, available_assets
         ]
+
+        logger.debug(f"MarketCapWeighted prediction for {date}: lookback {start_date} to {end_date}, data shape {historical_returns.shape}")
 
         if historical_returns.empty:
             # Fallback to equal weights if no data
+            logger.warning(f"MarketCapWeighted: NO DATA available for period {start_date} to {end_date}, falling back to equal weights")
             equal_weight = 1.0 / len(target_universe)
             return pd.Series(
                 equal_weight,
@@ -180,16 +199,90 @@ class MarketCapWeightedModel(PortfolioModel):
                 name="market_cap_weights"
             )
 
-        # Calculate volatilities
-        volatilities = historical_returns.std()
+        # Clean outliers before volatility calculation to prevent extreme weights
+        # First, identify and remove extreme outliers (likely data errors)
+        # Any return > 200% or < -80% in a single day is likely erroneous
+        extreme_threshold_upper = 2.0  # 200% daily return
+        extreme_threshold_lower = -0.8  # -80% daily return
+
+        # Replace extreme outliers with NaN first, then forward fill
+        cleaned_returns = historical_returns.copy()
+        cleaned_returns = cleaned_returns.where(
+            (cleaned_returns <= extreme_threshold_upper) &
+            (cleaned_returns >= extreme_threshold_lower),
+            np.nan
+        )
+
+        # Forward fill NaN values from outlier removal
+        cleaned_returns = cleaned_returns.ffill().bfill()
+
+        # Secondary clipping to reasonable bounds for remaining values
+        cleaned_returns = cleaned_returns.clip(lower=-0.5, upper=1.0)
+
+        # Calculate volatilities on cleaned data with additional robustness
+        # Use robust standard deviation (MAD-based) if available
+        volatilities = cleaned_returns.std()
+
+        # Additional safety: exclude assets with extreme volatilities
+        # Use a more reasonable threshold based on financial theory
+        # Most stocks have volatility between 15-60% annualised (0.01-0.04 daily)
+        # Allow up to 3x median or 5% daily volatility, whichever is higher
+        vol_median = volatilities.median()
+        vol_threshold = max(vol_median * 3, 0.05)  # More reasonable threshold
+        valid_assets = volatilities[volatilities <= vol_threshold].index
+
+        if len(valid_assets) < len(volatilities):
+            logger.warning(f"MarketCapWeighted: Excluding {len(volatilities) - len(valid_assets)} assets with extreme volatility")
+            volatilities = volatilities[valid_assets]
+
+        if volatilities.empty:
+            # Fallback to equal weights if no valid assets
+            logger.warning(f"MarketCapWeighted: No valid assets after volatility filtering, falling back to equal weights")
+            equal_weight = 1.0 / len(target_universe)
+            return pd.Series(
+                equal_weight,
+                index=target_universe,
+                name="market_cap_weights"
+            )
 
         # Use inverse volatility as proxy for market cap
         # (lower volatility = larger, more stable companies)
-        inverse_vol = 1.0 / (volatilities + 1e-8)  # Add small constant to avoid division by zero
+        # Add larger constant and cap inverse values to prevent extreme weights
+        min_volatility = max(volatilities.min(), 0.001)  # At least 0.1% daily volatility
+        adjusted_volatilities = volatilities.clip(lower=min_volatility)
 
-        # Normalise to get weights
+        # Use inverse with reasonable bounds
+        inverse_vol = 1.0 / adjusted_volatilities
+
+        # Additional capping of extreme inverse volatilities
+        inverse_vol_median = inverse_vol.median()
+        inverse_vol_cap = inverse_vol_median * 5  # Cap at 5x median
+        inverse_vol = inverse_vol.clip(upper=inverse_vol_cap)
+
+        # Normalise to get weights (only for valid assets)
         weights = inverse_vol / inverse_vol.sum()
-        weights.name = "market_cap_weights"
+
+        # Expand weights back to full universe
+        full_weights = pd.Series(0.0, index=target_universe, name="market_cap_weights")
+
+        # For dynamic universe: allocate 95% to market cap weights, 5% to new assets
+        if unavailable_assets:
+            market_cap_allocation = 0.95
+            new_asset_allocation = 0.05
+
+            # Scale down market cap weights
+            full_weights[weights.index] = weights * market_cap_allocation
+
+            # Equal allocation to new assets
+            new_asset_weight = new_asset_allocation / len(unavailable_assets)
+            full_weights[unavailable_assets] = new_asset_weight
+        else:
+            # No new assets, use full market cap weights
+            full_weights[weights.index] = weights
+
+        weights = full_weights
+
+        logger.debug(f"MarketCapWeighted generated weights: sum={weights.sum():.6f}, std={weights.std():.6f}, range=[{weights.min():.6f}, {weights.max():.6f}]")
 
         return weights
 
@@ -227,6 +320,7 @@ class MeanReversionModel(PortfolioModel):
         self.name = "MeanReversion"
         self.lookback_days = lookback_days
         self.reversion_strength = reversion_strength
+        self._is_baseline = True  # Mark as baseline model for rolling engine
         self.returns_data = None
 
     def fit(
@@ -266,22 +360,39 @@ class MeanReversionModel(PortfolioModel):
             Mean reversion weighted portfolio
         """
         if not self.is_fitted or self.returns_data is None:
+            logger.error(f"MeanReversion model not fitted properly: is_fitted={self.is_fitted}, has_returns_data={self.returns_data is not None}")
             raise ValueError("Model must be fitted before prediction")
 
         target_universe = universe or self.universe
         if not target_universe:
+            logger.warning(f"MeanReversion: Empty target universe")
             return pd.Series(dtype=float)
+
+        # Handle dynamic universe - filter to available assets
+        available_assets = [asset for asset in target_universe if asset in self.returns_data.columns]
+        unavailable_assets = [asset for asset in target_universe if asset not in self.returns_data.columns]
+
+        if not available_assets:
+            logger.warning(f"MeanReversion: No assets from target universe available in fitted data. Using equal weights.")
+            equal_weight = 1.0 / len(target_universe)
+            return pd.Series(equal_weight, index=target_universe, name="mean_reversion_weights")
+
+        if unavailable_assets:
+            logger.debug(f"MeanReversion: {len(unavailable_assets)} assets not in fitted data: {unavailable_assets[:5]}...")
 
         # Get recent returns for mean reversion signal
         end_date = date
         start_date = end_date - pd.Timedelta(days=self.lookback_days)
 
         recent_returns = self.returns_data.loc[
-            start_date:end_date, target_universe
+            start_date:end_date, available_assets
         ]
+
+        logger.debug(f"MeanReversion prediction for {date}: lookback {start_date} to {end_date}, data shape {recent_returns.shape}")
 
         if recent_returns.empty:
             # Fallback to equal weights if no data
+            logger.warning(f"MeanReversion: NO DATA available for period {start_date} to {end_date}, falling back to equal weights")
             equal_weight = 1.0 / len(target_universe)
             return pd.Series(
                 equal_weight,
@@ -304,7 +415,27 @@ class MeanReversionModel(PortfolioModel):
         exp_signal = np.exp(shifted_signal)
         weights = exp_signal / exp_signal.sum()
 
-        weights.name = "mean_reversion_weights"
+        # Expand weights to full universe
+        full_weights = pd.Series(0.0, index=target_universe, name="mean_reversion_weights")
+
+        # For dynamic universe: allocate 95% to mean reversion weights, 5% to new assets
+        if unavailable_assets:
+            mean_reversion_allocation = 0.95
+            new_asset_allocation = 0.05
+
+            # Scale down mean reversion weights
+            full_weights[weights.index] = weights * mean_reversion_allocation
+
+            # Equal allocation to new assets
+            new_asset_weight = new_asset_allocation / len(unavailable_assets)
+            full_weights[unavailable_assets] = new_asset_weight
+        else:
+            # No new assets, use full mean reversion weights
+            full_weights[weights.index] = weights
+
+        weights = full_weights
+
+        logger.debug(f"MeanReversion generated weights: sum={weights.sum():.6f}, std={weights.std():.6f}, range=[{weights.min():.6f}, {weights.max():.6f}]")
 
         return weights
 
@@ -388,12 +519,24 @@ class MinimumVarianceModel(PortfolioModel):
         if not target_universe:
             return pd.Series(dtype=float)
 
+        # Handle dynamic universe - filter to available assets
+        available_assets = [asset for asset in target_universe if asset in self.returns_data.columns]
+        unavailable_assets = [asset for asset in target_universe if asset not in self.returns_data.columns]
+
+        if not available_assets:
+            logger.warning(f"MinimumVariance: No assets from target universe available in fitted data. Using equal weights.")
+            equal_weight = 1.0 / len(target_universe)
+            return pd.Series(equal_weight, index=target_universe, name="min_variance_weights")
+
+        if unavailable_assets:
+            logger.debug(f"MinimumVariance: {len(unavailable_assets)} assets not in fitted data: {unavailable_assets[:5]}...")
+
         # Get historical returns for covariance estimation
         end_date = date
         start_date = end_date - pd.Timedelta(days=self.lookback_days)
 
         historical_returns = self.returns_data.loc[
-            start_date:end_date, target_universe
+            start_date:end_date, available_assets
         ]
 
         if historical_returns.empty or len(historical_returns) < 10:
@@ -427,13 +570,32 @@ class MinimumVarianceModel(PortfolioModel):
             weights = np.maximum(weights, 0)
             weights = weights / weights.sum()
 
-            weights_series = pd.Series(
+            # Create weights series for available assets
+            available_weights = pd.Series(
                 weights,
-                index=target_universe,
+                index=available_assets,
                 name="min_variance_weights"
             )
 
-            return weights_series
+            # Expand weights to full universe
+            full_weights = pd.Series(0.0, index=target_universe, name="min_variance_weights")
+
+            # For dynamic universe: allocate 95% to min variance weights, 5% to new assets
+            if unavailable_assets:
+                min_var_allocation = 0.95
+                new_asset_allocation = 0.05
+
+                # Scale down minimum variance weights
+                full_weights[available_assets] = available_weights * min_var_allocation
+
+                # Equal allocation to new assets
+                new_asset_weight = new_asset_allocation / len(unavailable_assets)
+                full_weights[unavailable_assets] = new_asset_weight
+            else:
+                # No new assets, use full minimum variance weights
+                full_weights[available_assets] = available_weights
+
+            return full_weights
 
         except np.linalg.LinAlgError:
             # Fallback to equal weights if matrix is singular

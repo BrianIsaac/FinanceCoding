@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import concurrent.futures as cf
 import io
+import logging
 import time
 from collections.abc import Iterable
 from typing import Any
@@ -34,6 +35,7 @@ class StooqCollector:
             config: Collector configuration with rate limits and timeouts
         """
         self.config = config
+        self.logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}")
 
     def _to_stooq_symbol(self, ticker: str) -> str:
         """Map a US ticker to Stooq symbol form.
@@ -159,6 +161,81 @@ class StooqCollector:
         time.sleep(self.config.rate_limit)
         return self._fetch_stooq_csv(symbol)
 
+    def _fetch_single_ticker_legacy_style(
+        self, ticker: str, start_date: str | None = None, end_date: str | None = None
+    ) -> pd.DataFrame | None:
+        """Download data for single ticker using legacy approach with fresh session per request.
+
+        Args:
+            ticker: US ticker symbol
+            start_date: Optional start date filter
+            end_date: Optional end date filter
+
+        Returns:
+            DataFrame with OHLCV data or None if failed
+        """
+        symbol = self._to_stooq_symbol(ticker)
+        url = f"https://stooq.com/q/d/l/?s={symbol}&i=d"
+
+        for attempt in range(self.config.retry_attempts + 1):
+            try:
+                # Create fresh session for each request (legacy approach)
+                sess = self._new_session()
+
+                # Prewarm session by visiting homepage first
+                try:
+                    sess.get("https://stooq.com/", timeout=min(10, self.config.timeout))
+                except Exception:
+                    pass  # Non-fatal
+
+                # Fetch the CSV data
+                r = sess.get(url, timeout=self.config.timeout)
+
+                # Check for rate limiting or HTML responses
+                if (r.status_code != 200 or not r.text or
+                    r.text.strip().lower().startswith("<!doctype") or
+                    "exceeded the daily hits limit" in r.text.lower()):
+                    if attempt < self.config.retry_attempts:
+                        time.sleep(self.config.retry_delay * (attempt + 1))
+                        continue
+                    return None
+
+                df = pd.read_csv(io.StringIO(r.text))
+
+                if "Date" not in df.columns or "Close" not in df.columns:
+                    continue
+
+                df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
+                df = df.dropna(subset=["Date"]).sort_values("Date").set_index("Date")
+
+                if df.empty:
+                    continue
+
+                # Return available OHLCV columns
+                available_cols = [col for col in ["Open", "High", "Low", "Close", "Volume"]
+                                if col in df.columns]
+                return df[available_cols]
+
+            except Exception as e:
+                if attempt < self.config.retry_attempts:
+                    time.sleep(self.config.retry_delay * (attempt + 1))
+                    continue
+
+        return None
+
+    def check_rate_limit_status(self) -> bool:
+        """Check if Stooq API is rate limited by testing with a single ticker.
+
+        Returns:
+            True if API is available, False if rate limited
+        """
+        try:
+            # Test with a common ticker
+            test_result = self._fetch_single_ticker_legacy_style("AAPL")
+            return test_result is not None
+        except Exception:
+            return False
+
     def collect_ohlcv_data(
         self,
         tickers: Iterable[str],
@@ -177,6 +254,10 @@ class StooqCollector:
         Returns:
             Dictionary with 'open', 'high', 'low', 'close', 'volume' DataFrames (Date × Tickers)
         """
+        tickers_list = list(tickers)
+        self.logger.info(f"Starting OHLCV data collection for {len(tickers_list)} tickers")
+        self.logger.info(f"Date range: {start_date} to {end_date}")
+        self.logger.info(f"Using {max_workers} parallel workers")
         ohlcv_data: dict[str, dict[str, pd.Series]] = {
             "open": {},
             "high": {},
@@ -185,7 +266,10 @@ class StooqCollector:
             "volume": {},
         }
 
-        symbols = {t: self._to_stooq_symbol(t) for t in tickers}
+        symbols = {t: self._to_stooq_symbol(t) for t in tickers_list}
+        completed_count = 0
+        successful_count = 0
+        failed_tickers = []
 
         # Download in parallel with thread pool and rate limiting
         with cf.ThreadPoolExecutor(max_workers=max_workers) as ex:
@@ -199,37 +283,56 @@ class StooqCollector:
             for fut in cf.as_completed(futs):
                 tkr = futs[fut]
                 df = fut.result()
+                completed_count += 1
 
                 if df is None or df.empty:
-                    continue
+                    failed_tickers.append(tkr)
+                    self.logger.debug(f"Failed to download data for {tkr}")
+                else:
+                    successful_count += 1
+                    self.logger.debug(f"Successfully downloaded data for {tkr} ({len(df)} rows)")
+                    
+                    # Store all OHLCV components that are available
+                    if "Open" in df.columns:
+                        ohlcv_data["open"][tkr] = df["Open"].rename(tkr)
+                    if "High" in df.columns:
+                        ohlcv_data["high"][tkr] = df["High"].rename(tkr)
+                    if "Low" in df.columns:
+                        ohlcv_data["low"][tkr] = df["Low"].rename(tkr)
+                    if "Close" in df.columns:
+                        ohlcv_data["close"][tkr] = df["Close"].rename(tkr)
+                    if "Volume" in df.columns:
+                        ohlcv_data["volume"][tkr] = df["Volume"].rename(tkr)
 
-                # Store all OHLCV components that are available
-                if "Open" in df.columns:
-                    ohlcv_data["open"][tkr] = df["Open"].rename(tkr)
-                if "High" in df.columns:
-                    ohlcv_data["high"][tkr] = df["High"].rename(tkr)
-                if "Low" in df.columns:
-                    ohlcv_data["low"][tkr] = df["Low"].rename(tkr)
-                if "Close" in df.columns:
-                    ohlcv_data["close"][tkr] = df["Close"].rename(tkr)
-                if "Volume" in df.columns:
-                    ohlcv_data["volume"][tkr] = df["Volume"].rename(tkr)
+                # Progress logging every 50 tickers or at completion
+                if completed_count % 50 == 0 or completed_count == len(tickers_list):
+                    progress_pct = (completed_count / len(tickers_list)) * 100
+                    self.logger.info(f"Progress: {completed_count}/{len(tickers_list)} tickers completed ({progress_pct:.1f}%) - {successful_count} successful, {len(failed_tickers)} failed")
 
         if not ohlcv_data["close"]:
+            self.logger.warning("No valid price data collected from any tickers")
             return {k: pd.DataFrame() for k in ohlcv_data.keys()}
+
+        self.logger.info(f"Stooq collection completed: {successful_count}/{len(tickers_list)} tickers successful")
+        if failed_tickers:
+            self.logger.warning(f"Failed tickers ({len(failed_tickers)}): {', '.join(failed_tickers[:10])}{'...' if len(failed_tickers) > 10 else ''}")
 
         # Combine into wide panels for each OHLCV component
         result = {}
         for component, series_dict in ohlcv_data.items():
-            df = pd.concat(series_dict.values(), axis=1).sort_index()
+            if series_dict:
+                df = pd.concat(series_dict.values(), axis=1).sort_index()
 
-            # Apply date filters if specified
-            if start_date:
-                df = df.loc[pd.to_datetime(start_date) :]
-            if end_date:
-                df = df.loc[: pd.to_datetime(end_date)]
+                # Apply date filters if specified
+                if start_date:
+                    df = df.loc[pd.to_datetime(start_date) :]
+                if end_date:
+                    df = df.loc[: pd.to_datetime(end_date)]
 
-            result[component] = df
+                result[component] = df
+                self.logger.info(f"Built {component} DataFrame: {df.shape[1]} tickers × {df.shape[0]} dates")
+            else:
+                result[component] = pd.DataFrame()
 
         return result
 

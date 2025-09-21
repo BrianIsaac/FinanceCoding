@@ -182,8 +182,11 @@ class HRPAllocation:
             else:
                 raise ValueError(f"Unknown risk measure: {self.config.risk_measure}")
 
-        except Exception:
-            # Fallback to equal risk if calculation fails
+        except Exception as e:
+            # Log the failure and fallback to equal risk
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.debug(f"Cluster risk calculation failed: {str(e)}, using equal risk")
             return 1.0
 
     def _calculate_cluster_risk_variance(
@@ -211,7 +214,11 @@ class HRPAllocation:
                 portfolio_var = np.dot(equal_weights, np.dot(cluster_cov.values, equal_weights))
                 return max(portfolio_var, 1e-8)
 
-        except Exception:
+        except Exception as e:
+            # Log the failure
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.debug(f"Variance risk calculation failed: {str(e)}")
             return 1.0
 
     def calculate_risk_budgets(
@@ -297,8 +304,11 @@ class HRPAllocation:
 
             return pd.Series(scaled_weights, index=cluster_assets)
 
-        except Exception:
-            # Fallback to equal weights
+        except Exception as e:
+            # Log allocation failure and fallback to equal weights
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Allocation failed for {len(cluster_assets)} assets: {str(e)}")
             equal_weight = target_allocation / len(cluster_assets)
             return pd.Series([equal_weight] * len(cluster_assets), index=cluster_assets)
 
@@ -420,7 +430,10 @@ class HRPAllocation:
             cluster_cov = covariance_matrix.loc[available_assets, available_assets]
             if np.any(np.diag(cluster_cov.values) <= 0):
                 return True, "zero_variance_assets"
-        except Exception:
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.debug(f"Covariance validation error: {str(e)}")
             return True, "covariance_error"
 
         return False, "normal"

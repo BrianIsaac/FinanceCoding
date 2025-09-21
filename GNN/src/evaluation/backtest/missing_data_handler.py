@@ -212,6 +212,15 @@ class MissingDataHandler:
             return data.ffill(limit=self.config.forward_fill_limit)
 
         elif strategy == MissingDataStrategy.BACKWARD_FILL:
+            # WARNING: Creates temporal leakage - use only for specific analysis purposes
+            import warnings
+            warnings.warn(
+                "TEMPORAL LEAKAGE: Using backward fill creates temporal leakage. "
+                "Do not use during model training or backtesting. "
+                "Use FORWARD_FILL instead for training data.",
+                category=UserWarning,
+                stacklevel=2
+            )
             return data.bfill(limit=self.config.backward_fill_limit)
 
         elif strategy == MissingDataStrategy.LINEAR_INTERPOLATE:

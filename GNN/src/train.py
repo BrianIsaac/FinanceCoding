@@ -51,10 +51,42 @@ from src.data.processors.covariance import ledoit_wolf_shrinkage  # NEW: robust 
 from src.models.gat.gat_model import GATPortfolio
 from src.models.gat.loss_functions import (
     entropy_penalty,
-    neg_daily_log_utility,
     sharpe_loss,
     turnover_penalty_indexed,
 )
+
+
+def neg_daily_log_utility(returns: torch.Tensor, weights: torch.Tensor) -> torch.Tensor:
+    """
+    Negative daily log utility function with numerical stability.
+
+    Args:
+        returns: Daily returns tensor, shape (T, N) or (N,)
+        weights: Portfolio weights tensor, shape (N,)
+
+    Returns:
+        Negative log utility scalar
+    """
+    if returns.ndim == 1:
+        # Single period returns
+        portfolio_return = torch.sum(returns * weights)
+    else:
+        # Multiple periods, compute portfolio returns
+        portfolio_return = torch.sum(returns * weights, dim=-1)
+
+    # Numerical stability: clamp portfolio returns to prevent log(negative)
+    # More conservative bounds for small models: limit losses to -90% to ensure stability
+    portfolio_return = torch.clamp(portfolio_return, min=-0.90, max=2.0)
+
+    # Log utility with larger epsilon for numerical stability
+    eps = 1e-6
+    utility = torch.log(1 + portfolio_return + eps)
+
+    # Additional stability: check for NaN/Inf values and replace with small penalty
+    if not torch.isfinite(utility).all():
+        return torch.tensor(0.01, device=utility.device, dtype=utility.dtype)
+
+    return -utility.mean()  # Negative for minimization
 
 # ---------------------- globals ----------------------
 _MARKOWITZ_BACKEND = "pgd"  # "pgd" | "cvxpy"
@@ -705,7 +737,7 @@ def _eval_periods_daily_returns(
                 eattr = eattr.to(device).to(x.dtype)
 
             mask_all = torch.ones(len(tickers), dtype=torch.bool, device=device)
-            out, _ = model(x, edge_index, mask_all, eattr)
+            out, _, _ = model(x, edge_index, mask_all, eattr)
 
             if head == "direct":
                 w_t = out.detach().cpu()
@@ -763,7 +795,11 @@ def _eval_periods_daily_returns(
 
             window = returns_daily.loc[start_trading:end_trading]
             valid_mask = ~window.isna().all(axis=0)
-            curr_w = curr_w[valid_mask.index[valid_mask]]
+            # Filter curr_w to only include valid tickers that exist in both curr_w and window
+            common_tickers = curr_w.index.intersection(valid_mask.index)
+            curr_w_filtered = curr_w[common_tickers]
+            valid_mask_filtered = valid_mask[common_tickers]
+            curr_w = curr_w_filtered[valid_mask_filtered]
             w_sum = float(curr_w.sum())
             if w_sum > 0:
                 curr_w = curr_w / w_sum
@@ -952,9 +988,9 @@ def train_gat(cfg: DictConfig) -> None:
                 prev_mem = build_prev_mem(tickers, mem_store, mem_dim, device, cfg.temporal.decay)
 
             if cfg.model.head == "direct":
-                w, new_mem = model(x, eidx, mvalid, eattr, prev_mem)
+                w, new_mem, reg_loss = model(x, eidx, mvalid, eattr, prev_mem)
             else:
-                mu_hat, new_mem = model(x, eidx, mvalid, eattr, prev_mem)
+                mu_hat, new_mem, reg_loss = model(x, eidx, mvalid, eattr, prev_mem)
 
             if cfg.temporal.use_memory:
                 write_new_mem(tickers, new_mem, mem_store)

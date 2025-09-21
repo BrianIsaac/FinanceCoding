@@ -18,12 +18,14 @@ class ProjectConfig:
 
     Attributes:
         data_dir: Directory path for data storage
+        data_paths: Directory path for parquet data files
         output_dir: Directory path for output files and results
         log_level: Logging level (DEBUG, INFO, WARNING, ERROR)
         gpu_memory_fraction: Fraction of GPU memory to allocate (0.0-1.0)
     """
 
     data_dir: str = "data"
+    data_paths: str = "data/final_new_pipeline"
     output_dir: str = "outputs"
     log_level: str = "INFO"
     gpu_memory_fraction: float = 0.9
@@ -36,6 +38,8 @@ class DataConfig:
     Attributes:
         universe: Asset universe identifier (e.g., 'midcap400', 'sp500')
         start_date: Start date for data in YYYY-MM-DD format
+            Note: While set to 2016-01-01, effective training starts from 2020-01-01
+            due to sparse data and universe membership availability
         end_date: End date for data in YYYY-MM-DD format
         sources: List of data sources to use
         lookback_window: Number of periods for rolling calculations
@@ -43,7 +47,7 @@ class DataConfig:
     """
 
     universe: str = "midcap400"
-    start_date: str = "2016-01-01"
+    start_date: str = "2016-01-01"  # Note: Effective training starts from 2020-01-01
     end_date: str = "2024-12-31"
     sources: Optional[list] = field(default_factory=lambda: ["stooq", "yfinance"])
     lookback_window: int = 252
@@ -62,7 +66,7 @@ class ModelConfig:
         validation_split: Fraction of data to use for validation
     """
 
-    batch_size: int = 32
+    batch_size: int = 384  # Increased from 32 for better GPU utilization
     learning_rate: float = 0.001
     max_epochs: int = 100
     early_stopping_patience: int = 10

@@ -8,14 +8,36 @@ allocation, and constraint enforcement for portfolio construction.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from typing import Any
+from typing import Any, Optional
+import logging
 
+import numpy as np
 import pandas as pd
 
+from pathlib import Path
+
+logger = logging.getLogger(__name__)
+
 from src.models.base.portfolio_model import PortfolioConstraints, PortfolioModel
+from src.models.base.confidence_weighted_training import (
+    ConfidenceWeightedTrainer,
+    TrainingStrategy,
+    create_confidence_weighted_trainer,
+)
 from src.models.hrp.allocation import AllocationConfig, HRPAllocation
 from src.models.hrp.clustering import ClusteringConfig, HRPClustering
 from src.models.hrp.universe_integration import HRPUniverseIntegration
+
+# Import flexible academic validation
+try:
+    from src.evaluation.validation.flexible_academic_validator import (
+        FlexibleAcademicValidator,
+        AcademicValidationResult,
+    )
+    FLEXIBLE_VALIDATION_AVAILABLE = True
+except ImportError:
+    logger.info("Flexible validation not available for HRP, using standard validation")
+    FLEXIBLE_VALIDATION_AVAILABLE = False
 
 
 @dataclass
@@ -25,7 +47,7 @@ class HRPConfig:
     lookback_days: int = 756  # 3 years of daily data
     clustering_config: ClusteringConfig = None
     allocation_config: AllocationConfig = None
-    min_observations: int = 252  # Minimum data overlap
+    min_observations: int = 100  # Reduced for flexible academic framework
     correlation_method: str = "pearson"  # Correlation calculation method
     rebalance_frequency: str = "monthly"  # Rebalancing frequency
 
@@ -74,6 +96,16 @@ class HRPModel(PortfolioModel):
         self._fitted_universe: list[str] | None = None
         self._fit_period: tuple[pd.Timestamp, pd.Timestamp] | None = None
 
+        # Confidence-weighted training support
+        self.confidence_trainer = create_confidence_weighted_trainer()
+        self.flexible_validator = (
+            FlexibleAcademicValidator()
+            if FLEXIBLE_VALIDATION_AVAILABLE
+            else None
+        )
+        self.last_training_strategy: TrainingStrategy | None = None
+        self.last_validation_result: AcademicValidationResult | None = None
+
     def fit(
         self,
         returns: pd.DataFrame,
@@ -93,6 +125,44 @@ class HRPModel(PortfolioModel):
         """
         # Validate inputs
         self._validate_fit_inputs(returns, universe, fit_period)
+
+        # Perform flexible academic validation if available
+        confidence_score = 0.7  # Default moderate confidence
+        if self.flexible_validator:
+            validation_result = self.flexible_validator.validate_with_confidence(
+                data=returns,
+                universe=universe,
+                context={"fit_period": fit_period, "model": "HRP"}
+            )
+            confidence_score = validation_result.confidence
+            self.last_validation_result = validation_result
+
+            if not validation_result.can_proceed:
+                logger.warning(
+                    f"HRP validation failed with confidence {confidence_score:.2f}. "
+                    f"Using conservative defaults."
+                )
+                # Continue with conservative settings
+
+        # Select training strategy based on confidence
+        training_strategy = self.confidence_trainer.select_training_strategy(
+            confidence_score=confidence_score,
+            data_characteristics={
+                "n_samples": len(returns),
+                "n_features": len(universe),
+            }
+        )
+        self.last_training_strategy = training_strategy
+
+        # Apply confidence-based preprocessing
+        returns = self.confidence_trainer.apply_data_preprocessing(
+            returns, training_strategy
+        )
+
+        # Select appropriate covariance estimator based on confidence
+        cov_estimator = self.confidence_trainer.create_robust_covariance_estimator(
+            confidence_score
+        )
 
         # Filter returns for fit period and universe
         start_date, end_date = fit_period
@@ -127,8 +197,17 @@ class HRPModel(PortfolioModel):
 
         final_returns = fitted_returns[sufficient_assets]
 
-        # Calculate covariance matrix for allocation
-        covariance_matrix = final_returns.cov()
+        # Remove assets with zero variance to avoid NaN in correlation matrix
+        returns_std = final_returns.std()
+        non_zero_variance_assets = returns_std[returns_std > 1e-8].index.tolist()
+
+        if len(non_zero_variance_assets) < 2:
+            raise ValueError(f"Too few assets with non-zero variance: {len(non_zero_variance_assets)}")
+
+        final_returns = final_returns[non_zero_variance_assets]
+
+        # Calculate covariance matrix with shrinkage for large universes
+        covariance_matrix = self._calculate_robust_covariance(final_returns)
 
         # Validate covariance matrix
         is_valid, error_msg = self.clustering_engine.validate_correlation_matrix(
@@ -140,9 +219,117 @@ class HRPModel(PortfolioModel):
         # Store fitted state
         self._fitted_returns = final_returns
         self._fitted_covariance = covariance_matrix
-        self._fitted_universe = sufficient_assets
+        self._fitted_universe = non_zero_variance_assets
         self._fit_period = fit_period
         self.is_fitted = True
+
+    def supports_rolling_retraining(self) -> bool:
+        """HRP supports efficient rolling retraining since it's non-parametric."""
+        return True
+
+    def rolling_fit(
+        self,
+        returns: pd.DataFrame,
+        universe: list[str],
+        rebalance_date: pd.Timestamp,
+        lookback_months: int = 36,
+        min_observations: int = 100,  # Reduced for flexible academic framework
+    ) -> None:
+        """
+        Perform rolling fit for HRP model using fresh data.
+
+        HRP is particularly well-suited for rolling retraining since it's
+        non-parametric and only requires correlation matrix calculation.
+
+        Args:
+            returns: Full historical returns DataFrame
+            universe: Dynamic universe for this rebalancing period
+            rebalance_date: Date for which we're rebalancing
+            lookback_months: Number of months to look back for correlation calculation
+            min_observations: Minimum number of observations required
+        """
+        # Calculate rolling window dates
+        end_date = rebalance_date - pd.Timedelta(days=1)
+
+        # Adaptive lookback based on data availability
+        lookback_months_adaptive = self._get_adaptive_lookback(
+            returns, end_date, universe, lookback_months, min_observations
+        )
+
+        start_date = end_date - pd.Timedelta(days=lookback_months_adaptive * 30)
+
+        # Load fresh returns data for rolling window
+        rolling_returns = self._load_fresh_returns_data(
+            returns, start_date, end_date, universe
+        )
+
+        if len(rolling_returns) < min_observations:
+            raise ValueError(
+                f"Insufficient data for rolling fit: {len(rolling_returns)} < {min_observations}"
+            )
+
+        # Update fitted state with fresh data and robust covariance
+        self._fitted_returns = rolling_returns
+        self._fitted_covariance = self._calculate_robust_covariance(rolling_returns)
+        self._fitted_universe = rolling_returns.columns.tolist()
+        self._fit_period = (start_date, end_date)
+        self.is_fitted = True
+
+    def _load_fresh_returns_data(
+        self,
+        returns: pd.DataFrame,
+        start_date: pd.Timestamp,
+        end_date: pd.Timestamp,
+        universe: list[str],
+    ) -> pd.DataFrame:
+        """
+        Load fresh returns data for rolling window.
+
+        Args:
+            returns: Full historical returns DataFrame
+            start_date: Start of rolling window
+            end_date: End of rolling window
+            universe: Assets to include
+
+        Returns:
+            Filtered and cleaned returns DataFrame
+        """
+        # If returns is a path, load from disk
+        if isinstance(returns, (str, Path)):
+            returns_path = Path(returns)
+            if returns_path.exists():
+                returns = pd.read_parquet(returns_path)
+            else:
+                # Try default path
+                returns_path = Path("data/final_new_pipeline/returns_daily_final.parquet")
+                if returns_path.exists():
+                    returns = pd.read_parquet(returns_path)
+                else:
+                    raise FileNotFoundError(f"Returns data not found at {returns_path}")
+
+        # Filter by date range
+        mask = (returns.index >= start_date) & (returns.index <= end_date)
+        period_returns = returns[mask]
+
+        # Filter for available universe assets
+        available_assets = [asset for asset in universe if asset in period_returns.columns]
+
+        if len(available_assets) == 0:
+            raise ValueError("No assets from universe found in returns data")
+
+        filtered_returns = period_returns[available_assets]
+
+        # Clean data: forward fill then drop remaining NaN
+        cleaned_returns = filtered_returns.ffill().dropna(axis=1, how='all')
+
+        # Remove assets with zero variance
+        returns_std = cleaned_returns.std()
+        non_zero_variance_assets = returns_std[returns_std > 1e-8].index.tolist()
+
+        if len(non_zero_variance_assets) < 2:
+            raise ValueError(f"Too few assets with non-zero variance: {len(non_zero_variance_assets)}")
+
+        return cleaned_returns[non_zero_variance_assets]
 
     def predict_weights(self, date: pd.Timestamp, universe: list[str]) -> pd.Series:
         """
@@ -165,10 +352,22 @@ class HRPModel(PortfolioModel):
         if self._fitted_returns is None or self._fitted_covariance is None:
             raise ValueError("Model state is invalid - refit required")
 
-        # Validate universe compatibility
+        # Handle dynamic universe membership
+        # For HRP, we can work with any subset of assets that have sufficient data
         available_assets = [asset for asset in universe if asset in self._fitted_universe]
+
+        # For dynamic membership, we should be more flexible
         if len(available_assets) == 0:
-            raise ValueError("No assets in common between prediction universe and fitted universe")
+            # Try to find any overlap with the current universe
+            fitted_assets = set(self._fitted_universe)
+            universe_assets = set(universe)
+            available_assets = list(fitted_assets.intersection(universe_assets))
+
+            if len(available_assets) == 0:
+                # As last resort, use equal weights for current universe
+                logger.warning(f"No fitted assets in current universe {len(universe)} assets. Using equal weights.")
+                equal_weight = 1.0 / len(universe)
+                return pd.Series(equal_weight, index=universe)
 
         # Handle universe integration if available
         if self.universe_integration is not None:
@@ -183,8 +382,8 @@ class HRPModel(PortfolioModel):
                 prediction_assets = [
                     asset for asset in clustering_universe if asset in available_assets
                 ]
-            except Exception:
-                # Fallback to available assets if universe integration fails
+            except Exception as e:
+                logger.debug(f"Universe integration failed: {str(e)}, using available assets")
                 prediction_assets = available_assets
         else:
             prediction_assets = available_assets
@@ -213,9 +412,23 @@ class HRPModel(PortfolioModel):
 
         # Build correlation distance matrix
         try:
-            distance_matrix = self.clustering_engine.build_correlation_distance(prediction_returns)
-        except ValueError:
-            # Fallback to equal weights if clustering fails
+            distance_matrix, valid_assets = self.clustering_engine.build_correlation_distance(prediction_returns)
+
+            # Check if any assets were dropped
+            if len(valid_assets) < len(prediction_assets):
+                dropped_assets = set(prediction_assets) - set(valid_assets)
+                logger.info(f"Dropped {len(dropped_assets)} assets with zero variance during clustering")
+
+            # Update prediction_assets to only include valid ones
+            prediction_assets = valid_assets
+
+            if len(prediction_assets) < 2:
+                logger.warning(f"Only {len(prediction_assets)} valid assets after filtering, using equal weights")
+                return pd.Series(1.0 / len(prediction_assets), index=prediction_assets)
+
+        except ValueError as e:
+            logger.warning(f"HRP clustering failed for {len(prediction_assets)} assets: {str(e)}")
+            logger.info("Falling back to equal weights due to clustering failure")
             return pd.Series(1.0 / len(prediction_assets), index=prediction_assets)
 
         # Perform hierarchical clustering
@@ -224,8 +437,11 @@ class HRPModel(PortfolioModel):
             cluster_tree = self.clustering_engine.build_cluster_tree(
                 prediction_assets, linkage_matrix
             )
-        except Exception:
-            # Fallback to equal weights if clustering fails
+        except Exception as e:
+            logger.warning(f"HRP cluster tree building failed: {str(e)}")
+            logger.warning(f"Asset count: {len(prediction_assets)}, distance matrix shape: {distance_matrix.shape}")
+            logger.warning(f"Linkage matrix shape: {linkage_matrix.shape if 'linkage_matrix' in locals() else 'Not created'}")
+            logger.info("Falling back to equal weights due to cluster tree failure")
             return pd.Series(1.0 / len(prediction_assets), index=prediction_assets)
 
         # Calculate covariance matrix for allocation
@@ -236,8 +452,9 @@ class HRPModel(PortfolioModel):
             raw_weights = self.allocation_engine.recursive_bisection(
                 prediction_covariance, cluster_tree
             )
-        except Exception:
-            # Fallback to equal weights if allocation fails
+        except Exception as e:
+            logger.warning(f"HRP allocation failed: {str(e)}")
+            logger.info(f"Using equal weights for {len(prediction_assets)} assets")
             raw_weights = pd.Series(1.0 / len(prediction_assets), index=prediction_assets)
 
         # Apply portfolio constraints using base class method
@@ -256,7 +473,8 @@ class HRPModel(PortfolioModel):
                 if constrained_weights.sum() < 0.5:
                     # Even equal weights fail constraints, return equal weights anyway
                     constrained_weights = fallback_weights
-            except Exception:
+            except Exception as e:
+                logger.debug(f"Constraint validation failed even for equal weights: {str(e)}")
                 constrained_weights = fallback_weights
 
         return constrained_weights
@@ -375,6 +593,111 @@ class HRPModel(PortfolioModel):
             raise ValueError(
                 f"Fit period too short: {period_days} days < {self.hrp_config.min_observations}"
             )
+
+    def _get_adaptive_lookback(
+        self,
+        returns: pd.DataFrame,
+        end_date: pd.Timestamp,
+        universe: list[str],
+        target_lookback_months: int,
+        min_observations: int
+    ) -> int:
+        """
+        Determine adaptive lookback period based on data availability.
+
+        Args:
+            returns: Historical returns data
+            end_date: End date for lookback period
+            universe: Current universe of assets
+            target_lookback_months: Desired lookback period
+            min_observations: Minimum required observations
+
+        Returns:
+            Adaptive lookback period in months
+        """
+        # Start with target lookback
+        lookback = target_lookback_months
+
+        # Check data availability with progressively shorter windows
+        # More aggressive adaptation: try even shorter periods if needed
+        # Adding 0.5 month (15 days) and 0.25 month (7 days) for extreme cases
+        for months in [target_lookback_months, 24, 18, 12, 6, 3, 2, 1, 0.5, 0.25]:
+            test_start = end_date - pd.Timedelta(days=int(months * 30))
+            mask = (returns.index >= test_start) & (returns.index <= end_date)
+            test_data = returns[mask]
+
+            # Check if we have enough data - reduced from 50% to 30% of universe
+            available_assets = [a for a in universe if a in test_data.columns]
+            if len(available_assets) < len(universe) * 0.3:
+                continue  # Need at least 30% of universe (was 50%)
+
+            # Check observation count
+            if len(test_data) >= min_observations:
+                lookback = months
+                if months < target_lookback_months:
+                    logger.info(f"Adaptive lookback: reduced from {target_lookback_months} to {months} months due to data availability")
+                break
+        else:
+            # If even 3 months doesn't work, use whatever we can get
+            lookback = 3
+            logger.warning(f"Insufficient data even for 3 months, using minimum lookback")
+
+        return lookback
+
+    def _calculate_robust_covariance(self, returns: pd.DataFrame) -> pd.DataFrame:
+        """
+        Calculate robust covariance matrix with shrinkage for large universes.
+
+        Uses Ledoit-Wolf shrinkage to handle high-dimensional covariance matrices
+        that become singular with many assets relative to observations.
+
+        Args:
+            returns: Returns DataFrame
+
+        Returns:
+            Robust covariance matrix
+        """
+        n_obs, n_assets = returns.shape
+
+        # If we have enough observations, use sample covariance
+        if n_obs > n_assets * 2:
+            return returns.cov()
+
+        try:
+            # Use Ledoit-Wolf shrinkage for better conditioning
+            from sklearn.covariance import LedoitWolf
+
+            # Remove any NaN values
+            clean_returns = returns.dropna()
+            if len(clean_returns) < 2:
+                logger.warning("Insufficient clean data for covariance, using simple cov")
+                return returns.cov()
+
+            # Apply shrinkage
+            lw = LedoitWolf(store_precision=False, assume_centered=False)
+            cov_shrunk, shrinkage = lw.fit(clean_returns.values).covariance_, lw.shrinkage_
+
+            logger.debug(f"Applied Ledoit-Wolf shrinkage: {shrinkage:.3f} for {n_assets} assets")
+
+            # Convert back to DataFrame
+            return pd.DataFrame(
+                cov_shrunk,
+                index=returns.columns,
+                columns=returns.columns
+            )
+
+        except Exception as e:
+            logger.warning(f"Shrinkage failed: {str(e)}, using simple covariance")
+            # Fallback to simple covariance with regularization
+            cov = returns.cov()
+
+            # Add small regularization to diagonal for numerical stability
+            if n_assets > 100:
+                reg = 1e-6 * np.trace(cov.values) / n_assets
+                np.fill_diagonal(cov.values, cov.values.diagonal() + reg)
+                logger.debug(f"Added regularization {reg:.2e} to covariance diagonal")
+
+            return cov
 
     def _calculate_tree_depth(self, cluster_tree: dict) -> int:
         """Calculate the depth of the cluster tree."""

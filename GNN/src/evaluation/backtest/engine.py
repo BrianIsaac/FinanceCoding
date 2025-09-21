@@ -177,14 +177,15 @@ class BacktestEngine:
             logger.warning("No successful rebalancing periods")
             return self._empty_results()
 
-        # Compile results
+        # Compile results - convert DatetimeIndex to list for safe slicing
+        rebalance_dates_list = rebalance_dates.tolist() if hasattr(rebalance_dates, 'tolist') else rebalance_dates
         weights_df = pd.DataFrame(
-            portfolio_weights, index=rebalance_dates[: len(portfolio_weights)]
+            portfolio_weights, index=rebalance_dates_list[: len(portfolio_weights)]
         )
         returns_series = pd.Series(portfolio_returns, name="portfolio_returns")
         costs_series = pd.Series(
             transaction_costs,
-            index=rebalance_dates[: len(transaction_costs)],
+            index=rebalance_dates_list[: len(transaction_costs)],
             name="transaction_costs",
         )
 
@@ -198,7 +199,7 @@ class BacktestEngine:
             "transaction_costs": costs_series,
             "benchmark_returns": pd.Series(dtype=float),  # TODO: Implement benchmark
             "performance_metrics": performance_metrics,
-            "rebalance_dates": rebalance_dates[: len(portfolio_weights)],
+            "rebalance_dates": rebalance_dates_list[: len(portfolio_weights)],
         }
 
     def _empty_results(self) -> dict[str, Any]:

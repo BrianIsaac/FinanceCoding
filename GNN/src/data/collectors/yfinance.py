@@ -7,6 +7,7 @@ Extracted and refactored from scripts/augment_with_yfinance.py.
 
 from __future__ import annotations
 
+import logging
 import math
 from typing import Any
 
@@ -33,6 +34,7 @@ class YFinanceCollector:
             config: Collector configuration with rate limits and timeouts
         """
         self.config = config
+        self.logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}")
 
     def _yahoo_symbol_map(self, ticker: str) -> str:
         """Map US ticker to Yahoo Finance symbol format.
@@ -67,13 +69,25 @@ class YFinanceCollector:
         Returns:
             Tuple of (prices_df, volume_df) where each is Date × Tickers
         """
+        self.logger.info(f"Starting Yahoo Finance data collection for {len(tickers)} tickers")
+        self.logger.info(f"Date range: {start_date} to {end_date}")
+        self.logger.info(f"Using batch size: {batch_size}")
+        
+        total_batches = (len(tickers) + batch_size - 1) // batch_size
         prices_list: list[pd.DataFrame] = []
         volume_list: list[pd.DataFrame] = []
 
         # Process tickers in batches for better performance
+        successful_tickers = []
+        failed_tickers = []
+        
         for i in range(0, len(tickers), batch_size):
             batch = tickers[i : i + batch_size]
+            batch_num = (i // batch_size) + 1
             syms = [self._yahoo_symbol_map(t) for t in batch]
+            
+            self.logger.info(f"Processing batch {batch_num}/{total_batches}: {len(batch)} tickers")
+            self.logger.debug(f"Batch tickers: {', '.join(batch)}")
 
             try:
                 data = yf.download(
@@ -97,12 +111,16 @@ class YFinanceCollector:
                             # Extract adjusted close and volume
                             closes.append(data[sym]["Close"].rename(orig))
                             vols.append(data[sym]["Volume"].rename(orig))
+                            successful_tickers.append(orig)
+                        else:
+                            failed_tickers.append(orig)
 
                     if closes:
                         p = pd.concat(closes, axis=1)
                         v = pd.concat(vols, axis=1)
                         prices_list.append(p)
                         volume_list.append(v)
+                        self.logger.debug(f"Batch {batch_num}: {len(closes)} tickers successful")
 
                 else:
                     # Single-ticker response fallback
@@ -112,17 +130,51 @@ class YFinanceCollector:
                         v = data["Volume"].to_frame(orig)
                         prices_list.append(p)
                         volume_list.append(v)
+                        successful_tickers.append(orig)
+                        self.logger.debug(f"Batch {batch_num}: single ticker {orig} successful")
+                    else:
+                        failed_tickers.extend(batch)
+                        self.logger.debug(f"Batch {batch_num}: all {len(batch)} tickers failed (empty data)")
 
-            except Exception:
+            except Exception as e:
+                failed_tickers.extend(batch)
+                self.logger.warning(f"Batch {batch_num} failed with error: {str(e)}")
                 continue
 
         # Combine all batches
         if prices_list:
             prices_df = pd.concat(prices_list, axis=1).sort_index()
             volume_df = pd.concat(volume_list, axis=1).reindex(prices_df.index)
+            
+            self.logger.info(f"Yahoo Finance collection completed: {len(successful_tickers)}/{len(tickers)} tickers successful")
+            self.logger.info(f"Final datasets: prices {prices_df.shape}, volume {volume_df.shape}")
+            if failed_tickers:
+                self.logger.warning(f"Failed tickers ({len(failed_tickers)}): {', '.join(failed_tickers[:10])}{'...' if len(failed_tickers) > 10 else ''}")
+            
             return prices_df, volume_df
         else:
+            self.logger.error("No data collected from Yahoo Finance for any tickers")
             return pd.DataFrame(), pd.DataFrame()
+
+    def collect_batch_data(
+        self,
+        tickers: list[str],
+        start_date: str | None = None,
+        end_date: str | None = None,
+        batch_size: int = 80,
+    ) -> tuple[pd.DataFrame, pd.DataFrame]:
+        """Alias for download_batch_data to match pipeline script interface.
+
+        Args:
+            tickers: List of US ticker symbols
+            start_date: Start date in YYYY-MM-DD format
+            end_date: End date in YYYY-MM-DD format
+            batch_size: Number of tickers to download per batch
+
+        Returns:
+            Tuple of (prices_df, volume_df) where each is Date × Tickers
+        """
+        return self.download_batch_data(tickers, start_date, end_date, batch_size)
 
     def splice_fill_series(self, primary: pd.Series, donor: pd.Series) -> pd.Series:
         """Fill NaNs in primary series with donor series, scaling to avoid jumps.
@@ -279,6 +331,45 @@ class YFinanceCollector:
         )
 
         return merged_prices, merged_volume
+
+    def collect_single_ticker(self, ticker: str, start_date: str = "2010-01-01", end_date: str = "2024-12-31") -> pd.DataFrame | None:
+        """Collect OHLCV data for a single ticker using YFinance.
+
+        Args:
+            ticker: US ticker symbol
+            start_date: Start date in YYYY-MM-DD format
+            end_date: End date in YYYY-MM-DD format
+
+        Returns:
+            DataFrame with OHLCV data or None if failed
+        """
+        try:
+            symbol = self._yahoo_symbol_map(ticker)
+
+            # Use yfinance to download data
+            stock = yf.Ticker(symbol)
+            df = stock.history(start=start_date, end=end_date, auto_adjust=True)
+
+            if df.empty:
+                return None
+
+            # Standardize column names to match Stooq format
+            df = df.rename(columns={
+                'Open': 'Open',
+                'High': 'High',
+                'Low': 'Low',
+                'Close': 'Close',
+                'Volume': 'Volume'
+            })
+
+            # Return available OHLCV columns
+            available_cols = [col for col in ["Open", "High", "Low", "Close", "Volume"]
+                            if col in df.columns]
+            return df[available_cols]
+
+        except Exception as e:
+            self.logger.debug(f"Failed to collect {ticker}: {e}")
+            return None
 
     def detect_data_gaps(
         self, prices_df: pd.DataFrame, min_gap_days: int = 7, min_data_coverage: float = 0.8

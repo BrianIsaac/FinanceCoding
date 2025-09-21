@@ -49,6 +49,7 @@ class UnifiedConstraintEngine:
         model_scores: pd.Series | None = None,
         date: pd.Timestamp | None = None,
         portfolio_value: float = 1.0,
+        use_soft_constraints: bool = True,
     ) -> tuple[pd.Series, list[ConstraintViolation], dict[str, Any]]:
         """
         Apply all constraints including transaction cost optimization.
@@ -63,10 +64,31 @@ class UnifiedConstraintEngine:
         Returns:
             Tuple of (constrained_weights, violations, cost_analysis)
         """
-        # Step 1: Apply base constraints
-        constrained_weights, violations = self.base_engine.enforce_constraints(
-            weights, previous_weights, model_scores, date
-        )
+        # Debug logging for constraint enforcement
+        import logging
+        logger = logging.getLogger(__name__)
+
+        max_weight_before = weights.max()
+        if max_weight_before > self.constraints.max_position_weight:
+            logger.warning(f"enforce_all_constraints: Input has max weight {max_weight_before:.1%}, limit is {self.constraints.max_position_weight:.1%}")
+
+        # Step 1: Apply base constraints (soft or hard)
+        if use_soft_constraints:
+            # Use soft penalties instead of hard constraints
+            constrained_weights = self._apply_soft_constraints(
+                weights, previous_weights, model_scores
+            )
+            # Check violations but don't enforce
+            violations = self.base_engine.check_violations(constrained_weights, previous_weights)
+
+            max_weight_after = constrained_weights.max()
+            if max_weight_after > self.constraints.max_position_weight:
+                logger.error(f"CONSTRAINT VIOLATION: After soft constraints, max weight is {max_weight_after:.1%}, exceeds {self.constraints.max_position_weight:.1%} limit!")
+        else:
+            # Traditional hard constraint enforcement
+            constrained_weights, violations = self.base_engine.enforce_constraints(
+                weights, previous_weights, model_scores, date
+            )
 
         # Step 2: Calculate transaction costs if available
         cost_analysis = {}
@@ -86,6 +108,112 @@ class UnifiedConstraintEngine:
                 )
 
         return constrained_weights, violations, cost_analysis
+
+    def _apply_soft_constraints(
+        self,
+        weights: pd.Series,
+        previous_weights: pd.Series | None = None,
+        model_scores: pd.Series | None = None,
+    ) -> pd.Series:
+        """
+        Apply soft constraints using penalty functions rather than hard limits.
+
+        This allows for more flexible portfolio construction that can violate
+        constraints when the model has high conviction.
+
+        Args:
+            weights: Raw model weights
+            previous_weights: Previous period weights
+            model_scores: Model confidence scores
+
+        Returns:
+            Soft-constrained weights
+        """
+        import numpy as np
+
+        adjusted_weights = weights.copy()
+
+        # 1. Hard position limit - enforce strictly
+        max_position = self.constraints.max_position_weight
+        if max_position < 1.0:
+            # Debug logging
+            import logging
+            logger = logging.getLogger(__name__)
+
+            # Check for violations before clipping
+            violations_before = (adjusted_weights > max_position).sum()
+            if violations_before > 0:
+                max_weight_before = adjusted_weights.max()
+                logger.warning(f"Position limit violations: {violations_before} assets exceed {max_position:.1%} limit")
+                logger.warning(f"Max weight before clipping: {max_weight_before:.1%}")
+
+            # Apply hard clipping for positions exceeding limit
+            for asset in adjusted_weights.index:
+                w = adjusted_weights[asset]
+                if w > max_position:
+                    # Hard clip to maximum position
+                    adjusted_weights[asset] = max_position
+                    # No soft penalty - just hard enforcement
+
+            # Verify clipping worked
+            if violations_before > 0:
+                max_weight_after = adjusted_weights.max()
+                logger.info(f"Max weight after clipping: {max_weight_after:.1%}")
+
+                # CRITICAL: Renormalize after clipping to ensure weights sum to 1
+                weight_sum = adjusted_weights.sum()
+                if weight_sum > 0 and abs(weight_sum - 1.0) > 1e-6:
+                    logger.info(f"Renormalizing weights after clipping (sum was {weight_sum:.4f})")
+                    adjusted_weights = adjusted_weights / weight_sum
+
+        # 2. Soft turnover constraint - blend with previous weights
+        if previous_weights is not None and self.constraints.max_monthly_turnover > 0:
+            # Calculate current turnover
+            aligned_prev = previous_weights.reindex(adjusted_weights.index, fill_value=0)
+            turnover = np.abs(adjusted_weights - aligned_prev).sum()
+
+            if turnover > self.constraints.max_monthly_turnover:
+                # Blend towards previous weights to reduce turnover
+                blend_factor = self.constraints.max_monthly_turnover / turnover
+                # Remove sqrt - we need stricter enforcement, not less aggressive
+                # blend_factor = np.sqrt(blend_factor)  # This was making it too permissive
+
+                # Apply more aggressive blending to ensure compliance
+                blend_factor = blend_factor ** 2  # Square instead of sqrt for stricter enforcement
+                adjusted_weights = blend_factor * adjusted_weights + (1 - blend_factor) * aligned_prev
+
+                # Verify turnover after blending
+                new_turnover = np.abs(adjusted_weights - aligned_prev).sum()
+
+                # If still violating, apply harder constraint
+                if new_turnover > self.constraints.max_monthly_turnover * 1.1:  # Allow 10% tolerance
+                    # Force harder blending
+                    target_blend = self.constraints.max_monthly_turnover / (new_turnover + 1e-8)
+                    target_blend = min(target_blend, 0.9)  # Don't completely ignore new weights
+                    adjusted_weights = target_blend * adjusted_weights + (1 - target_blend) * aligned_prev
+
+        # 3. Soft minimum position - allow small positions but penalize
+        min_position = self.constraints.min_weight_threshold
+        if min_position > 0:
+            small_positions = adjusted_weights[
+                (adjusted_weights > 0) & (adjusted_weights < min_position)
+            ]
+            if len(small_positions) > 0:
+                # Gradually push small positions towards minimum or zero
+                for asset in small_positions.index:
+                    w = adjusted_weights[asset]
+                    # If very small, push to zero; otherwise push towards minimum
+                    if w < min_position / 2:
+                        adjusted_weights[asset] *= 0.5  # Decay small positions
+                    else:
+                        adjusted_weights[asset] = 0.9 * w + 0.1 * min_position
+
+        # 4. Normalize to sum to 1
+        weight_sum = adjusted_weights.sum()
+        if weight_sum > 0:
+            adjusted_weights = adjusted_weights / weight_sum
+
+        return adjusted_weights
 
     def _apply_cost_aware_adjustment(
         self,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import math
 import os
 import pickle
@@ -19,6 +20,8 @@ except Exception:
     from torch_geometric.data.data import Data  # type: ignore
 
 from src.data.processors.covariance import robust_covariance, to_correlation
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "GraphBuildConfig",
@@ -45,7 +48,7 @@ class GraphBuildConfig:
     enable_caching: bool = True  # Enable graph snapshot caching
     cache_ttl_days: int = 30  # Time-to-live for cached graphs
     adaptive_knn: bool = True  # Adaptive k based on universe size
-    min_knn_k: int = 5  # Minimum k for small universes
+    min_knn_k: int = 3  # Reduced minimum k for very small dynamic universes
     max_knn_k: int = 50  # Maximum k for large universes
     universe_stability_threshold: float = 0.05  # Threshold for universe change detection
 
@@ -292,8 +295,12 @@ def _compute_adaptive_knn_k(universe_size: int, cfg: GraphBuildConfig) -> int:
     Returns:
         Optimal k for k-NN graph construction
     """
+    # Handle edge case of very small universe
+    if universe_size < 2:
+        return min(1, universe_size)
+
     if not cfg.adaptive_knn:
-        return cfg.knn_k
+        return min(cfg.knn_k, universe_size - 1)
 
     # Scale k based on universe size with logarithmic scaling
     base_k = max(cfg.min_knn_k, int(np.sqrt(universe_size)))
@@ -616,9 +623,20 @@ def build_graph_from_returns(
         cached_graph = _graph_cache.get_cached_graph(returns_window, tickers, ts, cfg)
         if cached_graph is not None:
             return cached_graph
+    # Filter tickers to only include those available in the returns data
+    available_tickers = [ticker for ticker in tickers if ticker in returns_window.columns]
+    if not available_tickers:
+        raise ValueError(f"None of the requested tickers {tickers[:5]}... are available in returns data")
+
+    if len(available_tickers) < len(tickers):
+        logger.debug(f"Filtered tickers from {len(tickers)} to {len(available_tickers)} available assets")
+
     # Align and clean
-    rets = returns_window.reindex(columns=tickers, fill_value=np.nan).astype(float)
+    rets = returns_window.reindex(columns=available_tickers, fill_value=np.nan).astype(float)
     rets = rets.fillna(0.0)  # conservative fill
+
+    # Update tickers to only include available ones
+    tickers = available_tickers
     X = rets.values  # (T, N)
     N = X.shape[1]  # Number of assets
 
@@ -632,15 +650,24 @@ def build_graph_from_returns(
         E, edge_attr = _build_ensemble_graph(C, cfg.multi_graph_methods, cfg.ensemble_weights, cfg)
     else:
         # Single method graph construction with adaptive parameters
+        logger.info(f"Building graph with method: {cfg.filter_method} for {N} assets")
         if cfg.filter_method == "mst":
+            logger.debug("Constructing MST (Minimum Spanning Tree) graph")
             E = _mst_edges_from_corr(C)
+            logger.info(f"MST graph created with {len(E)} edges")
         elif cfg.filter_method == "tmfg":
+            logger.debug("Constructing TMFG (Triangulated Maximally Filtered Graph)")
             E = _tmfg_edges_from_corr(C)
+            logger.info(f"TMFG graph created with {len(E)} edges")
         elif cfg.filter_method == "knn":
             k = _compute_adaptive_knn_k(N, cfg)  # Use adaptive k
+            logger.debug(f"Constructing kNN graph with k={k}")
             E = _knn_edges_from_corr(C, k=k)
+            logger.info(f"kNN graph created with {len(E)} edges, k={k}")
         elif cfg.filter_method == "threshold":
+            logger.debug(f"Constructing threshold graph with threshold={cfg.threshold_abs_corr}")
             E = _threshold_edges_from_corr(C, thr=float(cfg.threshold_abs_corr))
+            logger.info(f"Threshold graph created with {len(E)} edges")
         else:
             raise ValueError(f"Unknown filter_method={cfg.filter_method}")
 
@@ -667,14 +694,45 @@ def build_graph_from_returns(
         else:
             edge_attr_t = None
 
-    # Node features
+    # Node features with enhanced validation
     N = len(tickers)
     if features_matrix is None:
         x_np = np.ones((N, 1), dtype=np.float32)  # trivial constant feature
     else:
         x_np = _safe_nan_to_num(features_matrix).astype(np.float32)
+
+        # Validate dimensions and provide detailed logging
         if x_np.shape[0] != N:
-            raise ValueError(f"features_matrix has {x_np.shape[0]} rows but N={N} tickers")
+            logger.warning(f"Features matrix dimension mismatch: features_shape={x_np.shape}, expected_nodes={N}, tickers_len={len(tickers)}")
+
+            # Handle dimension mismatch by reshaping or padding features_matrix
+            if x_np.shape[0] < N:
+                # Pad with default features if we have fewer features than tickers
+                if x_np.ndim < 2:
+                    logger.error(f"Invalid features_matrix shape: {x_np.shape}. Expected 2D array.")
+                    x_np = np.ones((N, 1), dtype=np.float32)
+                else:
+                    default_features = np.zeros((N - x_np.shape[0], x_np.shape[1]), dtype=np.float32)
+                    x_np = np.vstack([x_np, default_features])
+                    logger.info(f"Padded features_matrix from {features_matrix.shape[0]} to {N} rows")
+            elif x_np.shape[0] > N:
+                # Truncate if we have more features than tickers (shouldn't happen but be safe)
+                x_np = x_np[:N]
+                logger.info(f"Truncated features_matrix from {features_matrix.shape[0]} to {N} rows")
+
+        # Final validation
+        if x_np.shape[0] != N:
+            logger.error(f"Failed to align features_matrix: final_shape={x_np.shape}, expected_nodes={N}")
+            # Fallback to default features
+            x_np = np.ones((N, 1), dtype=np.float32)
+            logger.warning("Using default constant features as fallback")
+
+        # Validate edge/node consistency
+        if len(E) > 0:
+            max_node_idx = max(max(edge) for edge in E) if E else -1
+            if max_node_idx >= N:
+                logger.error(f"Edge references node {max_node_idx} but only have {N} nodes. Edges: {len(E)}")
+                raise ValueError(f"Graph construction error: edge references invalid node index {max_node_idx} >= {N}")
 
     x = torch.tensor(x_np, dtype=torch.float32)
 

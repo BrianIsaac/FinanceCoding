@@ -158,11 +158,13 @@ class RollingWindowGenerator:
         step_size = self.config.step_months
 
         while True:
-            # Calculate window boundaries
-            train_end = self._add_months(current_start, self.config.training_months)
-            val_start = train_end
+            # Calculate window boundaries - Fix: Training should be BACKWARD looking
+            # current_start is the prediction date, so training uses past data
+            train_start = self._subtract_months(current_start, self.config.training_months)
+            train_end = current_start
+            val_start = train_end  # Validation starts after training (at prediction date)
             val_end = self._add_months(val_start, self.config.validation_months)
-            test_start = val_end
+            test_start = val_end   # Test starts after validation
             test_end = self._add_months(test_start, self.config.test_months)
 
             # Check if window exceeds available data
@@ -432,6 +434,11 @@ class RollingWindowGenerator:
     def _add_months(timestamp: pd.Timestamp, months: int) -> pd.Timestamp:
         """Add months to timestamp with proper handling."""
         return (timestamp + pd.DateOffset(months=months)).normalize()
+
+    @staticmethod
+    def _subtract_months(timestamp: pd.Timestamp, months: int) -> pd.Timestamp:
+        """Subtract months from timestamp with proper handling."""
+        return (timestamp - pd.DateOffset(months=months)).normalize()
 
     @staticmethod
     def _align_to_month_start(timestamp: pd.Timestamp) -> pd.Timestamp:

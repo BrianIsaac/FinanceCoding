@@ -61,7 +61,7 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     handlers=[
-        logging.FileHandler("performance_analytics.log"),
+        logging.FileHandler(Path("logs") / "performance_analytics.log"),
         logging.StreamHandler(),
     ],
 )
@@ -192,26 +192,53 @@ class PerformanceAnalyticsExecutor:
 
         returns_dict = {}
 
-        # Load all return files
-        for returns_file in results_dir.glob("returns_*.csv"):
-            model_name = returns_file.stem.replace("returns_", "")
+        # Check if results are in subdirectories (new structure)
+        returns_subdir = results_dir / "returns"
+        if returns_subdir.exists():
+            # Load from subdirectories (ml_backtest_rolling structure)
+            for subdir in returns_subdir.iterdir():
+                if subdir.is_dir():
+                    for returns_file in subdir.glob("*_returns.csv"):
+                        model_name = returns_file.stem.replace("_returns", "")
+                        try:
+                            returns_data = pd.read_csv(returns_file, index_col=0)
+                            # Convert index to datetime
+                            returns_data.index = pd.to_datetime(returns_data.index)
 
-            try:
-                returns_data = pd.read_csv(returns_file, index_col=0, parse_dates=True)
+                            # Convert to Series if DataFrame with single column
+                            if isinstance(returns_data, pd.DataFrame):
+                                if returns_data.shape[1] == 1:
+                                    returns_data = returns_data.iloc[:, 0]
+                                else:
+                                    # Use first column if multiple columns
+                                    returns_data = returns_data.iloc[:, 0]
 
-                # Convert to Series if DataFrame with single column
-                if isinstance(returns_data, pd.DataFrame):
-                    if returns_data.shape[1] == 1:
-                        returns_data = returns_data.iloc[:, 0]
-                    else:
-                        # Use first column if multiple columns
-                        returns_data = returns_data.iloc[:, 0]
+                            returns_dict[model_name] = returns_data
+                            logger.info(f"Loaded {model_name} from {subdir.name}: {len(returns_data)} observations")
 
-                returns_dict[model_name] = returns_data
-                logger.info(f"Loaded {model_name}: {len(returns_data)} observations")
+                        except Exception as e:
+                            logger.warning(f"Failed to load returns for {model_name}: {e}")
+        else:
+            # Fall back to old structure (direct returns_*.csv files)
+            for returns_file in results_dir.glob("returns_*.csv"):
+                model_name = returns_file.stem.replace("returns_", "")
 
-            except Exception as e:
-                logger.warning(f"Failed to load returns for {model_name}: {e}")
+                try:
+                    returns_data = pd.read_csv(returns_file, index_col=0, parse_dates=True)
+
+                    # Convert to Series if DataFrame with single column
+                    if isinstance(returns_data, pd.DataFrame):
+                        if returns_data.shape[1] == 1:
+                            returns_data = returns_data.iloc[:, 0]
+                        else:
+                            # Use first column if multiple columns
+                            returns_data = returns_data.iloc[:, 0]
+
+                    returns_dict[model_name] = returns_data
+                    logger.info(f"Loaded {model_name}: {len(returns_data)} observations")
+
+                except Exception as e:
+                    logger.warning(f"Failed to load returns for {model_name}: {e}")
 
         if not returns_dict:
             # Generate synthetic data for testing if no results available
@@ -1287,7 +1314,8 @@ def main(config_path: str | None = None, results_dir: str | None = None) -> None
         if results_dir:
             results_path = Path(results_dir)
         else:
-            results_path = Path("results/comprehensive_backtest")
+            # Use the default output from run_comprehensive_backtest.py
+            results_path = Path("results/ml_backtest_rolling")
 
         returns_dict = executor.load_backtest_results(results_path)
 

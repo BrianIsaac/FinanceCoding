@@ -110,7 +110,8 @@ class PerformanceAnalytics:
         return {
             "total_return": total_return,
             "annualized_return": annualized_return,
-            "volatility": annualized_volatility,
+            "annualized_volatility": annualized_volatility,
+            "volatility": annualized_volatility,  # Keep for backwards compatibility
             "sharpe_ratio": sharpe_ratio_annualized,
             "sortino_ratio": sortino_ratio * np.sqrt(trading_days),
             "max_drawdown": max_drawdown,
