@@ -1,0 +1,61 @@
+# S&P MidCap 400 specific data configuration
+
+# Inherit from default and override specific settings
+extends: default.yaml
+
+# Universe-specific settings
+universe: midcap400
+custom_symbols: null  # Will be populated from Wikipedia data
+
+# Universe filtering criteria
+universe_config:
+  universe_type: midcap400
+  min_market_cap: 1000    # $1B minimum market cap
+  min_avg_volume: 100000  # Minimum average daily volume
+  exclude_sectors: []     # No sector exclusions
+  rebalance_frequency: quarterly
+
+# Extended date range for MidCap 400
+start_date: "2015-01-01"  # Earlier start for more history
+end_date: "2024-12-31"
+
+# MidCap-specific processing
+lookback_window: 315  # 15 months for mid-cap volatility patterns
+min_history: 126      # 6 months minimum for less liquid mid-caps
+
+# Enhanced feature engineering for mid-cap characteristics
+features:
+  return_periods: [1, 5, 21, 63, 126]  # Include longer periods
+  volatility_window: 42                 # Longer window for mid-cap volatility
+  momentum_periods: [21, 63, 126, 252]  # Extended momentum periods
+  technical_indicators:
+    - rsi
+    - macd
+    - bollinger_bands
+    - moving_average
+    - relative_strength    # vs benchmark
+    - volume_weighted_price
+  correlation_window: 315  # Longer correlation window
+  outlier_threshold: 2.5   # More conservative for mid-caps
+
+# Adjusted validation for mid-cap characteristics  
+validation:
+  missing_data_threshold: 0.15  # Allow more missing data for mid-caps
+  price_change_threshold: 0.7   # Allow larger price movements
+  volume_threshold: 1000        # Same minimum volume
+  validate_business_days: true
+  fill_method: forward
+
+# More conservative rate limits for MidCap data collection
+collectors:
+  yfinance:
+    rate_limit: 3.0     # Slower for 400+ symbols
+    timeout: 15         # Longer timeout
+    retry_attempts: 5   # More retries
+    retry_delay: 2.0
+  
+  stooq:
+    rate_limit: 8.0
+    timeout: 20
+    retry_attempts: 5
+    retry_delay: 2.0

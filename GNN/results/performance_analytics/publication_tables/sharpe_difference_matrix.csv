@@ -1,8 +1,0 @@
-HRP_average_correlation_756,LSTM,GAT_MST,GAT_TMFG,EqualWeight,MarketCapWeighted,MeanReversion
-—,,,,0.0663*,0.0244,0.0463
-,—,,,0.0056,-0.0363,-0.0143
-,,—,,-0.0067,-0.0486,-0.0267
-,,,—,0.0406,-0.0013,0.0206
-,,,,—,,
-,,,,,—,
-,,,,,,—

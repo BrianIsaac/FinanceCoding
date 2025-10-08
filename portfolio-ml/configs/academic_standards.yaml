@@ -1,0 +1,112 @@
+# Academic Standards Configuration for Flexible Academic Framework
+# This configuration defines adaptive academic standards that maintain
+# statistical rigour while adapting to real-world data characteristics
+
+academic_standards:
+  # Flexible sample thresholds instead of rigid 252
+  # These are adaptive based on confidence scoring
+  minimum_samples:
+    high_confidence: 200     # For high-confidence academic results
+    moderate_confidence: 120  # For moderate-confidence academic results
+    low_confidence: 60       # Minimum for any academic analysis
+    absolute_minimum: 30     # Below this, no analysis possible
+
+  # Statistical power requirements
+  statistical_power:
+    target_power: 0.8        # Target statistical power for standard methods
+    minimum_power: 0.6       # Minimum acceptable power for any analysis
+    high_confidence_power: 0.9  # Power needed for high confidence results
+
+  # Confidence scoring weights
+  # These determine how different factors contribute to overall confidence
+  confidence_scoring:
+    data_quality_weight: 0.3      # Weight for data completeness and consistency
+    sample_size_weight: 0.4       # Weight for sample size adequacy
+    universe_stability_weight: 0.3 # Weight for universe size and stability
+
+  # Confidence thresholds for different academic standards
+  confidence_thresholds:
+    high_confidence: 0.9      # Threshold for standard academic methods
+    moderate_confidence: 0.7  # Threshold for robust academic methods
+    low_confidence: 0.5       # Threshold for Bayesian/regularised methods
+    minimum_confidence: 0.3   # Below this, only exploratory analysis
+
+  # Robust methods configuration
+  robust_methods:
+    enable_huber_regression: true       # Use Huber regression for outlier robustness
+    enable_regularisation: true         # Use L1/L2 regularisation for sparse data
+    enable_bayesian_priors: true        # Use informative priors when data limited
+    enable_bootstrap: true              # Use bootstrap for confidence intervals
+    enable_ensemble_methods: true       # Use ensemble methods for stability
+
+  # Adaptive threshold adjustments based on market conditions
+  market_adjustments:
+    crisis_periods:
+      threshold_reduction: 0.8   # Reduce thresholds by 20% during crises
+      confidence_penalty: 0.1    # Reduce confidence by 10% during crises
+
+    high_volatility:
+      threshold_reduction: 0.9   # Reduce thresholds by 10% in high volatility
+      volatility_threshold: 0.3  # Annualised volatility to trigger adjustment
+
+    sparse_universe:
+      small_universe_threshold: 50   # Universe size considered small
+      threshold_reduction: 0.85      # Reduce thresholds by 15% for small universes
+
+  # Data quality assessment parameters
+  data_quality:
+    max_missing_ratio: 0.2          # Maximum 20% missing data acceptable
+    outlier_z_score_threshold: 5.0  # Z-score threshold for outlier detection
+    min_completeness: 0.7            # Minimum 70% data completeness required
+    temporal_consistency_weight: 0.2 # Weight for temporal consistency checks
+
+  # Academic reporting configuration
+  reporting:
+    include_confidence_intervals: true  # Always report confidence intervals
+    include_significance_tests: true    # Include statistical significance tests
+    include_uncertainty_bounds: true    # Report uncertainty bounds
+    include_academic_caveats: true      # Generate academic caveats
+    multiple_comparison_correction: "bonferroni"  # Method for multiple testing correction
+
+# Model-specific academic standards
+model_standards:
+  lstm:
+    min_sequence_length: 30   # Minimum sequence length for LSTM
+    max_sequence_length: 90   # Maximum sequence length for LSTM
+    adapt_sequence_to_data: true  # Dynamically adjust sequence length
+
+  hrp:
+    min_assets_for_clustering: 10   # Minimum assets for hierarchical clustering
+    min_correlation_window: 60      # Minimum days for correlation estimation
+
+  gat:
+    min_graph_nodes: 20             # Minimum nodes for graph construction
+    min_edge_density: 0.1           # Minimum edge density for valid graph
+
+# Validation framework configuration
+validation_framework:
+  enable_flexible_validation: true      # Use flexible academic validator
+  default_confidence_threshold: 0.6     # Default minimum confidence to proceed
+  default_standards_level: "moderate"   # Default: "strict", "moderate", or "relaxed"
+
+  # Cross-validation settings
+  cross_validation:
+    min_folds: 3                # Minimum CV folds
+    stratified_sampling: true   # Use stratified sampling when possible
+    time_series_split: true     # Use time series aware splitting
+
+# Backtesting specific adjustments
+backtesting:
+  # Allow backtesting with caveats when confidence is moderate
+  allow_moderate_confidence_backtesting: true
+
+  # Generate warnings when confidence is low
+  warn_on_low_confidence: true
+  low_confidence_warning_threshold: 0.6
+
+  # Automatic method selection based on confidence
+  auto_select_methods: true
+  method_selection_rules:
+    high_confidence: ["maximum_likelihood", "classical_tests", "standard_optimisation"]
+    moderate_confidence: ["robust_estimators", "regularisation", "bootstrap"]
+    low_confidence: ["bayesian_methods", "shrinkage", "ensemble"]

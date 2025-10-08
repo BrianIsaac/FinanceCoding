@@ -1,0 +1,37 @@
+# Hierarchical Risk Parity (HRP) Model Configuration
+
+name: hrp
+description: "Hierarchical Risk Parity portfolio optimization using correlation distance clustering"
+
+# Core HRP Parameters
+lookback_days: 756  # 3 years of daily returns data
+min_observations: 252  # Minimum observations required (1 year)
+rebalance_frequency: monthly
+
+# Clustering Configuration  
+clustering:
+  linkage_method: single  # single, complete, average, ward
+  correlation_method: pearson  # pearson, spearman, kendall
+  min_correlation_threshold: null  # Optional minimum correlation for edge filtering
+  
+# Allocation Configuration
+allocation:
+  risk_measure: variance  # variance, vol, equal
+  min_allocation: 0.001   # 0.1% minimum position size
+  max_allocation: 0.10    # 10% maximum position size (overridden by constraints)
+  allocation_precision: 6 # Decimal places for weight precision
+
+# Portfolio Constraints
+constraints:
+  long_only: true
+  top_k_positions: 50
+  max_position_weight: 0.10  # 10% maximum single position
+  max_monthly_turnover: 0.20 # 20% monthly turnover limit  
+  transaction_cost_bps: 10.0 # 0.10% transaction cost
+  min_weight_threshold: 0.01 # 1% minimum weight threshold
+
+# Model Metadata
+model_type: risk_parity
+expected_universe_size: 400
+computational_complexity: medium
+memory_usage: medium

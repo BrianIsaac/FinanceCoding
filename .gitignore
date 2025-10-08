@@ -196,18 +196,23 @@ cython_debug/
 # testing python notebook
 *./test.ipynb
 
-# NLP
-NLP/financial_news.txt
-*/data/*
+# Project-specific data and outputs
+*/financial_news.txt
+*/data/
+*/interim/
+*/outputs/
+*/processed/
+*/results/
+*/reports/
+*/logs/
+*/test_reports/
 
-#GNN
-GNN/interim/
-GNN/outputs/
-GNN/processed
+# AI assistant tooling (BMAD, Claude, etc.)
+*/claude-processing-needs/
+*/.claude/
+*/.bmad-core/
+*/.bmad-aisg-aiml/
+*/.project-files/
 
-#bmad with gnn
-GNN/docs
-GNN/claude-processing-needs
-GNN/.claude
-GNN/.bmad-core
-GNN/.bmad-aisg-aiml
+# IDE and testing configurations (project-level)
+*/pytest.ini

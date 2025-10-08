@@ -1,0 +1,153 @@
+# Baseline Comparison Experiment Configuration
+
+experiment_name: baseline_comparison
+description: "Compare HRP, LSTM, and GAT models on S&P MidCap 400 universe"
+
+# Global experiment settings
+project:
+  data_dir: data
+  output_dir: outputs/experiments/baseline_comparison
+  log_level: INFO
+  random_seed: 42
+  
+# Data configuration
+data:
+  config_file: configs/data/midcap400.yaml
+  train_start: "2016-01-01"
+  train_end: "2022-12-31"
+  test_start: "2023-01-01" 
+  test_end: "2024-12-31"
+  validation_method: rolling  # Rolling window validation
+  validation_window: 252      # 1 year validation windows
+  
+# Models to compare
+models:
+  hrp:
+    config_file: configs/models/hrp_default.yaml
+    enabled: true
+    variants:
+      - name: hrp_conservative
+        overrides:
+          constraints.max_weight: 0.05  # 5% max position
+          rebalancing.frequency: 63     # Quarterly rebalancing
+          
+      - name: hrp_aggressive  
+        overrides:
+          constraints.max_weight: 0.15  # 15% max position
+          rebalancing.frequency: 21     # Monthly rebalancing
+  
+  lstm:
+    config_file: configs/models/lstm_default.yaml
+    enabled: true
+    variants:
+      - name: lstm_base
+        overrides: {}
+        
+      - name: lstm_deep
+        overrides:
+          architecture.hidden_size: 128
+          architecture.num_layers: 3
+          training.learning_rate: 0.0005
+          
+  gat:
+    config_file: configs/models/gat_default.yaml  
+    enabled: true
+    variants:
+      - name: gat_base
+        overrides: {}
+        
+      - name: gat_large
+        overrides:
+          architecture.hidden_dim: 128
+          architecture.num_heads: 12
+          graph.max_connections_per_node: 30
+
+# Evaluation framework
+evaluation:
+  # Backtest parameters
+  backtest:
+    initial_capital: 1000000    # $1M initial capital
+    transaction_costs: 0.001    # 10 bps transaction cost
+    rebalancing_frequency: 21   # Monthly rebalancing
+    benchmark: "SPY"            # S&P 500 benchmark
+    
+  # Performance metrics
+  metrics:
+    returns:
+      - total_return
+      - annualized_return  
+      - excess_return
+      - alpha
+      - beta
+      
+    risk:
+      - volatility
+      - sharpe_ratio
+      - sortino_ratio
+      - information_ratio
+      - max_drawdown
+      - var_95
+      - cvar_95
+      
+    portfolio:
+      - turnover
+      - concentration_ratio
+      - sector_exposure
+      - market_cap_exposure
+      
+  # Statistical tests
+  statistical_tests:
+    - t_test_returns         # Test return differences
+    - bootstrap_sharpe       # Bootstrap Sharpe ratio confidence
+    - diebold_mariano       # Forecast accuracy test
+    
+# Experiment workflow
+workflow:
+  steps:
+    1_data_preparation:
+      - load_universe_data
+      - clean_and_validate
+      - feature_engineering
+      - train_test_split
+      
+    2_model_training:
+      - train_all_models
+      - hyperparameter_validation
+      - cross_validation
+      
+    3_backtesting:
+      - run_backtest_all_models
+      - calculate_performance_metrics
+      - statistical_significance_tests
+      
+    4_analysis:
+      - generate_performance_reports
+      - create_visualizations
+      - model_attribution_analysis
+      - risk_factor_analysis
+      
+# Output configuration
+output:
+  save_models: true
+  save_predictions: true
+  save_portfolios: true
+  
+  reports:
+    - performance_summary
+    - model_comparison
+    - risk_analysis
+    - factor_attribution
+    
+  visualizations:
+    - cumulative_returns
+    - rolling_metrics
+    - drawdown_analysis
+    - correlation_heatmap
+    - attention_patterns  # GAT-specific
+    
+# Compute resources
+compute:
+  use_gpu: true
+  max_memory_gb: 10
+  parallel_models: false      # Train models sequentially
+  num_workers: 4             # For data loading

@@ -1,4 +1,0 @@
-Model,vs Equal Weight p-value,vs Market Cap p-value,Jobson-Korkie Test,Bootstrap p-value,Effect Size,Significance Level,Bonferroni Adjusted,FDR Adjusted
-HRP,0.080000,1.000000,1.000000,0.100000,0.3000,Marginally Significant (p<0.10),1.000000,1.000000
-LSTM,0.010000,1.000000,1.000000,0.012000,0.8000,Significant (p<0.05),1.000000,1.000000
-GAT,0.040000,1.000000,1.000000,0.045000,0.5000,Significant (p<0.05),1.000000,1.000000

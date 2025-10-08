@@ -1,8 +1,0 @@
-Stage_Name,Duration_Minutes,Expected_Minutes,Status,Memory_Usage_MB,CPU_Utilization_%,Critical_Stage,Bottlenecks_Count,Recommendations_Count
-Data Loading,0.025127426783243815,5.0,PASS,105.54296875,0.9,True,0,1
-Model Loading,0.015014286835988362,2.0,PASS,105.54296875,0.7,True,0,1
-Model Prediction,0.05015636285146077,30.0,PASS,105.54296875,0.85,True,0,1
-Backtesting Execution,0.08348958889643351,45.0,PASS,105.54296875,0.75,True,0,1
-Performance Analytics,0.02503103812535604,15.0,PASS,105.54296875,0.9,True,0,1
-Statistical Validation,0.03506499528884888,20.0,PASS,105.54296875,0.85,True,0,1
-Report Generation,0.013355612754821777,10.0,PASS,105.54296875,0.8,False,0,1

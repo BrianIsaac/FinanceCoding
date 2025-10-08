@@ -1,0 +1,92 @@
+# Shared Model Configuration for Training-Backtest Consistency
+# This configuration ensures identical settings across training and backtesting
+
+# Portfolio constraints - must be identical in training and backtesting
+portfolio_constraints:
+  long_only: true
+  max_position_weight: 0.15  # Maximum 15% per position
+  max_monthly_turnover: 0.30  # Maximum 30% monthly turnover
+  top_k_positions: 50  # Top 50 positions as per proposal
+  min_weight_threshold: 0.01  # Minimum 1% position weight
+  transaction_cost_bps: 10.0  # 10 basis points transaction costs
+
+# Universe settings
+universe_settings:
+  default_size: 400  # S&P MidCap 400
+  min_assets: 50  # Minimum assets for meaningful ML training
+  max_assets: 600  # Maximum to handle with 11GB GPU
+  min_data_coverage: 0.8  # Require 80% data coverage for training
+  expected_universe_size: 500  # Expected size after filtering for validation
+
+# Data processing settings
+data_settings:
+  extreme_return_threshold: 10  # Standard deviations for outlier detection
+  max_forward_fill: 5  # Maximum days for forward filling
+  min_data_coverage: 0.8  # Minimum non-NaN data required
+  lookback_days: 252  # Standard 1-year lookback
+
+# Model-specific configurations
+model_configs:
+  hrp:
+    lookback_days: 756  # 3 years
+    min_observations: 252  # 1 year minimum
+    correlation_method: "pearson"
+    rebalance_frequency: "monthly"
+
+  lstm:
+    sequence_length: 60  # 60-day sequences
+    hidden_size: 128  # Default hidden dimension
+    num_layers: 2
+    dropout: 0.4  # Increased dropout for better regularisation
+    learning_rate: 0.0005  # Slightly higher learning rate for better convergence
+    batch_size: 48  # Increased for better GPU utilisation
+    epochs: 200  # Increased from 100 for better convergence
+    patience: 30  # Balanced early stopping patience
+    use_dynamic_input_size: true  # Dynamic input size based on actual universe
+    min_input_size: 50  # Minimum input size for stability
+    max_input_size: 700  # Increased to handle full universe (600 assets + buffer)
+    min_improvement: 0.0005  # Lower threshold for financial time series
+    weight_decay: 0.001  # Add weight decay for regularisation
+    gradient_clip_value: 1.0  # Gradient clipping for stability
+    scheduler_factor: 0.8  # Learning rate scheduler factor
+    scheduler_patience: 10  # Scheduler patience
+    validation_split: 0.15  # Validation split ratio
+
+  gat:
+    input_features: 10
+    hidden_dim: 64
+    num_layers: 3
+    num_attention_heads: 8
+    dropout: 0.3
+    learning_rate: 0.001
+    batch_size: 32
+    lookback_days: 252
+
+# Training settings
+training_settings:
+  train_end_date: "2022-12-31"  # Leave 2023-2024 for out-of-sample
+  validation_split: 0.2
+  min_training_days: 504  # 2 years minimum
+  patience: 20  # Early stopping patience
+
+# Backtesting settings
+backtest_settings:
+  test_start_date: "2023-01-01"
+  test_end_date: "2024-11-30"
+  rebalance_frequency: "MS"  # Month start
+  benchmark_ticker: "SPY"
+
+# GPU and memory settings
+compute_settings:
+  gpu_memory_limit_gb: 11.0
+  mixed_precision: true
+  gradient_accumulation_steps: 4
+  batch_size_auto_scale: true
+
+# Rolling window settings
+rolling_window:
+  training_months: 36  # 3 years training
+  validation_months: 6  # 6 months validation
+  test_months: 1  # Monthly rebalancing
+  step_months: 1  # Monthly rolling
+  min_observations: 252  # 1 year minimum

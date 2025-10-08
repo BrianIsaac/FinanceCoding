@@ -1,0 +1,46 @@
+schema: 1
+story: "2.5"
+story_title: "Model Training and Validation Pipeline"
+gate: CONCERNS
+status_reason: "Strong training implementation with excellent GPU optimization but validation edge cases need refinement for full production readiness."
+reviewer: "Quinn (Test Architect)"
+updated: "2025-09-09T00:00:00Z"
+
+waiver: { active: false }
+
+top_issues:
+  - id: "VALIDATION-001"
+    severity: low
+    finding: "9 validation tests failing with edge case handling issues (88% pass rate)"
+    suggested_action: "Refine edge case handling in validation frameworks, particularly for insufficient data scenarios"
+
+quality_score: 88  # 100 - (12 for validation test issues)
+
+evidence:
+  tests_reviewed: 100  # Training (23) + Validation-related (77)
+  risks_identified: 1
+  trace:
+    ac_covered: [1, 2, 3, 4, 5]
+    ac_gaps: [6]  # Validation monitoring has edge cases
+
+nfr_validation:
+  security:
+    status: PASS
+    notes: "Training pipelines use secure data handling and proper GPU memory management"
+  performance:
+    status: PASS
+    notes: "Excellent GPU optimization, mixed precision training, gradient accumulation"
+  reliability:
+    status: CONCERNS
+    notes: "88% test pass rate - validation edge cases need attention"
+  maintainability:
+    status: PASS
+    notes: "Well-organized modular training architecture with comprehensive documentation"
+
+recommendations:
+  immediate: []
+  future:
+    - action: "Fix validation edge case handling for insufficient data scenarios"
+      refs: ["tests/unit/test_validation/test_significance.py", "tests/unit/test_rolling_window_generator.py"]
+    - action: "Improve statistical validation robustness for extreme market conditions"
+      refs: ["src/evaluation/validation/rolling_validation.py"]

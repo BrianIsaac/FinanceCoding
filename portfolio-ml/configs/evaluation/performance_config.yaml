@@ -1,0 +1,60 @@
+# Performance Analytics Configuration
+# Configuration for comprehensive performance metrics calculation
+
+# Return Metrics Configuration
+return_metrics:
+  risk_free_rate: 0.02  # 2% annual risk-free rate
+  trading_days_per_year: 252
+  confidence_level: 0.95
+
+# Risk Analytics Configuration
+risk_analytics:
+  risk_free_rate: 0.02
+  trading_days_per_year: 252
+  confidence_levels: [0.90, 0.95, 0.99]  # VaR confidence levels
+
+# Operational Metrics Configuration
+operational_metrics:
+  transaction_cost_bps: 10.0  # 10 basis points default transaction cost
+  max_monthly_turnover: 0.20  # 20% maximum monthly turnover
+  implementation_delay_days: 1
+  constraint_tolerance: 0.01  # 1% tolerance for constraint violations
+
+# Rolling Analysis Configuration
+rolling_analysis:
+  default_windows: [63, 126, 252, 504, 756]  # 3M, 6M, 1Y, 2Y, 3Y in trading days
+  min_window_size: 63  # Minimum 3 months
+  max_window_size: 756  # Maximum 3 years
+  step_size: 21  # Monthly steps
+  confidence_level: 0.95
+  regime_detection_lookback: 252  # 1 year for regime detection
+
+# Performance Attribution Configuration
+attribution:
+  attribution_window: 252  # 1 year window for attribution analysis
+  min_observations: 63     # Minimum 3 months of data
+  confidence_level: 0.95
+  risk_factors: ['market', 'size', 'value', 'momentum', 'quality', 'volatility']
+
+# Benchmark Comparison Configuration
+benchmarks:
+  risk_free_rate: 0.02
+  trading_days_per_year: 252
+  rebalance_frequency: 'M'  # Monthly rebalancing for constructed benchmarks
+  min_weight: 0.01  # Minimum 1% weight for equal-weight benchmark
+  max_weight: 0.20  # Maximum 20% weight for mean-variance benchmark
+  target_volatility: 0.12  # 12% target volatility for risk-parity benchmarks
+
+# Reporting Configuration
+reporting:
+  export_formats: ['json', 'csv', 'excel']
+  include_charts: true
+  chart_format: 'png'
+  report_frequency: 'monthly'
+  
+# Integration Settings
+integration:
+  memory_optimization: true
+  parallel_processing: true
+  cache_results: true
+  cache_ttl: 3600  # Cache time-to-live in seconds

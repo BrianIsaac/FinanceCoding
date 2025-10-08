@@ -1,0 +1,345 @@
+# Chart styling and appearance configuration
+# Detailed styling settings for all chart types
+
+# Base chart configuration
+base:
+  figure:
+    facecolor: "white"
+    edgecolor: "none"
+    tight_layout: true
+    
+  axes:
+    facecolor: "white"
+    edgecolor: "black"
+    linewidth: 1.0
+    grid: true
+    grid_alpha: 0.3
+    grid_linestyle: "-"
+    grid_linewidth: 0.5
+    
+  text:
+    fontfamily: "sans-serif"
+    fontsize: 10
+    color: "black"
+    
+# Matplotlib-specific settings
+matplotlib:
+  style: "seaborn-v0_8-whitegrid"
+  backend: "Agg"
+  
+  # RC parameters
+  rcParams:
+    "figure.figsize": [12, 8]
+    "figure.dpi": 300
+    "savefig.dpi": 300
+    "savefig.bbox": "tight"
+    "font.size": 10
+    "axes.titlesize": 14
+    "axes.labelsize": 12
+    "xtick.labelsize": 10
+    "ytick.labelsize": 10
+    "legend.fontsize": 10
+    "lines.linewidth": 2
+    "lines.markersize": 6
+    "patch.linewidth": 0.5
+    "axes.spines.top": false
+    "axes.spines.right": false
+    
+# Plotly-specific settings
+plotly:
+  template: "plotly_white"
+  
+  # Layout defaults
+  layout:
+    showlegend: true
+    hovermode: "closest"
+    
+    # Axes configuration
+    xaxis:
+      showgrid: true
+      gridwidth: 1
+      gridcolor: "rgba(128,128,128,0.2)"
+      showline: true
+      linewidth: 1
+      linecolor: "rgb(204, 204, 204)"
+      mirror: true
+      
+    yaxis:
+      showgrid: true
+      gridwidth: 1
+      gridcolor: "rgba(128,128,128,0.2)"
+      showline: true
+      linewidth: 1
+      linecolor: "rgb(204, 204, 204)"
+      mirror: true
+      
+    # Legend configuration
+    legend:
+      orientation: "v"
+      yanchor: "top"
+      y: 1
+      xanchor: "left"
+      x: 1.02
+      bgcolor: "rgba(255,255,255,0.8)"
+      bordercolor: "rgba(0,0,0,0.1)"
+      borderwidth: 1
+      
+    # Color configuration
+    colorway:
+      - "#1f77b4"  # Blue
+      - "#ff7f0e"  # Orange
+      - "#2ca02c"  # Green
+      - "#d62728"  # Red
+      - "#9467bd"  # Purple
+      - "#8c564b"  # Brown
+      - "#e377c2"  # Pink
+      - "#7f7f7f"  # Gray
+      - "#bcbd22"  # Olive
+      - "#17becf"  # Cyan
+
+# Chart-specific styling
+chart_types:
+  # Time series charts
+  time_series:
+    line:
+      width: 2
+      smoothing: 0.8
+      
+    markers:
+      size: 4
+      opacity: 0.8
+      
+    confidence_bands:
+      opacity: 0.2
+      line:
+        width: 0
+        color: "rgba(255,255,255,0)"
+        
+    annotations:
+      font:
+        size: 10
+      bgcolor: "rgba(255,255,255,0.8)"
+      bordercolor: "rgba(0,0,0,0.1)"
+      
+  # Scatter plots
+  scatter:
+    markers:
+      size: 8
+      opacity: 0.7
+      line:
+        width: 1
+        color: "rgba(0,0,0,0.3)"
+        
+    trend_lines:
+      width: 2
+      dash: "dash"
+      opacity: 0.6
+      
+  # Bar charts
+  bar:
+    opacity: 0.8
+    marker:
+      line:
+        width: 1
+        color: "rgba(0,0,0,0.3)"
+        
+    # Error bars
+    error_bars:
+      width: 2
+      color: "rgba(0,0,0,0.5)"
+      
+  # Heatmaps
+  heatmap:
+    colorscale: "RdBu"
+    reversescale: true
+    showscale: true
+    colorbar:
+      title:
+        side: "right"
+      tickmode: "linear"
+      dtick: 0.02
+      
+    # Text annotations
+    text:
+      font:
+        size: 8
+        color: "auto"  # Automatic based on background
+        
+  # Histograms
+  histogram:
+    opacity: 0.7
+    nbins: "auto"
+    marker:
+      line:
+        width: 1
+        color: "rgba(0,0,0,0.3)"
+        
+    # Overlays
+    kde:
+      line:
+        width: 2
+        dash: "dash"
+
+# Interactive elements
+interactivity:
+  # Hover settings
+  hover:
+    bgcolor: "rgba(255,255,255,0.9)"
+    bordercolor: "rgba(0,0,0,0.1)"
+    font:
+      size: 12
+      
+  # Selection tools
+  selection:
+    dragmode: "zoom"
+    selectdirection: "diagonal"
+    
+  # Range selectors
+  range_selector:
+    buttons:
+      - count: 1
+        label: "1Y"
+        step: "year"
+        stepmode: "backward"
+      - count: 2
+        label: "2Y"
+        step: "year"
+        stepmode: "backward"
+      - count: 5
+        label: "5Y"
+        step: "year"
+        stepmode: "backward"
+      - step: "all"
+        label: "All"
+        
+    bgcolor: "rgba(255,255,255,0.8)"
+    bordercolor: "rgba(0,0,0,0.1)"
+    borderwidth: 1
+    
+  # Range slider
+  range_slider:
+    visible: true
+    bgcolor: "rgba(240,240,240,0.5)"
+    
+# Annotation styles
+annotations:
+  # Statistical significance
+  significance:
+    font:
+      size: 12
+      color: "#d32f2f"  # Red
+      family: "Arial, sans-serif"
+      
+  # Regime indicators
+  regime:
+    font:
+      size: 10
+      color: "white"
+    bgcolor: "rgba(0,0,0,0.7)"
+    bordercolor: "rgba(255,255,255,0.3)"
+    borderwidth: 1
+    
+  # Performance callouts
+  performance:
+    font:
+      size: 11
+      color: "#1976d2"  # Blue
+    bgcolor: "rgba(255,255,255,0.9)"
+    bordercolor: "rgba(25,118,210,0.3)"
+    borderwidth: 2
+
+# Theme variations
+themes:
+  # Light theme (default)
+  light:
+    background: "white"
+    text_color: "black"
+    grid_color: "rgba(128,128,128,0.2)"
+    axis_color: "rgb(204, 204, 204)"
+    
+  # Dark theme
+  dark:
+    background: "#2F2F2F"
+    text_color: "white"
+    grid_color: "rgba(255,255,255,0.1)"
+    axis_color: "rgb(128, 128, 128)"
+    
+  # Presentation theme
+  presentation:
+    background: "white"
+    text_color: "black"
+    font_size_multiplier: 1.2
+    line_width_multiplier: 1.5
+    
+  # Print theme
+  print:
+    background: "white"
+    text_color: "black"
+    colormap: "grayscale"
+    high_contrast: true
+
+# Responsive design
+responsive:
+  breakpoints:
+    mobile: 768
+    tablet: 1024
+    desktop: 1200
+    
+  # Mobile adjustments
+  mobile:
+    font_size_multiplier: 0.8
+    line_width_multiplier: 0.8
+    margin_reduction: 0.5
+    legend_position: "bottom"
+    
+  # Tablet adjustments
+  tablet:
+    font_size_multiplier: 0.9
+    line_width_multiplier: 0.9
+    margin_reduction: 0.2
+    
+# Export-specific styling
+export:
+  # High-resolution settings
+  high_res:
+    dpi: 600
+    font_size_multiplier: 1.2
+    line_width_multiplier: 1.5
+    
+  # Publication settings
+  publication:
+    colormap: "colorblind_friendly"
+    font_family: "Times New Roman"
+    font_size: 12
+    high_contrast: true
+    
+  # Web settings
+  web:
+    compression: "auto"
+    optimize_for_web: true
+    responsive: true
+
+# Accessibility
+accessibility:
+  colorblind_friendly: true
+  high_contrast_mode: false
+  alternative_text: true
+  
+  # Color palettes for colorblind users
+  colorblind_palettes:
+    protanopia: ["#0173B2", "#DE8F05", "#029E73", "#D55E00", "#CC78BC"]
+    deuteranopia: ["#0173B2", "#DE8F05", "#029E73", "#D55E00", "#CC78BC"]
+    tritanopia: ["#0173B2", "#DE8F05", "#029E73", "#D55E00", "#CC78BC"]
+
+# Performance optimization
+performance:
+  # Rendering optimization
+  max_points_before_sampling: 10000
+  sampling_method: "uniform"
+  
+  # Memory optimization
+  garbage_collect_frequency: 100  # Every 100 charts
+  cache_size_mb: 200
+  
+  # WebGL acceleration for Plotly
+  webgl_threshold: 1000  # Number of points to trigger WebGL

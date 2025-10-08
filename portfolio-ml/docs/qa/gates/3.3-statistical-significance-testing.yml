@@ -1,0 +1,46 @@
+schema: 1
+story: "3.3"
+story_title: "Statistical Significance Testing"
+gate: CONCERNS
+status_reason: "Solid core functionality with 77% test success rate but edge case handling needs refinement for full production confidence."
+reviewer: "Quinn (Test Architect)"
+updated: "2025-09-09T00:00:00Z"
+
+waiver: { active: false }
+
+top_issues:
+  - id: "STATS-001"
+    severity: low
+    finding: "5 statistical test failures in edge case scenarios (77% pass rate)"
+    suggested_action: "Refine edge case handling for zero volatility and insufficient data scenarios"
+
+quality_score: 82  # 100 - (18 for edge case issues)
+
+evidence:
+  tests_reviewed: 22
+  risks_identified: 1
+  trace:
+    ac_covered: [1, 2, 3, 4, 5, 6]
+    ac_gaps: []  # Core functionality implemented, just edge cases
+
+nfr_validation:
+  security:
+    status: PASS
+    notes: "Statistical calculations follow secure computational patterns"
+  performance:
+    status: PASS
+    notes: "Efficient statistical computations suitable for financial data"
+  reliability:
+    status: CONCERNS
+    notes: "77% test pass rate - edge cases need attention"
+  maintainability:
+    status: PASS
+    notes: "Well-organized validation architecture"
+
+recommendations:
+  immediate: []
+  future:
+    - action: "Improve edge case handling for zero volatility scenarios"
+      refs: ["tests/unit/test_validation/test_significance.py"]
+    - action: "Add better error handling for insufficient data cases"
+      refs: ["src/evaluation/validation/significance.py"]

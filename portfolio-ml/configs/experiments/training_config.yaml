@@ -1,0 +1,150 @@
+# Unified Training Configuration for Portfolio Optimization Models
+# This configuration file defines training parameters for all model types
+
+# Model-specific configurations
+models:
+  # Hierarchical Risk Parity (HRP) Models
+  hrp:
+    enabled: true
+    # Parameter sweep configurations
+    lookback_periods: [252, 504, 756]  # 1, 2, 3 years of daily data
+    linkage_methods: ["single", "complete", "average"]
+    correlation_methods: ["pearson", "spearman"]
+    # Advanced HRP parameters
+    min_observations: 252
+    correlation_threshold: 0.0
+    quasi_diagonalization: true
+
+  # Long Short-Term Memory (LSTM) Models
+  lstm:
+    enabled: true
+    # Architecture hyperparameters
+    hidden_dims: [64, 128, 256]
+    learning_rates: [0.001, 0.0001]
+    sequence_lengths: [60]  # 60-day sequences
+    batch_sizes: [32, 64]
+    # Training parameters
+    dropout_rates: [0.1, 0.2]
+    num_layers: [2, 3]
+    attention_heads: [4, 8]
+
+  # Graph Attention Network (GAT) Models
+  gat:
+    enabled: true
+    # Architecture hyperparameters
+    hidden_dims: [64, 128]
+    heads: [4, 8]
+    num_layers: [2, 3]
+    dropout_rates: [0.1, 0.2]
+    # Graph construction methods
+    graph_methods: ["mst", "tmfg", "knn_5", "knn_10", "knn_15"]
+    # Training objectives
+    training_objectives: ["sharpe_rnext", "daily_log_utility"]
+    # GAT-specific parameters
+    use_edge_attr: true
+    use_gatv2: true
+    residual: true
+
+# Data configuration
+data:
+  start_date: "2016-01-01"
+  end_date: "2024-12-31"
+  validation_split: 0.2
+  test_split: 0.2
+  min_history_days: 252  # Minimum 1 year of data
+  universe: "midcap400"
+  # Data preprocessing
+  fill_method: "forward"
+  outlier_threshold: 3.0
+  min_correlation: -0.99
+
+# Training configuration
+training:
+  max_epochs: 200
+  patience: 20
+  early_stopping: true
+  validation_metric: "sharpe_ratio"
+  min_improvement: 1e-6
+  # Learning rate scheduling
+  lr_scheduler: "reduce_on_plateau"
+  lr_patience: 10
+  lr_factor: 0.5
+  min_lr: 1e-6
+
+# GPU and memory configuration
+gpu:
+  memory_limit_gb: 11.0  # RTX 5070Ti constraint
+  mixed_precision: true
+  gradient_accumulation: 4
+  gradient_clipping: 1.0
+  # Memory optimization
+  use_checkpointing: true
+  clear_cache_frequency: 10  # Clear GPU cache every N batches
+
+# Constraint configuration
+constraints:
+  long_only: true
+  max_position_weight: 0.10  # 10% maximum single position
+  max_monthly_turnover: 0.20  # 20% monthly turnover limit
+  transaction_cost_bps: 10.0  # 10 basis points per trade
+  # Risk management
+  max_leverage: 1.0
+  min_positions: 20
+  max_positions: 100
+
+# Backtesting configuration
+backtesting:
+  # Rolling window configuration
+  training_months: 36
+  validation_months: 12
+  test_months: 12
+  step_months: 1
+  rebalance_frequency: "M"  # Monthly rebalancing
+
+  # Performance evaluation
+  benchmark: "equal_weight"
+  risk_free_rate: 0.02
+  confidence_level: 0.95
+
+# Output and logging configuration
+output:
+  base_dir: "outputs/training"
+  save_checkpoints: true
+  save_predictions: true
+  save_weights: true
+  generate_reports: true
+  # Logging
+  log_level: "INFO"
+  log_file: "training.log"
+  tensorboard: false
+
+# Hyperparameter optimization
+hyperopt:
+  enabled: false  # Set to true to enable Bayesian optimization
+  n_trials: 100
+  optimization_metric: "sharpe_ratio"
+  search_space:
+    lstm:
+      learning_rate: [0.0001, 0.01]
+      hidden_dim: [32, 512]
+      dropout: [0.0, 0.5]
+    gat:
+      learning_rate: [0.0001, 0.01]
+      hidden_dim: [32, 256]
+      heads: [1, 16]
+
+# Performance benchmarking
+benchmarking:
+  enabled: true
+  compare_to_baselines: true
+  baselines: ["equal_weight", "market_cap", "minimum_variance"]
+  generate_comparison_report: true
+  statistical_tests: ["jobson_korkie", "diebold_mariano"]
+
+# Production readiness validation
+production_validation:
+  enabled: true
+  memory_stress_test: true
+  performance_benchmarks: true
+  constraint_compliance: true
+  temporal_integrity: true

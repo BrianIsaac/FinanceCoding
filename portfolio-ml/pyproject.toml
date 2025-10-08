@@ -1,0 +1,123 @@
+[project]
+name = "portfolio-ml"
+version = "0.1.0"
+description = "Financial Portfolio Optimization with Machine Learning (HRP, LSTM, GAT)"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = []
+
+[dependency-groups]
+data = [
+    "cvxpy>=1.7.1",
+    "cvxpylayers>=0.1.6",
+    "dcor>=0.6",
+    "diffcp>=1.0.23",
+    "matplotlib>=3.9.4",
+    "numpy>=2.0.2",
+    "pandas>=2.3.1",
+    "python-dotenv>=1.1.1",
+    "scikit-learn>=1.6.1",
+    "scipy>=1.13.1",
+    "scs>=3.2.8",
+    "yfinance>=0.2.65",
+]
+dev = [
+    "ruff>=0.12.12",
+    "ipykernel>=6.30.1",
+    "mypy>=1.17.1",
+    "pre-commit>=4.3.0",
+    "pytest>=8.4.2",
+    "pytest-cov>=6.2.1",
+    "pytest-mock>=3.15.0",
+    "pytest-xdist>=3.8.0",
+    "types-pyyaml>=6.0.12.20250822",
+    "types-requests>=2.32.4.20250809",
+]
+logging = [
+    "hydra-core>=1.3.2",
+    "tqdm>=4.67.1",
+]
+graph = [
+  "networkx>=3.2.1",
+  "torch>=2.7.0",
+  "torch-geometric>=2.6.1",
+  "torchvision>=0.22.0",
+]
+requests = [
+    "lxml>=6.0.0",
+    "omegaconf>=2.3.0",
+    "plotly>=6.3.0",
+    "pyarrow>=21.0.0",
+    "seaborn>=0.13.2",
+]
+access = [
+    "python-docx>=1.2.0",
+]
+
+[tool.uv.sources]
+torch = [
+  { index = "pytorch-cu128", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+torchvision = [
+  { index = "pytorch-cu128", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "auto"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "A", "C4", "T20"]
+ignore = [
+    "E501",    # Line too long (handled by ruff format at 100 chars)
+    "N806",    # Variable in function should be lowercase (common ML: X_train, y_train)
+    "N803",    # Argument name should be lowercase (common ML: X, y, etc.)
+    "B023",    # Function definition does not bind loop variable (common in research code)
+    "N812",    # Lowercase imported as non-lowercase (common: torch.nn.functional as F)
+]
+exclude = [".git", "__pycache__", ".venv", "build", "dist", "legacy_scripts", "*.ipynb"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["F401", "N806", "N803"]  # Allow ML naming conventions and unused imports in tests
+"legacy_scripts/*" = ["E", "F", "W", "I", "N", "UP", "B", "A", "C4", "T20"]  # Ignore all in legacy
+"scripts/*" = ["N806", "N803", "F401", "E702", "B007", "E722"]  # Allow ML naming, loops, and error handling patterns in scripts
+"**/test_*.py" = ["N806", "N803", "F401"]  # ML naming conventions in test files
+"debug_*.py" = ["E", "F", "W", "I", "N", "UP", "B", "A", "C4", "T20"]  # Ignore debug files
+"**/*experimental*" = ["F401", "E702"]  # Allow experimental/research patterns
+"**/*notebook*" = ["F401", "E702"]  # Allow notebook-style patterns
+# Suppress legitimate architectural patterns
+"**/reporting/*.py" = ["E402", "E722"]  # Allow imports after dependency checks and error handling
+"**/models/gat/visualization.py" = ["A002"]  # Allow 'input' parameter in ML contexts
+"**/hrp/clustering.py" = ["B904"]  # Allow chained exceptions in clustering algorithms
+"**/interpretability/*.py" = ["A002"]  # Allow 'input' parameter in ML hook functions
+"**/config/base.py" = ["B904"]  # Allow exception chaining in configuration parsing
+"**/backtest/model_retraining.py" = ["E722"]  # Allow broad exception handling in model checkpointing
+"**/sensitivity/reporting.py" = ["B007"]  # Allow unused loop variables in reporting generators
+"**/validation/project_goals_validator.py" = ["B007"]  # Allow unused loop variables in validation loops
+"scripts/train_hrp_pipeline_fixed.py" = ["E402"]  # Allow path setup before imports in legacy script
+
+[tool.mypy]
+python_version = "3.9"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+ignore_missing_imports = true
+exclude = [
+    "build/",
+    "dist/",
+    ".venv/"
+]
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+disallow_untyped_defs = false

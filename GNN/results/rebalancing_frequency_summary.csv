@@ -1,6 +1,0 @@
-Strategy,Optimal_Frequency,Monthly_Avg_Turnover,Monthly_Compliant,Quarterly_Avg_Turnover,Quarterly_Compliant,Annual_Avg_Turnover,Annual_Compliant
-HRP,annual,0.64032464498231,False,0.6358486038754939,False,0.6056397783581965,True
-LSTM,annual,0.6423550913614836,False,0.6441753173220218,False,0.6419937405817765,True
-GAT,annual,0.64032464498231,False,0.6358486038754939,False,0.6056397783581965,True
-Equal_Weight,annual,0.647409209298668,False,0.6516491956912527,False,0.5986015461864042,True
-Market_Cap,annual,0.6838919316653175,False,0.6821961802462478,False,0.6706062802663327,True
