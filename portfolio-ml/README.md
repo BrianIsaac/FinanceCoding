@@ -58,7 +58,7 @@ pre-commit install
 
 ```bash
 # Run the complete data collection pipeline
-python scripts/pipeline_execution/run_complete_new_pipeline.py
+python scripts/data_collection_pipeline.py
 
 # This will:
 # - Collect S&P MidCap 400 data from multiple sources
