@@ -30,6 +30,7 @@ sys.path.append(str(Path(__file__).parent.parent))
 
 from src.config.data import CollectorConfig, UniverseConfig, ValidationConfig  # noqa: E402
 from src.data.collectors.stooq import StooqCollector  # noqa: E402
+from src.data.collectors.tiingo import TiingoCollector  # noqa: E402
 from src.data.collectors.yfinance import YFinanceCollector  # noqa: E402
 from src.data.processors.data_quality_validator import DataQualityValidator  # noqa: E402
 from src.data.processors.gap_filling import GapFiller  # noqa: E402
@@ -153,6 +154,10 @@ def main():
         source_name="stooq", rate_limit=10.0, timeout=15, retry_attempts=3, retry_delay=1.0
     )
 
+    tiingo_config = CollectorConfig(
+        source_name="tiingo", rate_limit=72.0, timeout=15, retry_attempts=3, retry_delay=1.0
+    )
+
     yfinance_config = CollectorConfig(
         source_name="yfinance", rate_limit=5.0, timeout=10, retry_attempts=3, retry_delay=1.0
     )
@@ -171,6 +176,7 @@ def main():
     logger.info("Initializing data processors...")
     universe_builder = UniverseBuilder(universe_config, "data/processed")
     stooq_collector = StooqCollector(stooq_config)
+    tiingo_collector = TiingoCollector(tiingo_config)
     yfinance_collector = YFinanceCollector(yfinance_config)
     gap_filler = GapFiller(validation_config)
     quality_validator = DataQualityValidator(validation_config)
@@ -226,44 +232,85 @@ def main():
             stooq_volumes.to_parquet(output_dir / "volume.parquet", compression="gzip")
             logger.info(f"Saved Stooq data to {output_dir}: {stooq_prices.shape[1]} tickers")
 
-        # Identify missing tickers and get them from YFinance
+        # Identify missing tickers and try Tiingo first
         missing_tickers = list(set(all_tickers) - set(collected_stooq))
         logger.info(f"Missing from Stooq: {len(missing_tickers)} tickers")
 
         if missing_tickers:
             logger.info("=" * 60)
-            logger.info("PHASE 3: YFINANCE AUGMENTATION FOR MISSING TICKERS")
+            logger.info("PHASE 3: TIINGO AUGMENTATION FOR MISSING TICKERS")
             logger.info("=" * 60)
 
             # Filter membership_df to missing tickers only
-            missing_membership = membership_df[membership_df["ticker"].isin(missing_tickers)]
+            missing_membership_tiingo = membership_df[membership_df["ticker"].isin(missing_tickers)]
 
-            yf_prices, yf_volumes, collected_yf = collect_single_ticker_approach(
-                yfinance_collector, missing_membership
+            tiingo_prices, tiingo_volumes, collected_tiingo = collect_single_ticker_approach(
+                tiingo_collector, missing_membership_tiingo
             )
 
-            # Merge Stooq and YFinance data
-            if not stooq_prices.empty and not yf_prices.empty:
-                logger.info("Merging Stooq and YFinance data using splice-fill methodology...")
-                combined_prices, combined_volumes = yfinance_collector.merge_with_primary_source(
-                    stooq_prices, stooq_volumes, yf_prices, yf_volumes
+            logger.info(f"Tiingo collected {len(collected_tiingo)} tickers")
+
+            # Try YFinance for remaining missing tickers
+            remaining_missing = list(set(all_tickers) - set(collected_stooq) - set(collected_tiingo))
+            logger.info(f"Still missing after Tiingo: {len(remaining_missing)} tickers")
+
+            if remaining_missing:
+                logger.info("=" * 60)
+                logger.info("PHASE 4: YFINANCE AUGMENTATION FOR REMAINING TICKERS")
+                logger.info("=" * 60)
+
+                # Filter membership_df to remaining missing tickers only
+                missing_membership = membership_df[membership_df["ticker"].isin(remaining_missing)]
+
+                yf_prices, yf_volumes, collected_yf = collect_single_ticker_approach(
+                    yfinance_collector, missing_membership
                 )
-                logger.info(f"Merged data shape: {combined_prices.shape}")
-            elif not stooq_prices.empty:
-                logger.info("Using Stooq data only")
-                combined_prices = stooq_prices
-                combined_volumes = stooq_volumes
-            elif not yf_prices.empty:
-                logger.info("Using YFinance data only")
-                combined_prices = yf_prices
-                combined_volumes = yf_volumes
             else:
-                logger.error("No data collected from either source!")
+                yf_prices = pd.DataFrame()
+                yf_volumes = pd.DataFrame()
+                collected_yf = []
+
+            # Combine all three sources: Stooq + Tiingo + YFinance
+            logger.info("=" * 60)
+            logger.info("PHASE 5: COMBINING DATA FROM ALL SOURCES")
+            logger.info("=" * 60)
+
+            all_prices_list = []
+            all_volumes_list = []
+
+            if not stooq_prices.empty:
+                all_prices_list.append(stooq_prices)
+                all_volumes_list.append(stooq_volumes)
+                logger.info(f"Stooq: {stooq_prices.shape[1]} tickers")
+
+            if not tiingo_prices.empty:
+                all_prices_list.append(tiingo_prices)
+                all_volumes_list.append(tiingo_volumes)
+                logger.info(f"Tiingo: {tiingo_prices.shape[1]} tickers")
+
+            if not yf_prices.empty:
+                all_prices_list.append(yf_prices)
+                all_volumes_list.append(yf_volumes)
+                logger.info(f"YFinance: {yf_prices.shape[1]} tickers")
+
+            if all_prices_list:
+                combined_prices = pd.concat(all_prices_list, axis=1)
+                combined_volumes = pd.concat(all_volumes_list, axis=1)
+                logger.info(f"Combined data shape: {combined_prices.shape}")
+            else:
+                logger.error("No data collected from any source!")
                 return False
         else:
             logger.info("Using Stooq data only (all tickers collected successfully)")
             combined_prices = stooq_prices
             combined_volumes = stooq_volumes
+            # Initialize empty for summary stats
+            tiingo_prices = pd.DataFrame()
+            tiingo_volumes = pd.DataFrame()
+            collected_tiingo = []
+            yf_prices = pd.DataFrame()
+            yf_volumes = pd.DataFrame()
+            collected_yf = []
     else:
         logger.warning("❌ Stooq API rate limited - switching to YFinance as primary source")
         logger.info("=" * 60)
@@ -370,6 +417,7 @@ def main():
         "total_gaps_filled": total_filled,
         "quality_score": validation_results.get("overall_quality_score", 0),
         "stooq_tickers": len(collected_stooq) if "collected_stooq" in locals() else 0,
+        "tiingo_tickers": len(collected_tiingo) if "collected_tiingo" in locals() else 0,
         "yfinance_tickers": len(collected_yf) if "collected_yf" in locals() else 0,
     }
 
