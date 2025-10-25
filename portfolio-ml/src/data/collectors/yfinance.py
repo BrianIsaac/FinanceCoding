@@ -72,7 +72,7 @@ class YFinanceCollector:
         self.logger.info(f"Starting Yahoo Finance data collection for {len(tickers)} tickers")
         self.logger.info(f"Date range: {start_date} to {end_date}")
         self.logger.info(f"Using batch size: {batch_size}")
-        
+
         total_batches = (len(tickers) + batch_size - 1) // batch_size
         prices_list: list[pd.DataFrame] = []
         volume_list: list[pd.DataFrame] = []
@@ -80,12 +80,12 @@ class YFinanceCollector:
         # Process tickers in batches for better performance
         successful_tickers = []
         failed_tickers = []
-        
+
         for i in range(0, len(tickers), batch_size):
             batch = tickers[i : i + batch_size]
             batch_num = (i // batch_size) + 1
             syms = [self._yahoo_symbol_map(t) for t in batch]
-            
+
             self.logger.info(f"Processing batch {batch_num}/{total_batches}: {len(batch)} tickers")
             self.logger.debug(f"Batch tickers: {', '.join(batch)}")
 
@@ -145,12 +145,12 @@ class YFinanceCollector:
         if prices_list:
             prices_df = pd.concat(prices_list, axis=1).sort_index()
             volume_df = pd.concat(volume_list, axis=1).reindex(prices_df.index)
-            
+
             self.logger.info(f"Yahoo Finance collection completed: {len(successful_tickers)}/{len(tickers)} tickers successful")
             self.logger.info(f"Final datasets: prices {prices_df.shape}, volume {volume_df.shape}")
             if failed_tickers:
                 self.logger.warning(f"Failed tickers ({len(failed_tickers)}): {', '.join(failed_tickers[:10])}{'...' if len(failed_tickers) > 10 else ''}")
-            
+
             return prices_df, volume_df
         else:
             self.logger.error("No data collected from Yahoo Finance for any tickers")
@@ -175,6 +175,101 @@ class YFinanceCollector:
             Tuple of (prices_df, volume_df) where each is Date × Tickers
         """
         return self.download_batch_data(tickers, start_date, end_date, batch_size)
+
+    def download_with_ticker_periods(
+        self,
+        ticker_periods: list[dict[str, str]],
+        batch_size: int = 80,
+    ) -> tuple[pd.DataFrame, pd.DataFrame]:
+        """Download data for tickers with individual date ranges.
+
+        Args:
+            ticker_periods: List of dicts with keys:
+                - ticker: Symbol to download
+                - start: Start date (YYYY-MM-DD) or None
+                - end: End date (YYYY-MM-DD) or None
+            batch_size: Number of tickers per yfinance API call
+
+        Returns:
+            Tuple of (prices_df, volume_df) with shape (Dates × Tickers)
+
+        Note:
+            Batches tickers with SIMILAR date ranges together for efficiency.
+            YFinance supports threading and batch downloads safely.
+        """
+        # Group tickers by similar date ranges for efficient batching
+        period_groups = self._group_by_date_ranges(ticker_periods)
+
+        all_prices = {}
+        all_volumes = {}
+        successful_tickers = []
+        failed_tickers = []
+
+        self.logger.info(
+            f"Downloading {len(ticker_periods)} ticker-periods in {len(period_groups)} groups"
+        )
+
+        for group_idx, (date_range_key, tickers_in_group) in enumerate(period_groups.items(), 1):
+            start_date, end_date = date_range_key
+            ticker_symbols = [t["ticker"] for t in tickers_in_group]
+
+            self.logger.info(
+                f"Group {group_idx}/{len(period_groups)}: "
+                f"{len(ticker_symbols)} tickers, {start_date} to {end_date}"
+            )
+
+            # Batch download for this date range
+            try:
+                group_prices, group_volumes = self.download_batch_data(
+                    ticker_symbols,
+                    start_date=start_date,
+                    end_date=end_date,
+                    batch_size=batch_size,
+                )
+
+                # Merge into overall results
+                if not group_prices.empty:
+                    all_prices.update({col: group_prices[col] for col in group_prices.columns})
+                    successful_tickers.extend(group_prices.columns.tolist())
+
+                if not group_volumes.empty:
+                    all_volumes.update({col: group_volumes[col] for col in group_volumes.columns})
+
+            except Exception as e:
+                self.logger.warning(f"Group {group_idx} failed: {e}")
+                failed_tickers.extend(ticker_symbols)
+
+        self.logger.info(
+            f"Download complete: {len(successful_tickers)} successful, {len(failed_tickers)} failed"
+        )
+
+        # Combine into DataFrames
+        prices_df = pd.DataFrame(all_prices) if all_prices else pd.DataFrame()
+        volumes_df = pd.DataFrame(all_volumes) if all_volumes else pd.DataFrame()
+
+        return prices_df, volumes_df
+
+    def _group_by_date_ranges(
+        self,
+        ticker_periods: list[dict[str, str]],
+    ) -> dict[tuple[str | None, str | None], list[dict]]:
+        """Group tickers with identical date ranges for batch downloading.
+
+        Args:
+            ticker_periods: List of ticker-period dicts
+
+        Returns:
+            Dictionary mapping (start_date, end_date) → list of ticker dicts
+        """
+        groups = {}
+
+        for period in ticker_periods:
+            key = (period.get("start"), period.get("end"))
+            if key not in groups:
+                groups[key] = []
+            groups[key].append(period)
+
+        return groups
 
     def splice_fill_series(self, primary: pd.Series, donor: pd.Series) -> pd.Series:
         """Fill NaNs in primary series with donor series, scaling to avoid jumps.

@@ -6,7 +6,6 @@ Extracted and refactored from scripts/download_stooq.py.
 
 from __future__ import annotations
 
-import concurrent.futures as cf
 import io
 import logging
 import time
@@ -216,7 +215,7 @@ class StooqCollector:
                                 if col in df.columns]
                 return df[available_cols]
 
-            except Exception as e:
+            except Exception:
                 if attempt < self.config.retry_attempts:
                     time.sleep(self.config.retry_delay * (attempt + 1))
                     continue
@@ -238,26 +237,25 @@ class StooqCollector:
 
     def collect_ohlcv_data(
         self,
-        tickers: Iterable[str],
-        start_date: str | None = None,
-        end_date: str | None = None,
-        max_workers: int = 8,
+        ticker_periods: list[dict[str, str]],
     ) -> dict[str, pd.DataFrame]:
-        """Download full OHLCV data for multiple tickers and build wide panels.
+        """Collect OHLCV data for tickers with individual date ranges.
 
         Args:
-            tickers: Iterable of US ticker symbols
-            start_date: Optional start date filter (YYYY-MM-DD)
-            end_date: Optional end date filter (YYYY-MM-DD)
-            max_workers: Number of parallel download threads
+            ticker_periods: List of dicts with keys:
+                - ticker: Symbol to collect
+                - start: Start date (YYYY-MM-DD) or None for all history
+                - end: End date (YYYY-MM-DD) or None for present
 
         Returns:
-            Dictionary with 'open', 'high', 'low', 'close', 'volume' DataFrames (Date × Tickers)
+            Dictionary with keys ['open', 'high', 'low', 'close', 'volume'],
+            each containing a DataFrame with shape (Dates × Tickers)
+
+        Note:
+            Uses SEQUENTIAL processing to respect Stooq API rate limits.
+            Parallel requests will trigger 429 errors and kill the API.
         """
-        tickers_list = list(tickers)
-        self.logger.info(f"Starting OHLCV data collection for {len(tickers_list)} tickers")
-        self.logger.info(f"Date range: {start_date} to {end_date}")
-        self.logger.info(f"Using {max_workers} parallel workers")
+        # Storage for results
         ohlcv_data: dict[str, dict[str, pd.Series]] = {
             "open": {},
             "high": {},
@@ -265,70 +263,86 @@ class StooqCollector:
             "close": {},
             "volume": {},
         }
-
-        symbols = {t: self._to_stooq_symbol(t) for t in tickers_list}
-        completed_count = 0
-        successful_count = 0
+        successful_tickers = []
         failed_tickers = []
 
-        # Download in parallel with thread pool and rate limiting
-        with cf.ThreadPoolExecutor(max_workers=max_workers) as ex:
-            # Submit all download tasks
-            futs = {
-                ex.submit(self._fetch_stooq_csv_with_rate_limit, sym): tkr
-                for tkr, sym in symbols.items()
-            }
+        self.logger.info(f"Collecting data for {len(ticker_periods)} ticker-period combinations (SEQUENTIAL)")
 
-            # Process completed downloads
-            for fut in cf.as_completed(futs):
-                tkr = futs[fut]
-                df = fut.result()
-                completed_count += 1
+        # Sequential iteration (NO ThreadPoolExecutor)
+        for i, period in enumerate(ticker_periods, 1):
+            ticker = period["ticker"]
+            start_date = period.get("start")
+            end_date = period.get("end")
+
+            # Log progress every 25 tickers
+            if i % 25 == 0 or i == len(ticker_periods):
+                progress_pct = (i / len(ticker_periods)) * 100
+                self.logger.info(
+                    f"Progress: {i}/{len(ticker_periods)} ({progress_pct:.1f}%) - "
+                    f"{len(successful_tickers)} successful, {len(failed_tickers)} failed"
+                )
+
+            try:
+                # Apply rate limiting before each request
+                time.sleep(self.config.rate_limit)
+
+                # Fetch ticker data
+                symbol = self._to_stooq_symbol(ticker)
+                df = self._fetch_stooq_csv(symbol)
 
                 if df is None or df.empty:
-                    failed_tickers.append(tkr)
-                    self.logger.debug(f"Failed to download data for {tkr}")
-                else:
-                    successful_count += 1
-                    self.logger.debug(f"Successfully downloaded data for {tkr} ({len(df)} rows)")
-                    
-                    # Store all OHLCV components that are available
-                    if "Open" in df.columns:
-                        ohlcv_data["open"][tkr] = df["Open"].rename(tkr)
-                    if "High" in df.columns:
-                        ohlcv_data["high"][tkr] = df["High"].rename(tkr)
-                    if "Low" in df.columns:
-                        ohlcv_data["low"][tkr] = df["Low"].rename(tkr)
-                    if "Close" in df.columns:
-                        ohlcv_data["close"][tkr] = df["Close"].rename(tkr)
-                    if "Volume" in df.columns:
-                        ohlcv_data["volume"][tkr] = df["Volume"].rename(tkr)
+                    failed_tickers.append(ticker)
+                    self.logger.debug(f"Failed to download data for {ticker}")
+                    continue
 
-                # Progress logging every 50 tickers or at completion
-                if completed_count % 50 == 0 or completed_count == len(tickers_list):
-                    progress_pct = (completed_count / len(tickers_list)) * 100
-                    self.logger.info(f"Progress: {completed_count}/{len(tickers_list)} tickers completed ({progress_pct:.1f}%) - {successful_count} successful, {len(failed_tickers)} failed")
-
-        if not ohlcv_data["close"]:
-            self.logger.warning("No valid price data collected from any tickers")
-            return {k: pd.DataFrame() for k in ohlcv_data.keys()}
-
-        self.logger.info(f"Stooq collection completed: {successful_count}/{len(tickers_list)} tickers successful")
-        if failed_tickers:
-            self.logger.warning(f"Failed tickers ({len(failed_tickers)}): {', '.join(failed_tickers[:10])}{'...' if len(failed_tickers) > 10 else ''}")
-
-        # Combine into wide panels for each OHLCV component
-        result = {}
-        for component, series_dict in ohlcv_data.items():
-            if series_dict:
-                df = pd.concat(series_dict.values(), axis=1).sort_index()
-
-                # Apply date filters if specified
+                # Apply per-ticker date filtering
                 if start_date:
                     df = df.loc[pd.to_datetime(start_date) :]
                 if end_date:
                     df = df.loc[: pd.to_datetime(end_date)]
 
+                if df.empty:
+                    self.logger.debug(f"{ticker}: No data in range {start_date} to {end_date}")
+                    failed_tickers.append(ticker)
+                    continue
+
+                # Store OHLCV components
+                if "Open" in df.columns:
+                    ohlcv_data["open"][ticker] = df["Open"].rename(ticker)
+                if "High" in df.columns:
+                    ohlcv_data["high"][ticker] = df["High"].rename(ticker)
+                if "Low" in df.columns:
+                    ohlcv_data["low"][ticker] = df["Low"].rename(ticker)
+                if "Close" in df.columns:
+                    ohlcv_data["close"][ticker] = df["Close"].rename(ticker)
+                if "Volume" in df.columns:
+                    ohlcv_data["volume"][ticker] = df["Volume"].rename(ticker)
+
+                successful_tickers.append(ticker)
+                self.logger.debug(f"Successfully collected {ticker} ({len(df)} rows)")
+
+            except Exception as e:
+                self.logger.warning(f"{ticker}: Collection failed - {e}")
+                failed_tickers.append(ticker)
+
+        if not ohlcv_data["close"]:
+            self.logger.warning("No valid price data collected from any tickers")
+            return {k: pd.DataFrame() for k in ohlcv_data.keys()}
+
+        self.logger.info(
+            f"Stooq collection completed: {len(successful_tickers)}/{len(ticker_periods)} tickers successful"
+        )
+        if failed_tickers:
+            self.logger.warning(
+                f"Failed tickers ({len(failed_tickers)}): {', '.join(failed_tickers[:10])}"
+                f"{'...' if len(failed_tickers) > 10 else ''}"
+            )
+
+        # Combine into wide DataFrames
+        result = {}
+        for component, series_dict in ohlcv_data.items():
+            if series_dict:
+                df = pd.concat(series_dict.values(), axis=1).sort_index()
                 result[component] = df
                 self.logger.info(f"Built {component} DataFrame: {df.shape[1]} tickers × {df.shape[0]} dates")
             else:
@@ -349,12 +363,17 @@ class StooqCollector:
             tickers: Iterable of US ticker symbols
             start_date: Optional start date filter (YYYY-MM-DD)
             end_date: Optional end date filter (YYYY-MM-DD)
-            max_workers: Number of parallel download threads
+            max_workers: Ignored (sequential processing used)
 
         Returns:
             Tuple of (prices_df, volume_df) where each is Date × Tickers
         """
-        ohlcv = self.collect_ohlcv_data(tickers, start_date, end_date, max_workers)
+        # Convert old signature to new ticker_periods format
+        ticker_periods = [
+            {"ticker": ticker, "start": start_date, "end": end_date}
+            for ticker in tickers
+        ]
+        ohlcv = self.collect_ohlcv_data(ticker_periods)
         return ohlcv["close"], ohlcv["volume"]
 
     def collect_single_ticker(self, ticker: str) -> pd.DataFrame | None:
@@ -423,7 +442,7 @@ class StooqCollector:
         Args:
             universe_builder: UniverseBuilder instance
             date_range: Optional (start_date, end_date) tuple
-            max_workers: Number of parallel download threads
+            max_workers: Ignored (sequential processing used)
 
         Returns:
             Dictionary with full OHLCV data for universe constituents
@@ -435,12 +454,17 @@ class StooqCollector:
         else:
             tickers = sorted(universe_builder.get_current_constituents())
 
-        return self.collect_ohlcv_data(
-            tickers=tickers,
-            start_date=date_range[0] if date_range else None,
-            end_date=date_range[1] if date_range else None,
-            max_workers=max_workers,
-        )
+        # Convert to ticker_periods format
+        ticker_periods = [
+            {
+                "ticker": ticker,
+                "start": date_range[0] if date_range else None,
+                "end": date_range[1] if date_range else None,
+            }
+            for ticker in tickers
+        ]
+
+        return self.collect_ohlcv_data(ticker_periods)
 
     def batch_collect_with_retry(
         self,
@@ -454,7 +478,7 @@ class StooqCollector:
         Args:
             tickers: List of ticker symbols
             batch_size: Number of tickers per batch
-            max_workers: Parallel workers per batch
+            max_workers: Ignored (sequential processing used)
             max_retries: Maximum retry attempts for failed tickers
 
         Returns:
@@ -473,7 +497,9 @@ class StooqCollector:
         for i in range(0, len(tickers), batch_size):
             batch = tickers[i : i + batch_size]
 
-            batch_data = self.collect_ohlcv_data(batch, max_workers=max_workers)
+            # Convert to ticker_periods format
+            ticker_periods = [{"ticker": ticker, "start": None, "end": None} for ticker in batch]
+            batch_data = self.collect_ohlcv_data(ticker_periods)
 
             # Merge batch results
             for component in all_data.keys():

@@ -36,75 +36,102 @@ from src.data.processors.gap_filling import GapFiller  # noqa: E402
 from src.data.processors.universe_builder import UniverseBuilder  # noqa: E402
 
 
+def _build_membership_intervals_from_calendar(
+    universe_calendar: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    Build ticker-specific membership intervals from universe calendar snapshots.
+
+    Args:
+        universe_calendar: DataFrame with columns [date, ticker, index_name, ...]
+
+    Returns:
+        DataFrame with columns [ticker, start, end] where:
+        - start: earliest date ticker appears in calendar
+        - end: latest date ticker appears, or None if still active
+
+    Example:
+        >>> calendar = pd.DataFrame({
+        ...     'date': ['2020-01-01', '2020-02-01', '2020-01-01'],
+        ...     'ticker': ['AAPL', 'AAPL', 'MSFT']
+        ... })
+        >>> intervals = _build_membership_intervals_from_calendar(calendar)
+        >>> intervals['ticker'].tolist()
+        ['AAPL', 'MSFT']
+    """
+    intervals = []
+
+    for ticker in universe_calendar["ticker"].unique():
+        ticker_dates = universe_calendar[
+            universe_calendar["ticker"] == ticker
+        ]["date"].sort_values()
+
+        # Find date range from monthly snapshots
+        start_date = ticker_dates.min()
+        end_date = ticker_dates.max()
+
+        # Check if ticker is active in most recent snapshot
+        most_recent = universe_calendar["date"].max()
+        is_active = end_date >= most_recent
+
+        intervals.append({
+            "ticker": ticker,
+            "start": start_date.strftime("%Y-%m-%d"),
+            "end": None if is_active else end_date.strftime("%Y-%m-%d"),
+        })
+
+    return pd.DataFrame(intervals)
+
+
 def collect_single_ticker_approach(
-    collector, tickers, start_date="2010-01-01", end_date="2024-12-31"
-):
-    """Collect data one ticker at a time using legacy single-ticker approach."""
+    collector,
+    membership_df: pd.DataFrame,
+    global_start: str = "2010-01-01",
+    global_end: str = "2024-12-31",
+) -> tuple[pd.DataFrame, pd.DataFrame, list[str]]:
+    """Collect data using per-ticker membership periods.
 
-    logger.info(f"Using single-ticker approach for {len(tickers)} tickers")
-    logger.info("This approach is more respectful to APIs and follows legacy methodology")
+    Args:
+        collector: StooqCollector or YFinanceCollector instance
+        membership_df: DataFrame with columns [ticker, start, end]
+        global_start: Absolute earliest date to collect (fallback for tickers without start)
+        global_end: Absolute latest date to collect (fallback for active tickers)
 
-    all_prices = {}
-    all_volumes = {}
-    collected_tickers = []
-    failed_tickers = []
+    Returns:
+        Tuple of (prices_df, volumes_df, collected_tickers)
+    """
+    collector_name = collector.config.source_name
 
-    for i, ticker in enumerate(tickers, 1):
-        try:
-            # Use single ticker method based on collector type
-            if hasattr(collector, "_fetch_single_ticker_legacy_style"):
-                # StooqCollector with legacy approach
-                df = collector._fetch_single_ticker_legacy_style(ticker, start_date, end_date)
-            elif hasattr(collector, "collect_single_ticker"):
-                # Generic single ticker method
-                df = collector.collect_single_ticker(ticker)
-            else:
-                # Fallback to batch method with single ticker
-                prices, volumes = collector.collect_batch_data(
-                    [ticker], start_date=start_date, end_date=end_date
-                )
-                if not prices.empty:
-                    all_prices[ticker] = prices[ticker]
-                    if not volumes.empty and ticker in volumes.columns:
-                        all_volumes[ticker] = volumes[ticker]
-                    collected_tickers.append(ticker)
-                else:
-                    failed_tickers.append(ticker)
-                continue
+    logger.info(f"=== Collecting data via {collector_name} with per-ticker periods ===")
 
-            if df is not None and not df.empty:
-                if "Close" in df.columns:
-                    all_prices[ticker] = df["Close"]
-                    collected_tickers.append(ticker)
-                if "Volume" in df.columns:
-                    all_volumes[ticker] = df["Volume"]
-            else:
-                failed_tickers.append(ticker)
+    # Prepare ticker periods list
+    ticker_periods = []
+    for _, row in membership_df.iterrows():
+        ticker_periods.append({
+            "ticker": row["ticker"],
+            "start": row["start"] if pd.notna(row["start"]) else global_start,
+            "end": row["end"] if pd.notna(row["end"]) else global_end,
+        })
 
-        except Exception as e:
-            logger.debug(f"Failed to collect {ticker}: {e}")
-            failed_tickers.append(ticker)
+    logger.info(f"Prepared {len(ticker_periods)} ticker-period combinations")
 
-        # Progress logging every 25 tickers
-        if i % 25 == 0 or i == len(tickers):
-            progress_pct = (i / len(tickers)) * 100
-            successful = len(collected_tickers)
-            failed = len(failed_tickers)
-            logger.info(
-                f"Progress: {i}/{len(tickers)} ({progress_pct:.1f}%) - {successful} successful, {failed} failed"
-            )
-
-        # Small delay between requests to be respectful
-        if i < len(tickers):
-            time.sleep(0.5)  # 500ms delay between single ticker requests
-
-    # Convert to DataFrames
-    if all_prices:
-        combined_prices = pd.DataFrame(all_prices).sort_index()
-        combined_volumes = pd.DataFrame(all_volumes).sort_index() if all_volumes else pd.DataFrame()
-        return combined_prices, combined_volumes, collected_tickers
+    # Call appropriate collector method
+    if collector_name == "stooq":
+        ohlcv_data = collector.collect_ohlcv_data(ticker_periods)  # Refactored method
+        prices_df = ohlcv_data["close"]
+        volumes_df = ohlcv_data["volume"]
+    elif collector_name == "yfinance":
+        prices_df, volumes_df = collector.download_with_ticker_periods(ticker_periods)  # New method
     else:
-        return pd.DataFrame(), pd.DataFrame(), []
+        raise ValueError(f"Unknown collector: {collector_name}")
+
+    collected_tickers = prices_df.columns.tolist() if not prices_df.empty else []
+
+    logger.info(f"Collection complete: {len(collected_tickers)} tickers collected")
+    if not prices_df.empty:
+        logger.info(f"Date range: {prices_df.index.min()} to {prices_df.index.max()}")
+
+    return prices_df, volumes_df, collected_tickers
 
 
 def main():
@@ -151,19 +178,26 @@ def main():
     # Get the full historical universe
     logger.info("Loading universe composition...")
     try:
-        universe_snapshots = pd.read_csv("data/processed/universe_snapshots_monthly.csv")
-        universe_snapshots["date"] = pd.to_datetime(universe_snapshots["date"])
-        all_tickers = sorted(universe_snapshots["ticker"].unique())
-        logger.info(f"Loaded existing universe data: {len(all_tickers)} unique tickers")
+        # Load existing universe calendar
+        universe_calendar = pd.read_parquet("data/processed/universe_calendar_midcap400.parquet")
+
+        # Build membership intervals from calendar snapshots
+        membership_df = _build_membership_intervals_from_calendar(universe_calendar)
+
+        logger.info(f"Loaded universe: {len(membership_df)} ticker-period combinations")
+        logger.info(f"Unique tickers: {membership_df['ticker'].nunique()}")
     except Exception:
         logger.info("Building universe membership intervals from scratch...")
         membership_df = universe_builder.build_membership_intervals("2016-01-01", "2024-12-31")
-        universe_snapshots = universe_builder.create_monthly_snapshots(
+        universe_calendar = universe_builder.create_monthly_snapshots(
             membership_df, "2016-01-01", "2024-12-31"
         )
-        all_tickers = sorted(membership_df["ticker"].unique())
-        universe_snapshots.to_csv("data/processed/universe_snapshots_monthly.csv", index=False)
-        logger.info(f"Built new universe data: {len(all_tickers)} unique tickers")
+        # Save for future use
+        universe_calendar.to_parquet("data/processed/universe_calendar_midcap400.parquet", index=False)
+        logger.info(f"Built universe: {len(membership_df)} ticker-period combinations")
+
+    # Extract ticker list for backward compatibility (will be replaced in later phases)
+    all_tickers = sorted(membership_df["ticker"].unique())
 
     # Smart source selection: Test Stooq availability first
     logger.info("=" * 60)
@@ -180,7 +214,7 @@ def main():
         logger.info("=" * 60)
 
         stooq_prices, stooq_volumes, collected_stooq = collect_single_ticker_approach(
-            stooq_collector, all_tickers, start_date="2010-01-01", end_date="2024-12-31"
+            stooq_collector, membership_df
         )
 
         # Save Stooq results
@@ -201,8 +235,11 @@ def main():
             logger.info("PHASE 3: YFINANCE AUGMENTATION FOR MISSING TICKERS")
             logger.info("=" * 60)
 
+            # Filter membership_df to missing tickers only
+            missing_membership = membership_df[membership_df["ticker"].isin(missing_tickers)]
+
             yf_prices, yf_volumes, collected_yf = collect_single_ticker_approach(
-                yfinance_collector, missing_tickers, start_date="2010-01-01", end_date="2024-12-31"
+                yfinance_collector, missing_membership
             )
 
             # Merge Stooq and YFinance data
@@ -234,7 +271,7 @@ def main():
         logger.info("=" * 60)
 
         yf_prices, yf_volumes, collected_yf = collect_single_ticker_approach(
-            yfinance_collector, all_tickers, start_date="2010-01-01", end_date="2024-12-31"
+            yfinance_collector, membership_df
         )
 
         if not yf_prices.empty:
