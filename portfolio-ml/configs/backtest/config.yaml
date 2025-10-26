@@ -1,0 +1,29 @@
+# Date ranges
+test_start_date: "2023-01-01"
+test_end_date: "2024-11-30"
+train_end_date: "2022-12-31"
+
+# Backtest settings
+rebalance_frequency: 21
+transaction_cost_bps: 10.0
+
+# Models to run
+models:
+  hrp:
+    name: hrp
+    enabled: true
+  lstm:
+    name: lstm
+    enabled: true
+  gat:
+    name: gat
+    enabled: true
+
+# GPU settings
+gpu_memory_limit_gb: 11.0
+
+# Output
+output_dir: "results/ml_backtest_rolling"
+
+# Academic reporting
+use_academic_reports: true

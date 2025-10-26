@@ -1,0 +1,58 @@
+defaults:
+  - universe: midcap400
+  - _self_
+
+# Date range
+start_date: "2016-01-01"
+end_date: "2024-12-31"
+
+# Output paths
+output_dir: "data/final_new_pipeline"
+processed_dir: "data/processed"
+
+# Data collectors configuration
+collectors:
+  yfinance:
+    source_name: yfinance
+    rate_limit: 5.0
+    timeout: 10
+    retry_attempts: 3
+    retry_delay: 1.0
+
+  stooq:
+    source_name: stooq
+    rate_limit: 10.0
+    timeout: 15
+    retry_attempts: 3
+    retry_delay: 1.0
+
+  tiingo:
+    source_name: tiingo
+    rate_limit: 72.0
+    timeout: 15
+    retry_attempts: 3
+    retry_delay: 1.0
+
+  polygon:
+    source_name: polygon
+    rate_limit: 12.0
+    timeout: 15
+    retry_attempts: 3
+    retry_delay: 1.0
+
+  wikipedia:
+    source_name: wikipedia
+    rate_limit: 1.0
+    timeout: 30
+    retry_attempts: 3
+    retry_delay: 2.0
+
+# Validation settings
+validation:
+  missing_data_threshold: 0.10
+  price_change_threshold: 0.50
+  volume_threshold: 1000
+  validate_business_days: true
+  fill_method: "forward"
+  generate_reports: true
+  report_output_dir: "logs/validation_reports"

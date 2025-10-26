@@ -1,0 +1,6 @@
+# @package _group_
+source_name: polygon
+rate_limit: 12.0
+timeout: 15
+retry_attempts: 3
+retry_delay: 1.0

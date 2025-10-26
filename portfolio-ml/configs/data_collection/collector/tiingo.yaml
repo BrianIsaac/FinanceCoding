@@ -1,0 +1,6 @@
+# @package _group_
+source_name: tiingo
+rate_limit: 72.0
+timeout: 15
+retry_attempts: 3
+retry_delay: 1.0

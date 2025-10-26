@@ -1,0 +1,23 @@
+# GPU and memory
+gpu_memory_limit_gb: 11.0
+max_execution_hours: 8.0
+
+# Statistical parameters
+sharpe_improvement_threshold: 0.2
+confidence_level: 0.95
+bootstrap_samples: 10000
+significance_level: 0.05
+random_state: 42
+
+# Rolling analysis
+rolling_window_months: 12
+rolling_step_months: 3
+
+# Publication standards
+apa_compliance: true
+decimal_places: 4
+p_value_threshold: 0.001
+
+# Paths
+results_dir: "results/ml_backtest_rolling"
+output_dir: "results/performance_analytics"

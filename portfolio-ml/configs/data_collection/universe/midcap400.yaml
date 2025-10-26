@@ -1,0 +1,5 @@
+# @package universe
+universe_type: midcap400
+min_market_cap: null
+min_avg_volume: null
+exclude_sectors: null

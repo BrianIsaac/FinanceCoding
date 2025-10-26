@@ -20,9 +20,14 @@ Architecture:
 import logging
 import sys
 import time
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Dict
 
+import hydra
 import pandas as pd
+from hydra.core.config_store import ConfigStore
+from omegaconf import MISSING, DictConfig, OmegaConf
 
 # Configure logging with proper directory structure
 log_dir = Path("logs")
@@ -41,7 +46,6 @@ logger = logging.getLogger(__name__)
 # Add src to path for imports
 sys.path.append(str(Path(__file__).parent.parent))
 
-from src.config.data import CollectorConfig, UniverseConfig, ValidationConfig  # noqa: E402
 from src.data.collectors.polygon import PolygonCollector  # noqa: E402
 from src.data.collectors.stooq import StooqCollector  # noqa: E402
 from src.data.collectors.tiingo import TiingoCollector  # noqa: E402
@@ -50,6 +54,91 @@ from src.data.collectors.yfinance import YFinanceCollector  # noqa: E402
 from src.data.processors.data_quality_validator import DataQualityValidator  # noqa: E402
 from src.data.processors.gap_filling import GapFiller  # noqa: E402
 from src.data.processors.universe_builder import UniverseBuilder  # noqa: E402
+
+
+# Structured configuration classes for Hydra
+@dataclass
+class CollectorConfig:
+    """Configuration for a data source collector."""
+
+    source_name: str = MISSING
+    rate_limit: float = 1.0
+    timeout: int = 30
+    retry_attempts: int = 3
+    retry_delay: float = 1.0
+
+
+@dataclass
+class UniverseConfig:
+    """Configuration for asset universe."""
+
+    universe_type: str = "midcap400"
+    min_market_cap: float | None = None
+    min_avg_volume: float | None = None
+    exclude_sectors: list[str] | None = None
+
+
+@dataclass
+class ValidationConfig:
+    """Configuration for data quality validation."""
+
+    missing_data_threshold: float = 0.10
+    price_change_threshold: float = 0.50
+    volume_threshold: int = 1000
+    validate_business_days: bool = True
+    fill_method: str = "forward"
+    generate_reports: bool = True
+    report_output_dir: str = "logs/validation_reports"
+
+
+@dataclass
+class DataCollectionConfig:
+    """Main configuration for data collection pipeline."""
+
+    universe: UniverseConfig = field(default_factory=UniverseConfig)
+    collectors: Dict[str, CollectorConfig] = field(default_factory=dict)
+    validation: ValidationConfig = field(default_factory=ValidationConfig)
+
+    # Date range for collection
+    start_date: str = "2016-01-01"
+    end_date: str = "2024-12-31"
+
+    # Output paths
+    output_dir: str = "data/final_new_pipeline"
+    processed_dir: str = "data/processed"
+
+
+# Register structured configs with Hydra
+cs = ConfigStore.instance()
+cs.store(name="data_collection_config", node=DataCollectionConfig)
+cs.store(
+    group="universe", name="midcap400", node=UniverseConfig(universe_type="midcap400")
+)
+cs.store(
+    group="collector",
+    name="yfinance",
+    node=CollectorConfig(source_name="yfinance", rate_limit=5.0, timeout=10),
+)
+cs.store(
+    group="collector",
+    name="stooq",
+    node=CollectorConfig(source_name="stooq", rate_limit=10.0, timeout=15),
+)
+cs.store(
+    group="collector",
+    name="tiingo",
+    node=CollectorConfig(source_name="tiingo", rate_limit=72.0, timeout=15),
+)
+cs.store(
+    group="collector",
+    name="polygon",
+    node=CollectorConfig(source_name="polygon", rate_limit=12.0, timeout=15),
+)
+cs.store(
+    group="collector",
+    name="wikipedia",
+    node=CollectorConfig(source_name="wikipedia", rate_limit=1.0, timeout=30),
+)
 
 
 def _build_membership_intervals_from_calendar(
@@ -154,12 +243,18 @@ def collect_single_ticker_approach(
     return prices_df, volumes_df, collected_tickers
 
 
-def main():
-    """Execute our complete NEW pipeline implementation with full universe."""
+@hydra.main(
+    version_base=None,
+    config_path="../configs/data_collection",
+    config_name="config",
+)
+def main(cfg: DictConfig) -> None:
+    """Execute complete data collection pipeline with Hydra configuration."""
 
     logger.info("=" * 80)
     logger.info("STARTING COMPLETE NEW PIPELINE IMPLEMENTATION")
     logger.info("=" * 80)
+    logger.info(f"Configuration:\n{OmegaConf.to_yaml(cfg)}")
 
     start_time = time.time()
 
@@ -167,55 +262,42 @@ def main():
     logger.info("=" * 60)
     logger.info("PHASE 1: CONFIGURATION AND UNIVERSE LOADING")
     logger.info("=" * 60)
-    logger.info("Setting up pipeline configuration...")
-    universe_config = UniverseConfig(
-        universe_type="midcap400", min_market_cap=None, min_avg_volume=None, exclude_sectors=None
-    )
+    logger.info("Setting up pipeline configuration from Hydra...")
 
-    stooq_config = CollectorConfig(
-        source_name="stooq", rate_limit=10.0, timeout=15, retry_attempts=3, retry_delay=1.0
-    )
+    # Extract configs from Hydra
+    universe_config = cfg.universe
+    validation_config = cfg.validation
 
-    tiingo_config = CollectorConfig(
-        source_name="tiingo", rate_limit=72.0, timeout=15, retry_attempts=3, retry_delay=1.0
-    )
-
-    polygon_config = CollectorConfig(
-        source_name="polygon", rate_limit=12.0, timeout=15, retry_attempts=3, retry_delay=1.0
-    )
-
-    yfinance_config = CollectorConfig(
-        source_name="yfinance", rate_limit=5.0, timeout=10, retry_attempts=3, retry_delay=1.0
-    )
-
-    wiki_config = CollectorConfig(
-        source_name="wikipedia",
-        rate_limit=1.0,  # Conservative: 1 request per second
-        timeout=30,  # Longer timeout for HTML parsing
-        retry_attempts=3,
-        retry_delay=2.0,
-    )
-
-    validation_config = ValidationConfig(
-        missing_data_threshold=0.10,
-        price_change_threshold=0.50,
-        volume_threshold=1000,
-        validate_business_days=True,
-        fill_method="forward",
-        generate_reports=True,
-        report_output_dir="logs/validation_reports",
-    )
+    # Initialize collectors from config
+    # Wikipedia collector is included for membership data collection
+    collectors_map = {}
+    for collector_name, collector_cfg in cfg.collectors.items():
+        if collector_name == "yfinance":
+            collectors_map[collector_name] = YFinanceCollector(collector_cfg)
+        elif collector_name == "stooq":
+            collectors_map[collector_name] = StooqCollector(collector_cfg)
+        elif collector_name == "tiingo":
+            collectors_map[collector_name] = TiingoCollector(collector_cfg)
+        elif collector_name == "polygon":
+            collectors_map[collector_name] = PolygonCollector(collector_cfg)
+        elif collector_name == "wikipedia":
+            # Wikipedia collector for index membership data (not price/volume)
+            collectors_map[collector_name] = WikipediaCollector(collector_cfg)
+        else:
+            logger.warning(f"Unknown collector type: {collector_name}, skipping")
 
     # Initialize processors
     logger.info("Initializing data processors...")
-    universe_builder = UniverseBuilder(universe_config, "data/processed")
-    stooq_collector = StooqCollector(stooq_config)
-    tiingo_collector = TiingoCollector(tiingo_config)
-    polygon_collector = PolygonCollector(polygon_config)
-    yfinance_collector = YFinanceCollector(yfinance_config)
-    wiki_collector = WikipediaCollector(wiki_config)
+    universe_builder = UniverseBuilder(universe_config, cfg.processed_dir)
     gap_filler = GapFiller(validation_config)
     quality_validator = DataQualityValidator(validation_config)
+
+    # Extract individual collectors (maintain backward compatibility with existing code)
+    stooq_collector = collectors_map.get("stooq")
+    tiingo_collector = collectors_map.get("tiingo")
+    polygon_collector = collectors_map.get("polygon")
+    yfinance_collector = collectors_map.get("yfinance")
+    wiki_collector = collectors_map.get("wikipedia")
 
     # Get the full historical universe
     logger.info("Loading universe composition...")
@@ -384,7 +466,7 @@ def main():
         logger.error("  - All sources rate-limited simultaneously")
         logger.error("  - Network connectivity issues")
         logger.error("  - Invalid ticker symbols in universe")
-        return False
+        raise RuntimeError("No data collected from any source")
 
     # Combine all sources
     logger.info("=" * 60)
@@ -548,7 +630,7 @@ def main():
     returns_daily = filled_prices.pct_change()
 
     # Save final datasets
-    output_dir = Path("data/final_new_pipeline")
+    output_dir = Path(cfg.output_dir)
     output_dir.mkdir(exist_ok=True)
 
     logger.info(f"Saving final datasets to {output_dir}...")
@@ -662,9 +744,6 @@ def main():
     logger.info("  - new_pipeline_summary.json")
     logger.info("=" * 80)
 
-    return True
-
 
 if __name__ == "__main__":
-    success = main()
-    sys.exit(0 if success else 1)
+    main()

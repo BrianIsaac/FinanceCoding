@@ -31,10 +31,14 @@ import pandas as pd
 import torch
 from scipy import stats
 
+# Hydra imports
+import hydra
+from dataclasses import dataclass
+from hydra.core.config_store import ConfigStore
+from omegaconf import DictConfig, OmegaConf
+
 # Add project root to path
 sys.path.append(str(Path(__file__).parent.parent))
-
-from src.config.base import DataConfig, ProjectConfig, load_config
 from src.evaluation.metrics.portfolio_metrics import (
     compute_metrics_from_returns,
     dsr_from_returns,
@@ -72,26 +76,38 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 
 
+@dataclass
 class PerformanceAnalyticsConfig:
     """Configuration for performance analytics execution."""
 
-    def __init__(self):
-        self.gpu_memory_limit_gb = 11.0  # RTX GeForce 5070Ti conservative limit
-        self.max_execution_hours = 8.0   # Maximum processing time
-        self.sharpe_improvement_threshold = 0.2  # ≥0.2 improvement target
-        self.confidence_level = 0.95     # 95% confidence intervals
-        self.bootstrap_samples = 10000   # 10,000 bootstrap samples per spec
-        self.significance_level = 0.05   # 5% significance level
-        self.random_state = 42          # For reproducibility
+    # GPU and memory
+    gpu_memory_limit_gb: float = 11.0
+    max_execution_hours: float = 8.0
 
-        # Rolling window parameters
-        self.rolling_window_months = 12  # 12-month rolling windows
-        self.rolling_step_months = 3     # Quarterly steps
+    # Statistical parameters
+    sharpe_improvement_threshold: float = 0.2
+    confidence_level: float = 0.95
+    bootstrap_samples: int = 10000
+    significance_level: float = 0.05
+    random_state: int = 42
 
-        # Publication formatting
-        self.apa_compliance = True       # APA 7th edition standards
-        self.decimal_places = 4          # Statistical precision
-        self.p_value_threshold = 0.001   # p-value reporting threshold
+    # Rolling analysis
+    rolling_window_months: int = 12
+    rolling_step_months: int = 3
+
+    # Publication standards
+    apa_compliance: bool = True
+    decimal_places: int = 4
+    p_value_threshold: float = 0.001
+
+    # Input/output paths
+    results_dir: str = "results/ml_backtest_rolling"
+    output_dir: str = "results/performance_analytics"
+
+
+# Register structured config with Hydra
+cs = ConfigStore.instance()
+cs.store(name="analytics_config", node=PerformanceAnalyticsConfig)
 
 
 # Simple multiple comparison correction methods
@@ -1294,29 +1310,22 @@ Sharpe ratios calculated using √252 annualization factor.
         logger.info("Results saved successfully")
 
 
-def main(config_path: str | None = None, results_dir: str | None = None) -> None:
+@hydra.main(version_base=None, config_path="../configs/analytics", config_name="config")
+def main(cfg: DictConfig) -> None:
     """Execute comprehensive performance analytics and statistical validation.
 
     Args:
-        config_path: Path to configuration file
-        results_dir: Directory containing backtest results
+        cfg: Hydra configuration object
     """
     logger.info("Starting comprehensive performance analytics execution...")
+    logger.info(f"Configuration:\n{OmegaConf.to_yaml(cfg)}")
 
     try:
-        # Initialize configuration
-        config = PerformanceAnalyticsConfig()
+        # Initialize executor with Hydra config
+        executor = PerformanceAnalyticsExecutor(cfg)
 
-        # Initialize executor
-        executor = PerformanceAnalyticsExecutor(config)
-
-        # Load backtest results
-        if results_dir:
-            results_path = Path(results_dir)
-        else:
-            # Use the default output from run_comprehensive_backtest.py
-            results_path = Path("results/ml_backtest_rolling")
-
+        # Load backtest results from config
+        results_path = Path(cfg.results_dir)
         returns_dict = executor.load_backtest_results(results_path)
 
         if not returns_dict:
@@ -1352,7 +1361,7 @@ def main(config_path: str | None = None, results_dir: str | None = None) -> None
         summary = executor.generate_execution_summary()
 
         # Save results
-        output_dir = Path("results/performance_analytics")
+        output_dir = Path(cfg.output_dir)
         executor.save_results(output_dir)
 
         # Print final summary
@@ -1375,30 +1384,7 @@ def main(config_path: str | None = None, results_dir: str | None = None) -> None
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Run performance analytics and statistical validation")
-    parser.add_argument(
-        "--config",
-        type=str,
-        help="Path to configuration file",
-        default=None,
-    )
-    parser.add_argument(
-        "--results-dir",
-        type=str,
-        help="Directory containing backtest results",
-        default=None,
-    )
-    parser.add_argument(
-        "--log-level",
-        type=str,
-        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
-        default="INFO",
-        help="Set logging level",
-    )
-
-    args = parser.parse_args()
-
-    # Set logging level
-    logging.getLogger().setLevel(getattr(logging, args.log_level))
-
-    main(args.config, args.results_dir)
+    # Note: Configuration is now handled by Hydra
+    # CLI overrides work like: python script.py results_dir=path/to/results
+    # For Hydra help: python script.py --help
+    main()

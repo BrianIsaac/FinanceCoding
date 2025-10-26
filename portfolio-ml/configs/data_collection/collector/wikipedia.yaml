@@ -1,0 +1,9 @@
+# @package _group_
+# Wikipedia collector for S&P index membership data
+# Scrapes historical constituent changes from Wikipedia
+# Used for dynamic universe construction
+source_name: wikipedia
+rate_limit: 1.0  # Conservative rate limit for Wikipedia
+timeout: 30  # Longer timeout for HTML parsing
+retry_attempts: 3
+retry_delay: 2.0

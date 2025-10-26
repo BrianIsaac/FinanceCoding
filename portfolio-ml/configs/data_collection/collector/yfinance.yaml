@@ -1,0 +1,6 @@
+# @package _group_
+source_name: yfinance
+rate_limit: 5.0
+timeout: 10
+retry_attempts: 3
+retry_delay: 1.0

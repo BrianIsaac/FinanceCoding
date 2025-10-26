@@ -1,0 +1,6 @@
+# @package _group_
+source_name: stooq
+rate_limit: 10.0
+timeout: 15
+retry_attempts: 3
+retry_delay: 1.0

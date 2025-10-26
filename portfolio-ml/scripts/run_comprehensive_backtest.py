@@ -24,15 +24,18 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
-import yaml
+
+# Hydra imports
+import hydra
+from dataclasses import dataclass, field
+from typing import Dict
+from hydra.core.config_store import ConfigStore
+from omegaconf import DictConfig, OmegaConf
 
 # Add project root to path
 sys.path.append(str(Path(__file__).parent.parent))
 
-from src.config.base import ProjectConfig, load_config
-from src.data.loaders.parquet_manager import ParquetManager
 from src.evaluation.backtest.rolling_engine import RollingBacktestConfig, RollingBacktestEngine
-from src.evaluation.validation.temporal_integrity import TemporalIntegrityValidator
 
 # Import academic reporting and performance metrics with uncertainty
 try:
@@ -89,16 +92,58 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def create_gpu_config() -> GPUConfig:
+@dataclass
+class ModelConfig:
+    """Base model configuration."""
+
+    name: str
+    enabled: bool = True
+
+
+@dataclass
+class BacktestConfig:
+    """Main configuration for comprehensive backtest."""
+
+    # Date ranges
+    test_start_date: str = "2023-01-01"
+    test_end_date: str = "2024-11-30"
+    train_end_date: str = "2022-12-31"
+
+    # Backtest settings
+    rebalance_frequency: int = 21  # days
+    transaction_cost_bps: float = 10.0
+
+    # Model selection
+    models: Dict[str, ModelConfig] = field(default_factory=dict)
+
+    # GPU settings
+    gpu_memory_limit_gb: float = 11.0
+
+    # Output
+    output_dir: str = "results/ml_backtest_rolling"
+
+    # Academic reporting
+    use_academic_reports: bool = True
+
+
+# Register structured configs with Hydra
+cs = ConfigStore.instance()
+cs.store(name="backtest_config", node=BacktestConfig)
+cs.store(group="model", name="hrp", node=ModelConfig(name="hrp", enabled=True))
+cs.store(group="model", name="lstm", node=ModelConfig(name="lstm", enabled=True))
+cs.store(group="model", name="gat", node=ModelConfig(name="gat", enabled=True))
+
+
+def create_gpu_config(gpu_memory_limit_gb: float = 11.0) -> GPUConfig:
     """Create GPU configuration with memory constraints."""
     return GPUConfig(
-        max_memory_gb=11.0,  # RTX GeForce 5070Ti conservative limit
+        max_memory_gb=gpu_memory_limit_gb,
         enable_mixed_precision=True,
         batch_size_auto_scale=True,
     )
 
 
-def load_market_data(config: dict[str, Any] | ProjectConfig) -> dict[str, pd.DataFrame]:
+def load_market_data(config: dict[str, Any] | DictConfig) -> dict[str, pd.DataFrame]:
     """Load market data for backtesting with membership-aware cleaning."""
     logger.info("Loading market data...")
 
@@ -462,7 +507,7 @@ def create_gat_models() -> dict[str, Any]:
     return models
 
 
-def initialize_models(config: dict[str, Any] | ProjectConfig, gpu_config: GPUConfig) -> dict[str, Any]:
+def initialize_models(config: dict[str, Any] | DictConfig, gpu_config: GPUConfig) -> dict[str, Any]:
     """Initialize all models for backtesting with fresh instances for rolling training."""
     logger.info("Initializing models...")
 
@@ -841,7 +886,7 @@ def save_results(
     logger.info("Results saved successfully")
 
 
-def fit_baseline_models(models: dict, market_data: dict, config: dict[str, Any] | ProjectConfig) -> None:
+def fit_baseline_models(models: dict, market_data: dict, config: dict[str, Any] | DictConfig) -> None:
     """
     Fit baseline models with historical returns data.
 
@@ -924,31 +969,17 @@ def fit_baseline_models(models: dict, market_data: dict, config: dict[str, Any] 
             logger.debug(f"Baseline model {model_name} not found in models")
 
 
-def main(config_path: str | None = None, use_academic_reports: bool = True) -> None:
+@hydra.main(version_base=None, config_path="../configs/backtest", config_name="config")
+def main(cfg: DictConfig) -> None:
     """Execute comprehensive backtest.
 
     Args:
-        config_path: Path to configuration file
-        use_academic_reports: Whether to generate academic reports (default: True)
+        cfg: Hydra configuration object
     """
     logger.info(f"Starting comprehensive backtest execution with rolling retraining...")
     logger.info(f"Logging to: {log_file}")
-    logger.info(f"Academic reporting: {'ENABLED' if use_academic_reports and ACADEMIC_REPORTING_AVAILABLE else 'DISABLED'}")
-
-    # Load configuration - use shared config by default for consistency with training
-    if config_path:
-        config = load_config(config_path)
-    else:
-        # Use shared configuration for training-backtest consistency
-        shared_config_path = Path(__file__).parent.parent / "configs" / "model_config.yaml"
-        if shared_config_path.exists():
-            logger.info(f"Using shared configuration from {shared_config_path}")
-            with open(shared_config_path, 'r') as f:
-                shared_config = yaml.safe_load(f)
-            config = load_config(str(shared_config_path))
-        else:
-            logger.warning("Shared config not found, using default configuration")
-            config = ProjectConfig()
+    logger.info(f"Configuration:\n{OmegaConf.to_yaml(cfg)}")
+    logger.info(f"Academic reporting: {'ENABLED' if cfg.use_academic_reports and ACADEMIC_REPORTING_AVAILABLE else 'DISABLED'}")
 
     # Track execution time
     import time
@@ -956,14 +987,14 @@ def main(config_path: str | None = None, use_academic_reports: bool = True) -> N
 
     try:
         # 1. Load market data
-        market_data = load_market_data(config)
+        market_data = load_market_data(cfg)
 
         # 2. Initialize models
-        gpu_config = create_gpu_config()
-        models = initialize_models(config, gpu_config)
+        gpu_config = create_gpu_config(cfg.gpu_memory_limit_gb)
+        models = initialize_models(cfg, gpu_config)
 
         # 2.5. Fit baseline models with historical returns data
-        fit_baseline_models(models, market_data, config)
+        fit_baseline_models(models, market_data, cfg)
 
         # 3. Create backtest configuration with rolling support
         backtest_config = create_backtest_config(enable_rolling=True)
@@ -971,6 +1002,7 @@ def main(config_path: str | None = None, use_academic_reports: bool = True) -> N
         # 4. Configure model checkpointing and initialize backtest engine
         model_checkpoint_dir = Path("outputs/models")
         backtest_config.model_checkpoint_dir = model_checkpoint_dir
+        backtest_config.output_dir = Path(cfg.output_dir)
         engine = RollingBacktestEngine(backtest_config)
         results = engine.run_rolling_backtest(
             models=models,
@@ -987,7 +1019,7 @@ def main(config_path: str | None = None, use_academic_reports: bool = True) -> N
         # 7. Generate comprehensive report
         comprehensive_report = generate_comprehensive_report(
             results, constraint_validation, execution_time,
-            use_academic_reporting=use_academic_reports
+            use_academic_reporting=cfg.use_academic_reports
         )
 
         # 8. Save results
@@ -996,7 +1028,7 @@ def main(config_path: str | None = None, use_academic_reports: bool = True) -> N
             constraint_validation,
             comprehensive_report,
             backtest_config.output_dir,
-            generate_academic_reports=use_academic_reports,
+            generate_academic_reports=cfg.use_academic_reports,
         )
 
         # 9. Print summary
@@ -1023,35 +1055,7 @@ def main(config_path: str | None = None, use_academic_reports: bool = True) -> N
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Run comprehensive backtest")
-    parser.add_argument(
-        "--config",
-        type=str,
-        help="Path to configuration file (defaults to shared config at configs/model_config.yaml)",
-        default=None,
-    )
-    parser.add_argument(
-        "--log-level",
-        type=str,
-        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
-        default="INFO",
-        help="Set logging level",
-    )
-    parser.add_argument(
-        "--academic-reports",
-        action="store_true",
-        default=True,
-        help="Generate academic reports with uncertainty quantification (default: True)",
-    )
-    parser.add_argument(
-        "--no-academic-reports",
-        dest="academic_reports",
-        action="store_false",
-        help="Disable academic report generation",
-    )
-    args = parser.parse_args()
-
-    # Set logging level
-    logging.getLogger().setLevel(getattr(logging, args.log_level))
-
-    main(args.config, use_academic_reports=args.academic_reports)
+    # Note: Configuration is now handled by Hydra
+    # CLI overrides work like: python script.py use_academic_reports=false
+    # For Hydra help: python script.py --help
+    main()
