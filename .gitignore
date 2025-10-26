@@ -220,3 +220,10 @@ cython_debug/
 
 # uv
 portfolio-ml/uv.lock
+uv.lock
+
+# Archived code (cleanup plan)
+archived/
+
+# Legacy scripts (deprecated, reference only)
+legacy_scripts/

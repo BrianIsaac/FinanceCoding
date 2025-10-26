@@ -328,79 +328,242 @@ class WikipediaCollector:
         return out.sort_values(["ticker", "start"]).reset_index(drop=True)
 
     def build_membership(
-        self, index_key: str, end_cap: str | None = None, seed_current: bool = True
+        self,
+        index_key: str,
+        end_cap: str | None = None,
+        seed_current: bool = True,
+        start_date: str | None = None,
     ) -> pd.DataFrame:
-        """Build complete membership DataFrame from Wikipedia data.
+        """Build membership DataFrame using forward-only tracking.
+
+        This method tracks membership changes forward from the earliest available
+        change event, avoiding the "zombie ticker" problem that occurred with
+        backward reconstruction.
+
+        Strategy:
+        1. Get current constituents (known to be active now)
+        2. Track all change events forward from earliest available
+        3. Only include tickers with verified activity in requested date range
+        4. Mark tickers with unknown start dates for transparency
 
         Args:
             index_key: Index identifier ('sp400', 'sp500')
-            end_cap: Optional ISO date string to close open intervals
-            seed_current: Whether to seed from current constituents and roll backward
+            end_cap: Optional ISO date string to close open intervals (legacy parameter)
+            seed_current: Legacy parameter, kept for backwards compatibility
+            start_date: Optional start of analysis period (YYYY-MM-DD). If None, uses earliest event.
 
         Returns:
-            DataFrame with membership intervals
+            DataFrame with columns: ticker, start, end, index_name, start_verified
 
         Raises:
             ValueError: If index_key is not supported
+
+        Example:
+            >>> collector = WikipediaCollector(config)
+            >>> membership = collector.build_membership(
+            ...     index_key='sp400',
+            ...     end_cap='2024-12-01',
+            ...     start_date='2016-01-01'
+            ... )
+            >>> # Now produces ~400 constituents per snapshot, not 853
         """
         if index_key not in WIKI_URLS:
             raise ValueError(f"index must be one of: {list(WIKI_URLS.keys())}")
 
+        # Parse dates
+        start_ts = pd.to_datetime(start_date) if start_date else None
+        end_ts = pd.to_datetime(end_cap) if end_cap else None
+
+        # Fetch data
         html = self._fetch_html(WIKI_URLS[index_key])
         tables = self._extract_change_tables(html)
         events = self._tables_to_events(tables, index_name=index_key.upper())
-        cap = pd.to_datetime(end_cap) if end_cap else None
+        current_constituents = set(self._scrape_current_constituents(html))
 
-        if not seed_current or not events:
-            # fallback: original behavior (no seeding)
-            return self._events_to_membership(events, end_cap=cap)
+        if not events:
+            # No change history - just use current constituents
+            return self._current_only_membership(
+                current_constituents, index_key, start_ts, end_ts
+            )
 
-        # Seeded method: roll backward from current, then forward
-        current = set(self._scrape_current_constituents(html))
-        if not current:
-            return self._events_to_membership(events, end_cap=cap)
+        earliest_event = events[0].date
 
-        # Roll BACKWARD to get roster at the earliest change date
-        roster = set(current)
-        for ev in reversed(events):
-            roster = (roster - set(ev.added)) | set(ev.removed)
+        # Build membership using forward-only tracking
+        return self._build_forward_only_intervals(
+            events=events,
+            current_constituents=current_constituents,
+            earliest_event=earliest_event,
+            start_date=start_ts,
+            end_date=end_ts,
+            index_name=index_key.upper(),
+        )
 
-        earliest = events[0].date
+    def _current_only_membership(
+        self,
+        current_constituents: set[str],
+        index_key: str,
+        start_date: pd.Timestamp | None,
+        end_date: pd.Timestamp | None,
+    ) -> pd.DataFrame:
+        """Create membership DataFrame from current constituents only.
 
-        # Roll FORWARD from earliest to now, creating intervals
-        start_map: dict[str, pd.Timestamp] = dict.fromkeys(roster, earliest)
-        intervals: list[tuple[str, pd.Timestamp, pd.Timestamp | None, str]] = []
+        Used when no change history is available.
 
-        active = set(roster)
-        for ev in events:
-            d = ev.date
+        Args:
+            current_constituents: Set of current ticker symbols
+            index_key: Index identifier
+            start_date: Start of analysis period
+            end_date: Optional end date
 
-            # close intervals for names that are about to be removed
-            for t in ev.removed:
-                if t in active:
-                    s = start_map.get(t, earliest)
-                    intervals.append((t, s, d, index_key.upper()))
-                    active.remove(t)
-                    start_map.pop(t, None)
+        Returns:
+            DataFrame with membership intervals
+        """
+        intervals = []
+        for ticker in sorted(current_constituents):
+            intervals.append({
+                "ticker": ticker,
+                "start": start_date if start_date else pd.Timestamp.now(),
+                "end": end_date,
+                "index_name": index_key.upper(),
+                "start_verified": False,
+            })
 
-            # open intervals for names that are about to be added
-            for t in ev.added:
-                if t not in active:
-                    active.add(t)
-                    start_map[t] = d
+        return pd.DataFrame(intervals)
 
-        # close any open intervals at cap (or leave None if no cap)
-        for t in sorted(active):
-            s = start_map.get(t, earliest)
-            intervals.append((t, s, cap, index_key.upper()))
+    def _build_forward_only_intervals(
+        self,
+        events: list[ChangeEvent],
+        current_constituents: set[str],
+        earliest_event: pd.Timestamp,
+        start_date: pd.Timestamp | None,
+        end_date: pd.Timestamp | None,
+        index_name: str,
+    ) -> pd.DataFrame:
+        """Build membership intervals using forward-only tracking.
 
-        out = pd.DataFrame(intervals, columns=["ticker", "start", "end", "index_name"])
-        out["ticker"] = out["ticker"].astype(str).str.upper()
-        out["start"] = pd.to_datetime(out["start"])
-        if out["end"].notna().any():
-            out["end"] = pd.to_datetime(out["end"])
-        out = out.sort_values(["ticker", "start"]).reset_index(drop=True)
-        return out
+        Algorithm:
+        1. Track additions/removals forward from earliest event
+        2. For tickers added >= start_date: use actual addition date (verified)
+        3. For current members never explicitly added: use earliest_event as proxy (unverified)
+        4. Exclude tickers removed before start_date
+        5. Close intervals at end_date if provided
+
+        Args:
+            events: Sorted list of ChangeEvent objects
+            current_constituents: Set of current member tickers
+            earliest_event: Date of first change event in history
+            start_date: Start of analysis period
+            end_date: Optional end date for closing intervals
+            index_name: Index name for labelling
+
+        Returns:
+            DataFrame with columns: ticker, start, end, index_name, start_verified
+        """
+        # Track ticker lifecycles
+        ticker_added: dict[str, pd.Timestamp] = {}  # ticker -> addition date
+        ticker_removed: dict[str, pd.Timestamp] = {}  # ticker -> removal date
+        tickers_ever_added: set[str] = set()
+
+        # Process all change events
+        for event in events:
+            for ticker in event.added:
+                tickers_ever_added.add(ticker)
+                if ticker not in ticker_added:
+                    # Record first addition date
+                    ticker_added[ticker] = event.date
+
+            for ticker in event.removed:
+                # Record removal date (may have multiple, use latest)
+                ticker_removed[ticker] = event.date
+
+        # Build intervals
+        intervals = []
+
+        # 1. Process tickers with explicit addition dates
+        for ticker, add_date in ticker_added.items():
+            removal_date = ticker_removed.get(ticker)
+
+            # Skip if ticker was removed before our analysis period
+            if start_date and removal_date and removal_date < start_date:
+                continue
+
+            # Skip if ticker was added after our analysis period
+            if end_date and add_date > end_date:
+                continue
+
+            intervals.append({
+                "ticker": ticker,
+                "start": add_date,
+                "end": removal_date if removal_date else end_date,
+                "index_name": index_name,
+                "start_verified": True,
+            })
+
+        # 2. Process current constituents that were never explicitly added
+        # These existed before earliest_event date
+        for ticker in current_constituents:
+            if ticker in ticker_added:
+                # Already processed above
+                continue
+
+            # This ticker is currently active but has no addition record
+            # It must have existed before earliest_event
+            # Use earliest_event as proxy start date (unverified)
+
+            removal_date = ticker_removed.get(ticker)
+
+            # If it has a removal date, something is wrong (it's supposed to be current)
+            if removal_date:
+                # Skip - inconsistent data
+                continue
+
+            intervals.append({
+                "ticker": ticker,
+                "start": max(earliest_event, start_date) if start_date else earliest_event,
+                "end": end_date,
+                "index_name": index_name,
+                "start_verified": False,  # We don't know actual start date
+            })
+
+        # 3. Handle tickers that were removed but never added (pre-2014 members)
+        # These are the "zombie tickers" that cause the 853 problem
+        pre_existing_removed = set(ticker_removed.keys()) - tickers_ever_added
+
+        for ticker in pre_existing_removed:
+            removal_date = ticker_removed[ticker]
+
+            # Only include if removal happened during or after our analysis period
+            if start_date and removal_date >= start_date:
+                intervals.append({
+                    "ticker": ticker,
+                    "start": max(earliest_event, start_date),
+                    "end": removal_date,
+                    "index_name": index_name,
+                    "start_verified": False,
+                })
+            elif not start_date:
+                # No start_date filter, include all removals
+                intervals.append({
+                    "ticker": ticker,
+                    "start": earliest_event,
+                    "end": removal_date,
+                    "index_name": index_name,
+                    "start_verified": False,
+                })
+
+        # Convert to DataFrame and sort
+        df = pd.DataFrame(intervals)
+
+        if df.empty:
+            return df
+
+        df["ticker"] = df["ticker"].astype(str).str.upper()
+        df["start"] = pd.to_datetime(df["start"])
+        df["end"] = pd.to_datetime(df["end"], errors='coerce')  # May have None values
+
+        df = df.sort_values(["ticker", "start"]).reset_index(drop=True)
+
+        return df
 
     def collect_current_membership(self, index_key: str = "sp400") -> pd.DataFrame:
         """Collect current index membership data.

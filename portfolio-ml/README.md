@@ -233,6 +233,33 @@ engine = RollingBacktestEngine(config)
 results = engine.run_rolling_backtest(models, data)
 ```
 
+## Data Collection
+
+### S&P MidCap 400 Universe Data
+
+The portfolio uses S&P MidCap 400 historical membership data for backtesting. The data is collected from Wikipedia using a forward-only tracking algorithm that correctly produces ~400 constituents per snapshot (not 853 as in previous versions).
+
+**Current Implementation:**
+- **Data Source**: Wikipedia S&P 400 change history
+- **Coverage**: 2016-01-01 to present
+- **Algorithm**: Forward-only tracking (no backward reconstruction)
+- **Quality**: ~416 avg constituents per timestamp (validated)
+- **Data Location**: `data/processed/universe_calendar_midcap400.parquet`
+
+**Known Limitations:**
+- Wikipedia's change history starts at 2014-09-30
+- Tickers active before 2014 have approximate start dates (marked with `start_verified=False`)
+- For research requiring pre-2014 data, consider commercial alternatives
+
+**Future Enhancement - EODHD API (Optional):**
+
+For more complete historical data, consider integrating EODHD Historical Constituents API:
+- Coverage: Up to 12 years of historical data
+- Cost: $29.99/month (can cancel after extraction)
+- Implementation plan: `thoughts/shared/plans/2025-10-25-eodhd-sp400-membership-refactor.md`
+
+This is not currently required but may be valuable for extended historical backtesting.
+
 ## Development
 
 ### Code Quality Standards

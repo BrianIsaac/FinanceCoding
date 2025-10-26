@@ -15,6 +15,7 @@ data = [
     "matplotlib>=3.9.4",
     "numpy>=2.0.2",
     "pandas>=2.3.1",
+    "polygon-api-client>=1.16.2",
     "python-dotenv>=1.1.1",
     "scikit-learn>=1.6.1",
     "scipy>=1.13.1",
