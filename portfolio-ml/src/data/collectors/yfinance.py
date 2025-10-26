@@ -15,7 +15,7 @@ import numpy as np
 import pandas as pd
 import yfinance as yf
 
-from src.config.data import CollectorConfig
+from src.config_schemas import CollectorConfig
 
 
 class YFinanceCollector:

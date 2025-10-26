@@ -11,7 +11,7 @@ from typing import Any
 
 import pandas as pd
 
-from src.config.data import UniverseConfig, create_collector_config
+from src.config_schemas import UniverseConfig, create_collector_config
 from src.data.collectors.wikipedia import WikipediaCollector
 
 

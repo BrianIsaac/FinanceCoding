@@ -15,7 +15,7 @@ from io import StringIO
 import pandas as pd
 import requests
 
-from src.config.data import CollectorConfig
+from src.config_schemas import CollectorConfig
 
 # Wikipedia URLs for different indices
 WIKI_URLS: dict[str, str] = {

@@ -17,7 +17,7 @@ import pandas as pd
 from scipy import stats
 from sklearn.ensemble import IsolationForest
 
-from src.config.data import ValidationConfig
+from src.config_schemas import ValidationConfig
 
 
 class DataQualityValidator:

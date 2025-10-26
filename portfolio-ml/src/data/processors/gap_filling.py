@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd
 from scipy import interpolate
 
-from src.config.data import ValidationConfig
+from src.config_schemas import ValidationConfig
 
 
 class GapFiller:

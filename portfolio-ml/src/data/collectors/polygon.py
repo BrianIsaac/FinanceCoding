@@ -9,7 +9,7 @@ import pandas as pd
 from dotenv import load_dotenv
 from polygon import RESTClient
 
-from src.config.data import CollectorConfig
+from src.config_schemas import CollectorConfig
 
 load_dotenv()
 

@@ -19,7 +19,7 @@ import pandas as pd
 from dotenv import load_dotenv
 from tiingo import TiingoClient
 
-from src.config.data import CollectorConfig
+from src.config_schemas import CollectorConfig
 
 # Load environment variables from .env file
 load_dotenv()

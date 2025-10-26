@@ -15,7 +15,7 @@ from typing import Any
 import pandas as pd
 import requests
 
-from src.config.data import CollectorConfig
+from src.config_schemas import CollectorConfig
 
 
 class StooqCollector:
