@@ -213,6 +213,7 @@ cython_debug/
 */.bmad-core/
 */.bmad-aisg-aiml/
 */.project-files/
+*/thoughts/
 
 # IDE and testing configurations (project-level)
 */pytest.ini
