@@ -1,7 +1,20 @@
 #!/usr/bin/env python3
 """
-Complete NEW Pipeline Implementation - Full Universe Collection
-Using Stories 1.2 and 1.3 modular implementation to collect all 822 historical tickers.
+Data Collection Pipeline with Waterfall Fallback Strategy
+
+Collects S&P MidCap 400 historical data using a waterfall approach across four
+data sources (Stooq → Tiingo → Polygon → YFinance), where each source fills
+only the gaps left by previous sources. Respects per-ticker membership periods
+to avoid collecting unnecessary historical data.
+
+Architecture:
+1. Load universe membership intervals from parquet
+2. Attempt collection from sources in priority order
+3. Track collected tickers and pass only missing tickers to next source
+4. Combine data from all sources
+5. Apply gap filling with volume validation
+6. Validate data quality and generate reports
+7. Save final datasets (prices, volumes, returns)
 """
 
 import logging
@@ -29,6 +42,7 @@ logger = logging.getLogger(__name__)
 sys.path.append(str(Path(__file__).parent.parent))
 
 from src.config.data import CollectorConfig, UniverseConfig, ValidationConfig  # noqa: E402
+from src.data.collectors.polygon import PolygonCollector  # noqa: E402
 from src.data.collectors.stooq import StooqCollector  # noqa: E402
 from src.data.collectors.tiingo import TiingoCollector  # noqa: E402
 from src.data.collectors.yfinance import YFinanceCollector  # noqa: E402
@@ -63,9 +77,9 @@ def _build_membership_intervals_from_calendar(
     intervals = []
 
     for ticker in universe_calendar["ticker"].unique():
-        ticker_dates = universe_calendar[
-            universe_calendar["ticker"] == ticker
-        ]["date"].sort_values()
+        ticker_dates = universe_calendar[universe_calendar["ticker"] == ticker][
+            "date"
+        ].sort_values()
 
         # Find date range from monthly snapshots
         start_date = ticker_dates.min()
@@ -75,11 +89,13 @@ def _build_membership_intervals_from_calendar(
         most_recent = universe_calendar["date"].max()
         is_active = end_date >= most_recent
 
-        intervals.append({
-            "ticker": ticker,
-            "start": start_date.strftime("%Y-%m-%d"),
-            "end": None if is_active else end_date.strftime("%Y-%m-%d"),
-        })
+        intervals.append(
+            {
+                "ticker": ticker,
+                "start": start_date.strftime("%Y-%m-%d"),
+                "end": None if is_active else end_date.strftime("%Y-%m-%d"),
+            }
+        )
 
     return pd.DataFrame(intervals)
 
@@ -108,21 +124,23 @@ def collect_single_ticker_approach(
     # Prepare ticker periods list
     ticker_periods = []
     for _, row in membership_df.iterrows():
-        ticker_periods.append({
-            "ticker": row["ticker"],
-            "start": row["start"] if pd.notna(row["start"]) else global_start,
-            "end": row["end"] if pd.notna(row["end"]) else global_end,
-        })
+        ticker_periods.append(
+            {
+                "ticker": row["ticker"],
+                "start": row["start"] if pd.notna(row["start"]) else global_start,
+                "end": row["end"] if pd.notna(row["end"]) else global_end,
+            }
+        )
 
     logger.info(f"Prepared {len(ticker_periods)} ticker-period combinations")
 
     # Call appropriate collector method
-    if collector_name == "stooq":
-        ohlcv_data = collector.collect_ohlcv_data(ticker_periods)  # Refactored method
+    if collector_name in ["stooq", "tiingo", "polygon"]:
+        ohlcv_data = collector.collect_ohlcv_data(ticker_periods)
         prices_df = ohlcv_data["close"]
         volumes_df = ohlcv_data["volume"]
     elif collector_name == "yfinance":
-        prices_df, volumes_df = collector.download_with_ticker_periods(ticker_periods)  # New method
+        prices_df, volumes_df = collector.download_with_ticker_periods(ticker_periods)
     else:
         raise ValueError(f"Unknown collector: {collector_name}")
 
@@ -145,6 +163,9 @@ def main():
     start_time = time.time()
 
     # Configuration setup
+    logger.info("=" * 60)
+    logger.info("PHASE 1: CONFIGURATION AND UNIVERSE LOADING")
+    logger.info("=" * 60)
     logger.info("Setting up pipeline configuration...")
     universe_config = UniverseConfig(
         universe_type="midcap400", min_market_cap=None, min_avg_volume=None, exclude_sectors=None
@@ -156,6 +177,10 @@ def main():
 
     tiingo_config = CollectorConfig(
         source_name="tiingo", rate_limit=72.0, timeout=15, retry_attempts=3, retry_delay=1.0
+    )
+
+    polygon_config = CollectorConfig(
+        source_name="polygon", rate_limit=12.0, timeout=15, retry_attempts=3, retry_delay=1.0
     )
 
     yfinance_config = CollectorConfig(
@@ -177,6 +202,7 @@ def main():
     universe_builder = UniverseBuilder(universe_config, "data/processed")
     stooq_collector = StooqCollector(stooq_config)
     tiingo_collector = TiingoCollector(tiingo_config)
+    polygon_collector = PolygonCollector(polygon_config)
     yfinance_collector = YFinanceCollector(yfinance_config)
     gap_filler = GapFiller(validation_config)
     quality_validator = DataQualityValidator(validation_config)
@@ -199,144 +225,206 @@ def main():
             membership_df, "2016-01-01", "2024-12-31"
         )
         # Save for future use
-        universe_calendar.to_parquet("data/processed/universe_calendar_midcap400.parquet", index=False)
+        universe_calendar.to_parquet(
+            "data/processed/universe_calendar_midcap400.parquet", index=False
+        )
         logger.info(f"Built universe: {len(membership_df)} ticker-period combinations")
 
     # Extract ticker list for backward compatibility (will be replaced in later phases)
     all_tickers = sorted(membership_df["ticker"].unique())
 
-    # Smart source selection: Test Stooq availability first
+    # New unified implementation
     logger.info("=" * 60)
-    logger.info("PHASE 1: DATA SOURCE SELECTION")
+    logger.info("PHASE 2: WATERFALL DATA COLLECTION")
     logger.info("=" * 60)
+    logger.info(f"Target universe: {len(all_tickers)} tickers")
+    logger.info("Collection strategy: Stooq → Tiingo → Polygon → YFinance (waterfall)")
+    logger.info("")
 
-    logger.info("Testing Stooq API availability...")
-    stooq_available = stooq_collector.check_rate_limit_status()
+    # Define collection sources in priority order
+    sources = [
+        ("Stooq", stooq_collector),
+        ("Tiingo", tiingo_collector),
+        ("Polygon", polygon_collector),
+        ("YFinance", yfinance_collector),
+    ]
 
-    if stooq_available:
-        logger.info("✅ Stooq API available - proceeding with Stooq as primary source")
+    # Track collection results across all sources
+    all_prices_list = []
+    all_volumes_list = []
+    collected_tickers = set()
+    collection_stats = {}
+    source_collection_time = {}
+
+    # Start with full universe
+    remaining_tickers = set(all_tickers)
+    initial_ticker_count = len(all_tickers)
+
+    for source_idx, (source_name, collector) in enumerate(sources, 1):
         logger.info("=" * 60)
-        logger.info("PHASE 2: STOOQ DATA COLLECTION")
+        logger.info(f"SOURCE {source_idx}/4: {source_name.upper()}")
         logger.info("=" * 60)
 
-        stooq_prices, stooq_volumes, collected_stooq = collect_single_ticker_approach(
-            stooq_collector, membership_df
+        # Skip if no tickers remaining
+        if not remaining_tickers:
+            logger.info(f"✓ All {initial_ticker_count} tickers already collected")
+            logger.info(f"  Skipping {source_name}")
+            collection_stats[source_name] = 0
+            continue
+
+        # Skip Polygon if no API key
+        if source_name == "Polygon" and not collector.api_key:
+            logger.info("⊘ Polygon API key not available - skipping")
+            collection_stats[source_name] = 0
+            continue
+
+        # Filter membership to remaining tickers only
+        remaining_membership = membership_df[membership_df["ticker"].isin(remaining_tickers)]
+
+        logger.info(f"Attempting to collect {len(remaining_tickers)} remaining tickers")
+        logger.info(
+            f"  ({len(remaining_tickers)}/{initial_ticker_count} = "
+            f"{len(remaining_tickers) / initial_ticker_count * 100:.1f}% of universe)"
         )
 
-        # Save Stooq results
-        if not stooq_prices.empty:
-            output_dir = Path("data/stooq_new")
-            output_dir.mkdir(exist_ok=True)
+        # Track collection time
+        source_start_time = time.time()
 
-            stooq_prices.to_parquet(output_dir / "prices.parquet", compression="gzip")
-            stooq_volumes.to_parquet(output_dir / "volume.parquet", compression="gzip")
-            logger.info(f"Saved Stooq data to {output_dir}: {stooq_prices.shape[1]} tickers")
-
-        # Identify missing tickers and try Tiingo first
-        missing_tickers = list(set(all_tickers) - set(collected_stooq))
-        logger.info(f"Missing from Stooq: {len(missing_tickers)} tickers")
-
-        if missing_tickers:
-            logger.info("=" * 60)
-            logger.info("PHASE 3: TIINGO AUGMENTATION FOR MISSING TICKERS")
-            logger.info("=" * 60)
-
-            # Filter membership_df to missing tickers only
-            missing_membership_tiingo = membership_df[membership_df["ticker"].isin(missing_tickers)]
-
-            tiingo_prices, tiingo_volumes, collected_tiingo = collect_single_ticker_approach(
-                tiingo_collector, missing_membership_tiingo
+        try:
+            # Collect data for remaining tickers
+            prices, volumes, collected = collect_single_ticker_approach(
+                collector, remaining_membership
             )
 
-            logger.info(f"Tiingo collected {len(collected_tiingo)} tickers")
+            source_elapsed = time.time() - source_start_time
+            source_collection_time[source_name] = source_elapsed
 
-            # Try YFinance for remaining missing tickers
-            remaining_missing = list(set(all_tickers) - set(collected_stooq) - set(collected_tiingo))
-            logger.info(f"Still missing after Tiingo: {len(remaining_missing)} tickers")
-
-            if remaining_missing:
-                logger.info("=" * 60)
-                logger.info("PHASE 4: YFINANCE AUGMENTATION FOR REMAINING TICKERS")
-                logger.info("=" * 60)
-
-                # Filter membership_df to remaining missing tickers only
-                missing_membership = membership_df[membership_df["ticker"].isin(remaining_missing)]
-
-                yf_prices, yf_volumes, collected_yf = collect_single_ticker_approach(
-                    yfinance_collector, missing_membership
+            if not prices.empty:
+                # Log successful collection details
+                logger.info(f"✓ {source_name} collection successful:")
+                logger.info(f"  Tickers collected: {len(collected)}")
+                logger.info(
+                    f"  Coverage: {len(collected)}/{len(remaining_tickers)} "
+                    f"({len(collected) / len(remaining_tickers) * 100:.1f}% of remaining)"
                 )
+                logger.info(f"  Data shape: {prices.shape[1]} tickers × {prices.shape[0]} dates")
+                logger.info(f"  Date range: {prices.index.min()} to {prices.index.max()}")
+                logger.info(f"  Non-null values: {prices.notna().sum().sum():,}")
+                logger.info(f"  Collection time: {source_elapsed:.1f}s")
+
+                # Log sample tickers
+                sample_tickers = sorted(collected)[:5]
+                logger.info(f"  Sample tickers: {', '.join(sample_tickers)}")
+                if len(collected) > 5:
+                    logger.info(f"  ... and {len(collected) - 5} more")
+
+                all_prices_list.append(prices)
+                all_volumes_list.append(volumes)
+                collected_tickers.update(collected)
+                remaining_tickers -= set(collected)
+                collection_stats[source_name] = len(collected)
+
+                # Log updated status
+                total_collected = len(collected_tickers)
+                logger.info(
+                    f"  Progress: {total_collected}/{initial_ticker_count} "
+                    f"({total_collected / initial_ticker_count * 100:.1f}%) total collected"
+                )
+                logger.info(f"  Remaining: {len(remaining_tickers)} tickers")
+
+                if remaining_tickers and len(remaining_tickers) <= 10:
+                    logger.info(f"  Still missing: {', '.join(sorted(remaining_tickers))}")
+
             else:
-                yf_prices = pd.DataFrame()
-                yf_volumes = pd.DataFrame()
-                collected_yf = []
+                collection_stats[source_name] = 0
+                logger.warning(f"✗ {source_name} returned empty DataFrame")
+                logger.warning(f"  All {len(remaining_tickers)} tickers failed")
+                logger.warning("  Moving to next source...")
 
-            # Combine all three sources: Stooq + Tiingo + YFinance
-            logger.info("=" * 60)
-            logger.info("PHASE 5: COMBINING DATA FROM ALL SOURCES")
-            logger.info("=" * 60)
+        except ValueError as e:
+            # Handle API key errors specifically
+            collection_stats[source_name] = 0
+            source_collection_time[source_name] = time.time() - source_start_time
+            logger.error(f"✗ {source_name} configuration error:")
+            logger.error(f"  Error: {e}")
+            logger.error("  This usually means an API key is missing or invalid")
+            logger.info("  Moving to next source...")
+            continue
 
-            all_prices_list = []
-            all_volumes_list = []
+        except Exception as e:
+            collection_stats[source_name] = 0
+            source_collection_time[source_name] = time.time() - source_start_time
+            logger.error(f"✗ {source_name} collection failed:")
+            logger.error(f"  Error type: {type(e).__name__}")
+            logger.error(f"  Error message: {e}")
+            logger.info("  Moving to next source...")
+            continue
 
-            if not stooq_prices.empty:
-                all_prices_list.append(stooq_prices)
-                all_volumes_list.append(stooq_volumes)
-                logger.info(f"Stooq: {stooq_prices.shape[1]} tickers")
+        logger.info("")  # Blank line for readability
 
-            if not tiingo_prices.empty:
-                all_prices_list.append(tiingo_prices)
-                all_volumes_list.append(tiingo_volumes)
-                logger.info(f"Tiingo: {tiingo_prices.shape[1]} tickers")
+    # Verify we collected something
+    if not all_prices_list:
+        logger.error("=" * 60)
+        logger.error("CRITICAL ERROR: NO DATA COLLECTED")
+        logger.error("=" * 60)
+        logger.error("All data sources failed to collect any tickers")
+        logger.error("Possible causes:")
+        logger.error("  - All API keys missing or invalid")
+        logger.error("  - All sources rate-limited simultaneously")
+        logger.error("  - Network connectivity issues")
+        logger.error("  - Invalid ticker symbols in universe")
+        return False
 
-            if not yf_prices.empty:
-                all_prices_list.append(yf_prices)
-                all_volumes_list.append(yf_volumes)
-                logger.info(f"YFinance: {yf_prices.shape[1]} tickers")
+    # Combine all sources
+    logger.info("=" * 60)
+    logger.info("PHASE 3: COMBINING DATA FROM ALL SOURCES")
+    logger.info("=" * 60)
 
-            if all_prices_list:
-                combined_prices = pd.concat(all_prices_list, axis=1)
-                combined_volumes = pd.concat(all_volumes_list, axis=1)
-                logger.info(f"Combined data shape: {combined_prices.shape}")
-            else:
-                logger.error("No data collected from any source!")
-                return False
-        else:
-            logger.info("Using Stooq data only (all tickers collected successfully)")
-            combined_prices = stooq_prices
-            combined_volumes = stooq_volumes
-            # Initialize empty for summary stats
-            tiingo_prices = pd.DataFrame()
-            tiingo_volumes = pd.DataFrame()
-            collected_tiingo = []
-            yf_prices = pd.DataFrame()
-            yf_volumes = pd.DataFrame()
-            collected_yf = []
-    else:
-        logger.warning("❌ Stooq API rate limited - switching to YFinance as primary source")
-        logger.info("=" * 60)
-        logger.info("PHASE 2: YFINANCE DATA COLLECTION (PRIMARY SOURCE)")
-        logger.info("=" * 60)
+    combined_prices = pd.concat(all_prices_list, axis=1)
+    combined_volumes = pd.concat(all_volumes_list, axis=1)
 
-        yf_prices, yf_volumes, collected_yf = collect_single_ticker_approach(
-            yfinance_collector, membership_df
+    logger.info("Combined dataset statistics:")
+    logger.info(
+        f"  Final shape: {combined_prices.shape[1]} tickers × {combined_prices.shape[0]} dates"
+    )
+    logger.info(f"  Date range: {combined_prices.index.min()} to {combined_prices.index.max()}")
+    logger.info(f"  Total trading days: {len(combined_prices)}")
+    logger.info(f"  Non-null values: {combined_prices.notna().sum().sum():,}")
+    logger.info("")
+
+    logger.info("Collection breakdown by source:")
+    total_collection_time = sum(source_collection_time.values())
+    for source_name, count in collection_stats.items():
+        pct = (count / len(all_tickers)) * 100 if all_tickers else 0
+        elapsed = source_collection_time.get(source_name, 0)
+        time_pct = (elapsed / total_collection_time * 100) if total_collection_time > 0 else 0
+        logger.info(
+            f"  {source_name:.<12} {count:>4} tickers ({pct:>5.1f}%) | "
+            f"{elapsed:>6.1f}s ({time_pct:>5.1f}%)"
         )
 
-        if not yf_prices.empty:
-            combined_prices = yf_prices
-            combined_volumes = yf_volumes
-            logger.info(f"YFinance data shape: {combined_prices.shape}")
-            logger.info(f"Collected {len(collected_yf)} tickers successfully from YFinance")
+    logger.info("")
+    logger.info(
+        f"Total collection time: {total_collection_time:.1f}s "
+        f"({total_collection_time / 60:.1f} minutes)"
+    )
+    logger.info(
+        f"Universe coverage: {len(collected_tickers)}/{len(all_tickers)} "
+        f"({len(collected_tickers) / len(all_tickers) * 100:.1f}%)"
+    )
 
-            # Save YFinance results
-            output_dir = Path("data/yfinance_primary")
-            output_dir.mkdir(exist_ok=True)
-
-            combined_prices.to_parquet(output_dir / "prices.parquet", compression="gzip")
-            combined_volumes.to_parquet(output_dir / "volume.parquet", compression="gzip")
-            logger.info(f"Saved YFinance data to {output_dir}")
-        else:
-            logger.error("No data collected from YFinance!")
-            return False
+    if remaining_tickers:
+        logger.warning("")
+        logger.warning(f"⚠ Failed to collect {len(remaining_tickers)} tickers from any source:")
+        failed_list = sorted(remaining_tickers)
+        for i in range(0, len(failed_list), 10):
+            batch = failed_list[i : i + 10]
+            logger.warning(f"  {', '.join(batch)}")
+        logger.warning("")
+        logger.warning("These tickers may be:")
+        logger.warning("  - Delisted or inactive during collection period")
+        logger.warning("  - Invalid ticker symbols")
+        logger.warning("  - Not available in any data source")
 
     # Apply our enhanced gap-filling
     logger.info("=" * 60)
@@ -370,6 +458,60 @@ def main():
 
     total_filled = sum(stats["filled"] for stats in fill_stats.values())
     logger.info(f"Gap filling completed: {total_filled} total gaps filled across all tickers")
+
+    # Calculate and log per-ticker coverage statistics
+    logger.info("=" * 60)
+    logger.info("DATA COVERAGE ANALYSIS")
+    logger.info("=" * 60)
+
+    # Calculate coverage per ticker (before gap filling)
+    pre_fill_coverage = (combined_prices.notna().sum() / len(combined_prices)) * 100
+    # Calculate coverage per ticker (after gap filling)
+    post_fill_coverage = (filled_prices.notna().sum() / len(filled_prices)) * 100
+
+    logger.info("Coverage distribution (after gap filling):")
+    coverage_bins = [0, 50, 70, 80, 90, 95, 100]
+    for i in range(len(coverage_bins) - 1):
+        low, high = coverage_bins[i], coverage_bins[i + 1]
+        count = ((post_fill_coverage >= low) & (post_fill_coverage < high)).sum()
+        if i == len(coverage_bins) - 2:  # Last bin includes 100%
+            count = (post_fill_coverage >= low).sum()
+        pct = (count / len(post_fill_coverage)) * 100 if len(post_fill_coverage) > 0 else 0
+        logger.info(f"  {low:>3}%-{high:>3}%: {count:>4} tickers ({pct:>5.1f}%)")
+
+    # Identify low-coverage tickers
+    low_coverage_threshold = 70
+    low_coverage_tickers = post_fill_coverage[post_fill_coverage < low_coverage_threshold]
+    if not low_coverage_tickers.empty:
+        logger.warning("")
+        logger.warning(
+            f"⚠ Tickers with <{low_coverage_threshold}% coverage "
+            f"({len(low_coverage_tickers)} tickers):"
+        )
+        for ticker in sorted(low_coverage_tickers.index)[:20]:
+            cov = post_fill_coverage[ticker]
+            logger.warning(f"  {ticker:.<8} {cov:>5.1f}%")
+        if len(low_coverage_tickers) > 20:
+            logger.warning(f"  ... and {len(low_coverage_tickers) - 20} more")
+
+    # Overall statistics
+    logger.info("")
+    logger.info("Overall coverage statistics:")
+    logger.info(f"  Mean coverage: {post_fill_coverage.mean():.2f}%")
+    logger.info(f"  Median coverage: {post_fill_coverage.median():.2f}%")
+    logger.info(f"  Min coverage: {post_fill_coverage.min():.2f}%")
+    logger.info(f"  Max coverage: {post_fill_coverage.max():.2f}%")
+    logger.info(f"  Std deviation: {post_fill_coverage.std():.2f}%")
+
+    # Gap filling impact
+    logger.info("")
+    logger.info("Gap filling impact:")
+    logger.info(f"  Average coverage before: {pre_fill_coverage.mean():.2f}%")
+    logger.info(f"  Average coverage after: {post_fill_coverage.mean():.2f}%")
+    logger.info(
+        f"  Improvement: +{post_fill_coverage.mean() - pre_fill_coverage.mean():.2f} percentage points"
+    )
+    logger.info(f"  Total gaps filled: {total_filled:,}")
 
     # Quality validation
     logger.info("=" * 60)
@@ -410,26 +552,22 @@ def main():
     summary = {
         "total_tickers": len(filled_prices.columns),
         "target_universe_size": len(all_tickers),
-        "universe_coverage_pct": (len(filled_prices.columns) / len(all_tickers)) * 100,
+        "universe_coverage_pct": (len(collected_tickers) / len(all_tickers)) * 100,
         "date_range": f"{filled_prices.index.min()} to {filled_prices.index.max()}",
         "average_coverage": final_coverage.mean(),
         "tickers_95pct_coverage": (final_coverage >= 95).sum(),
         "total_gaps_filled": total_filled,
         "quality_score": validation_results.get("overall_quality_score", 0),
-        "stooq_tickers": len(collected_stooq) if "collected_stooq" in locals() else 0,
-        "tiingo_tickers": len(collected_tiingo) if "collected_tiingo" in locals() else 0,
-        "yfinance_tickers": len(collected_yf) if "collected_yf" in locals() else 0,
+        "stooq_tickers": collection_stats.get("Stooq", 0),
+        "tiingo_tickers": collection_stats.get("Tiingo", 0),
+        "polygon_tickers": collection_stats.get("Polygon", 0),
+        "yfinance_tickers": collection_stats.get("YFinance", 0),
     }
 
     # Compare to original merged dataset
     try:
         old_merged = pd.read_parquet("data/merged/prices.parquet")
-
-        if len(filled_prices.columns) >= len(old_merged.columns):
-            pass
-        else:
-            coverage_improvement = summary["average_coverage"] - 68.7  # Original was 68.7%
-
+        _ = len(old_merged.columns)  # Check we can read it
     except Exception:
         pass
 
@@ -448,12 +586,69 @@ def main():
     logger.info("PIPELINE EXECUTION COMPLETED SUCCESSFULLY")
     logger.info("=" * 80)
     logger.info(f"Total execution time: {execution_hours:.2f} hours ({execution_time:.1f} seconds)")
-    logger.info(f"Final universe coverage: {summary['universe_coverage_pct']:.1f}%")
-    logger.info(f"Data quality score: {summary['quality_score']:.3f}")
-    logger.info(f"Average ticker coverage: {summary['average_coverage']:.1f}%")
-    logger.info(f"Tickers with >95% coverage: {summary['tickers_95pct_coverage']}")
-    logger.info(f"Total gaps filled: {summary['total_gaps_filled']}")
+    logger.info("")
+
+    logger.info("DATA COLLECTION SUMMARY BY SOURCE:")
+    logger.info(f"  Target universe size: {summary['target_universe_size']} tickers")
+    logger.info("")
+    for source in ["Stooq", "Tiingo", "Polygon", "YFinance"]:
+        source_key = f"{source.lower()}_tickers"
+        count = summary.get(source_key, 0)
+        pct = (
+            (count / summary["target_universe_size"] * 100)
+            if summary["target_universe_size"] > 0
+            else 0
+        )
+        if count > 0:
+            logger.info(f"  ✓ {source:.<12} {count:>4} tickers ({pct:>5.1f}%)")
+        else:
+            logger.info(f"  ✗ {source:.<12} {count:>4} tickers ({pct:>5.1f}%)")
+    logger.info("")
+    logger.info(
+        f"  Total coverage: {summary['total_tickers']} tickers "
+        f"({summary['universe_coverage_pct']:.1f}%)"
+    )
+
+    logger.info("")
+    logger.info("DATA QUALITY METRICS:")
+    logger.info(f"  Quality score: {summary['quality_score']:.3f}")
+    logger.info(f"  Average ticker coverage: {summary['average_coverage']:.1f}%")
+    logger.info(
+        f"  Tickers with ≥95% coverage: {summary['tickers_95pct_coverage']} "
+        f"({summary['tickers_95pct_coverage'] / summary['total_tickers'] * 100:.1f}%)"
+    )
+    logger.info(f"  Total gaps filled: {summary['total_gaps_filled']:,}")
+
+    logger.info("")
+    logger.info("DATA COMPLETENESS:")
+    # Calculate additional completeness metrics
+    if summary["total_tickers"] > 0 and summary["target_universe_size"] > 0:
+        missing_tickers = summary["target_universe_size"] - summary["total_tickers"]
+        if missing_tickers > 0:
+            logger.warning(
+                f"  ⚠ Missing {missing_tickers} tickers from target universe "
+                f"({missing_tickers / summary['target_universe_size'] * 100:.1f}%)"
+            )
+        else:
+            logger.info(f"  ✓ Complete universe coverage ({summary['total_tickers']} tickers)")
+
+        # Calculate data density
+        total_possible_values = summary["total_tickers"] * len(filled_prices)
+        total_actual_values = filled_prices.notna().sum().sum()
+        data_density = (
+            (total_actual_values / total_possible_values * 100) if total_possible_values > 0 else 0
+        )
+        logger.info(
+            f"  Data density: {data_density:.2f}% "
+            f"({total_actual_values:,} / {total_possible_values:,} cells)"
+        )
+
+    logger.info("")
     logger.info(f"Results saved to: {output_dir}")
+    logger.info("  - prices_final.parquet")
+    logger.info("  - volume_final.parquet")
+    logger.info("  - returns_daily_final.parquet")
+    logger.info("  - new_pipeline_summary.json")
     logger.info("=" * 80)
 
     return True

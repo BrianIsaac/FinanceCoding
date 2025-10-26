@@ -152,6 +152,11 @@ class TiingoCollector:
                 if isinstance(df.index, pd.MultiIndex):
                     df = df.reset_index(level=0, drop=True)
 
+                # Convert timezone-aware index to timezone-naive for compatibility
+                # Tiingo returns UTC timezone, but we need naive for concat with other sources
+                if hasattr(df.index, "tz") and df.index.tz is not None:
+                    df.index = df.index.tz_localize(None)
+
                 # Store OHLCV data (Tiingo columns: open, high, low, close, volume)
                 for field in ["open", "high", "low", "close", "volume"]:
                     if field in df.columns:
