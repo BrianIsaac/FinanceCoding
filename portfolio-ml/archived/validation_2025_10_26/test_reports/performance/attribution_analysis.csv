@@ -1,0 +1,4 @@
+Model,Total Return (%),Alpha (%),Beta,Sector Contribution,Factor Loading,Active Share,Tracking Error (%),Information Ratio
+HRP,19.02,N/A,N/A,N/A,N/A,N/A,18.42,1.0324
+LSTM,34.75,N/A,N/A,N/A,N/A,N/A,23.87,1.4557
+GAT,-2.47,N/A,N/A,N/A,N/A,N/A,20.56,-0.1203

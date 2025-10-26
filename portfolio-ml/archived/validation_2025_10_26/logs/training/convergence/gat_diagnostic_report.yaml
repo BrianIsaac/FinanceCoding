@@ -1,0 +1,41 @@
+convergence_summary:
+  average_convergence_quality: !!python/object/apply:numpy._core.multiarray.scalar
+  - &id001 !!python/object/apply:numpy.dtype
+    args:
+    - f8
+    - false
+    - true
+    state: !!python/tuple
+    - 3
+    - <
+    - null
+    - null
+    - null
+    - -1
+    - -1
+    - 0
+  - !!binary |
+    MzMzMzMz0z8=
+  best_configuration: gat_default_config
+  successful_convergences: 0
+  total_configurations: 1
+generated_at: '2025-09-10T13:54:41.613769'
+hyperparameter_summary: {}
+model_type: gat
+quality_assessment:
+  overall_score: !!python/object/apply:numpy._core.multiarray.scalar
+  - *id001
+  - !!binary |
+    ZmZmZmZm1j8=
+  quality_factors:
+  - !!python/object/apply:numpy._core.multiarray.scalar
+    - *id001
+    - !!binary |
+      MzMzMzMz0z8=
+  - 0.4
+  rating: poor
+recommendations:
+- Consider adjusting learning rate or optimizer settings to improve convergence quality
+- Training shows inconsistency across seeds - consider regularization or different
+  initialization
+stability_summary: {}

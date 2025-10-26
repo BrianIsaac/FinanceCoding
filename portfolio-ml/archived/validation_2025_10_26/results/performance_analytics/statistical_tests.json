@@ -1,0 +1,66 @@
+{
+  "jobson_korkie_results": "   portfolio_a  ... is_significant_holm_sidak\n0         LSTM  ...                     False\n1         LSTM  ...                     False\n2         LSTM  ...                     False\n3          HRP  ...                     False\n4          HRP  ...                     False\n5          HRP  ...                     False\n6     GAT-TMFG  ...                     False\n7     GAT-TMFG  ...                     False\n8     GAT-TMFG  ...                     False\n9      GAT-kNN  ...                     False\n10     GAT-kNN  ...                     False\n11     GAT-kNN  ...                     False\n12     GAT-MST  ...                     False\n13     GAT-MST  ...                     False\n14     GAT-MST  ...                     False\n\n[15 rows x 14 columns]",
+  "bootstrap_confidence_intervals": {
+    "LSTM": {
+      "ci_lower": -0.4578757731990788,
+      "ci_upper": 1.6814671409141002,
+      "bootstrap_mean": 0.7161484164166733,
+      "bootstrap_std": 0.4407768438226195,
+      "original_sharpe": 0.7076092576307532
+    },
+    "HRP": {
+      "ci_lower": -0.5883122374617892,
+      "ci_upper": 1.5506116085344637,
+      "bootstrap_mean": 0.5107095227769077,
+      "bootstrap_std": 0.4353944556679887,
+      "original_sharpe": 0.47750929090064176
+    },
+    "EqualWeight": {
+      "ci_lower": -0.6616293824436558,
+      "ci_upper": 1.5625634964272703,
+      "bootstrap_mean": 0.428222588668599,
+      "bootstrap_std": 0.4486387932629323,
+      "original_sharpe": 0.4279838792224587
+    },
+    "MeanReversion": {
+      "ci_lower": -0.6235382207017846,
+      "ci_upper": 1.6782629445286694,
+      "bootstrap_mean": 0.44193319507454737,
+      "bootstrap_std": 0.42743580901488526,
+      "original_sharpe": 0.46243905769186155
+    },
+    "MarketCapWeighted": {
+      "ci_lower": -0.6478465274093372,
+      "ci_upper": 1.6117610322914102,
+      "bootstrap_mean": 0.5473211138609541,
+      "bootstrap_std": 0.4450025143923187,
+      "original_sharpe": 0.5285824849521755
+    },
+    "GAT-TMFG": {
+      "ci_lower": -0.4974990364102854,
+      "ci_upper": 1.7164081486444207,
+      "bootstrap_mean": 0.5964144816629503,
+      "bootstrap_std": 0.42511091938577245,
+      "original_sharpe": 0.5799774587510722
+    },
+    "GAT-kNN": {
+      "ci_lower": -1.0876282215556528,
+      "ci_upper": 1.2707702542755408,
+      "bootstrap_mean": 0.17659306262675534,
+      "bootstrap_std": 0.4330568456884418,
+      "original_sharpe": 0.16377827077948112
+    },
+    "GAT-MST": {
+      "ci_lower": -0.7075747062706962,
+      "ci_upper": 1.4841369443842796,
+      "bootstrap_mean": 0.359613685701489,
+      "bootstrap_std": 0.4242975667464602,
+      "original_sharpe": 0.3528572779267115
+    }
+  },
+  "multiple_comparison_corrections": {
+    "bonferroni_alpha": 0.0033333333333333335,
+    "holm_sidak_alpha": 0.05
+  },
+  "sharpe_improvement_tests": {}
+}

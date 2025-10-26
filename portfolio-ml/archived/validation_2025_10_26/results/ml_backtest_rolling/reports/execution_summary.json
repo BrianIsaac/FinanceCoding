@@ -1,0 +1,69 @@
+{
+  "total_splits": 70,
+  "models_tested": 8,
+  "execution_timestamp": "2025-09-21T17:19:06.601820",
+  "config_summary": {
+    "training_months": 36,
+    "validation_months": 0,
+    "test_months": 1,
+    "step_months": 1
+  },
+  "model_performance_summary": {
+    "HRP": {
+      "total_return_days": 1399,
+      "sharpe_ratio": 0.29302793893915385,
+      "total_return": 0.29015301488948864,
+      "annualized_return": 0.051797177451550394,
+      "annualized_volatility": 0.10851244276114218
+    },
+    "LSTM": {
+      "total_return_days": 1399,
+      "sharpe_ratio": 0.3135088033521007,
+      "total_return": 0.21198348633977182,
+      "annualized_return": 0.03592031406705942,
+      "annualized_volatility": 0.050781075034691696
+    },
+    "GAT-MST": {
+      "total_return_days": 1399,
+      "sharpe_ratio": 0.19617975209819705,
+      "total_return": 0.22738905050511593,
+      "annualized_return": 0.04506266455417534,
+      "annualized_volatility": 0.12775357439349969
+    },
+    "GAT-kNN": {
+      "total_return_days": 1399,
+      "sharpe_ratio": 0.035571255618711814,
+      "total_return": 0.07728347608350483,
+      "annualized_return": 0.025551569275699244,
+      "annualized_volatility": 0.15606897139663836
+    },
+    "GAT-TMFG": {
+      "total_return_days": 1399,
+      "sharpe_ratio": 0.39445074873611985,
+      "total_return": 0.3703840390389668,
+      "annualized_return": 0.06256983023037568,
+      "annualized_volatility": 0.10792178837732187
+    },
+    "EqualWeight": {
+      "total_return_days": 1399,
+      "sharpe_ratio": 0.12117092483846509,
+      "total_return": 0.15384278076079316,
+      "annualized_return": 0.027902624282003408,
+      "annualized_volatility": 0.06521881625099853
+    },
+    "MarketCapWeighted": {
+      "total_return_days": 1399,
+      "sharpe_ratio": 0.28857691364583593,
+      "total_return": 0.25273254376469945,
+      "annualized_return": 0.04406646460701469,
+      "annualized_volatility": 0.08339705454245357
+    },
+    "MeanReversion": {
+      "total_return_days": 1399,
+      "sharpe_ratio": 0.16452990214520183,
+      "total_return": 0.17334994614155308,
+      "annualized_return": 0.031051774974645556,
+      "annualized_volatility": 0.06717183217487167
+    }
+  }
+}

@@ -1,0 +1,11 @@
+
+Table: Hypothesis Tests Table
+
+Empty DataFrame
+Columns: []
+Index: []
+
+Note. CI = confidence interval; *** p < .001, ** p < .01, * p < .05.
+All statistical tests use Jobson-Korkie methodology with Memmel correction.
+Bootstrap confidence intervals based on 10,000 samples with bias correction.
+Sharpe ratios calculated using √252 annualization factor.

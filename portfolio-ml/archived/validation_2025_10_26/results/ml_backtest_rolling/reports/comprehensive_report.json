@@ -1,0 +1,701 @@
+{
+  "execution_summary": {
+    "total_execution_time_hours": 0.5658452840646108,
+    "total_models_tested": 8,
+    "total_rolling_windows": 70,
+    "evaluation_period": {
+      "start": "2023-01-01",
+      "end": "2024-12-31",
+      "years": 2
+    },
+    "memory_constraints_met": true,
+    "using_academic_reporting": true
+  },
+  "constraint_enforcement": {
+    "model_violations": {
+      "HRP": {
+        "long_only_violations": 0,
+        "turnover_violations": 55,
+        "position_limit_violations": 69,
+        "weight_sum_violations": 0
+      },
+      "LSTM": {
+        "long_only_violations": 0,
+        "turnover_violations": 69,
+        "position_limit_violations": 22,
+        "weight_sum_violations": 0
+      },
+      "GAT-MST": {
+        "long_only_violations": 0,
+        "turnover_violations": 69,
+        "position_limit_violations": 64,
+        "weight_sum_violations": 0
+      },
+      "GAT-kNN": {
+        "long_only_violations": 0,
+        "turnover_violations": 69,
+        "position_limit_violations": 63,
+        "weight_sum_violations": 0
+      },
+      "GAT-TMFG": {
+        "long_only_violations": 0,
+        "turnover_violations": 69,
+        "position_limit_violations": 33,
+        "weight_sum_violations": 0
+      },
+      "EqualWeight": {
+        "long_only_violations": 0,
+        "turnover_violations": 0,
+        "position_limit_violations": 0,
+        "weight_sum_violations": 0
+      },
+      "MarketCapWeighted": {
+        "long_only_violations": 0,
+        "turnover_violations": 4,
+        "position_limit_violations": 0,
+        "weight_sum_violations": 0
+      },
+      "MeanReversion": {
+        "long_only_violations": 0,
+        "turnover_violations": 0,
+        "position_limit_violations": 0,
+        "weight_sum_violations": 0
+      }
+    },
+    "total_violations": 586,
+    "models_with_violations": 6,
+    "validation_passed": false
+  },
+  "model_performance": {
+    "HRP": {
+      "sharpe_ratio": 0.29302793893915385,
+      "annualized_return": 0.051797177451550394,
+      "annualized_volatility": 0.10851244276114218,
+      "max_drawdown": -0.22976395984900766,
+      "total_return": 0.29015301488948864
+    },
+    "LSTM": {
+      "sharpe_ratio": 0.3135088033521007,
+      "annualized_return": 0.03592031406705942,
+      "annualized_volatility": 0.050781075034691696,
+      "max_drawdown": -0.08368041726057523,
+      "total_return": 0.21198348633977182
+    },
+    "GAT-MST": {
+      "sharpe_ratio": 0.19617975209819705,
+      "annualized_return": 0.04506266455417534,
+      "annualized_volatility": 0.12775357439349969,
+      "max_drawdown": -0.35534362087900195,
+      "total_return": 0.22738905050511593
+    },
+    "GAT-kNN": {
+      "sharpe_ratio": 0.035571255618711814,
+      "annualized_return": 0.025551569275699244,
+      "annualized_volatility": 0.15606897139663836,
+      "max_drawdown": -0.3381408839444934,
+      "total_return": 0.07728347608350483
+    },
+    "GAT-TMFG": {
+      "sharpe_ratio": 0.39445074873611985,
+      "annualized_return": 0.06256983023037568,
+      "annualized_volatility": 0.10792178837732187,
+      "max_drawdown": -0.16809975132699112,
+      "total_return": 0.3703840390389668
+    },
+    "EqualWeight": {
+      "sharpe_ratio": 0.12117092483846509,
+      "annualized_return": 0.027902624282003408,
+      "annualized_volatility": 0.06521881625099853,
+      "max_drawdown": -0.10796253505436156,
+      "total_return": 0.15384278076079316
+    },
+    "MarketCapWeighted": {
+      "sharpe_ratio": 0.28857691364583593,
+      "annualized_return": 0.04406646460701469,
+      "annualized_volatility": 0.08339705454245357,
+      "max_drawdown": -0.13580009677245095,
+      "total_return": 0.25273254376469945
+    },
+    "MeanReversion": {
+      "sharpe_ratio": 0.16452990214520183,
+      "annualized_return": 0.031051774974645556,
+      "annualized_volatility": 0.06717183217487167,
+      "max_drawdown": -0.11677472461372312,
+      "total_return": 0.17334994614155308
+    }
+  },
+  "temporal_integrity": {
+    "total_splits_monitored": 560,
+    "splits_passed": 560,
+    "splits_failed": 0,
+    "success_rate": 100.0,
+    "violation_summary": {},
+    "most_common_violations": []
+  },
+  "memory_usage": {
+    "allocated_gb": 0.02,
+    "cached_gb": 0.5,
+    "free_gb": 11.48,
+    "total_gb": 11.51,
+    "utilization_pct": 0.2
+  },
+  "academic_analysis": {
+    "HRP": {
+      "metrics": {
+        "mean_return": 0.00020554435496646981,
+        "volatility": 0.0068331978916105944,
+        "skewness": -0.7005311095014178,
+        "kurtosis": 15.11525941453763,
+        "sharpe_ratio": 0.030080257915378873,
+        "sortino_ratio": 0.03544833749544886,
+        "calmar_ratio": 0.0008945891910182342,
+        "max_drawdown": -0.22976395984900766,
+        "var_95": -0.00841820494545133,
+        "cvar_95": -0.01654383261557212,
+        "tracking_error": 0.004714718145114587,
+        "information_ratio": 0.020111415468804388
+      },
+      "confidence_intervals": {
+        "sharpe_ratio": [
+          -0.021117462372837938,
+          0.08307455156148265
+        ],
+        "mean_return": [
+          -0.00015837476906464833,
+          0.0005591327357437486
+        ],
+        "volatility": [
+          0.0060942272452182275,
+          0.007585623662223447
+        ],
+        "sortino_ratio": [
+          -0.023777931346179112,
+          0.11156125682333
+        ]
+      },
+      "significance_tests": {
+        "mean_return_significance": {
+          "test": "one-sample t-test",
+          "null_hypothesis": "mean return = 0",
+          "t_statistic": 1.1246959762200128,
+          "p_value": 0.2609109525268336,
+          "significant": "False",
+          "p_value_corrected": 0.7827328575805008,
+          "significant_corrected": "False"
+        },
+        "sharpe_ratio_significance": {
+          "test": "asymptotic z-test",
+          "null_hypothesis": "Sharpe ratio = 0",
+          "z_statistic": 1.124843739047203,
+          "p_value": 0.2606552561869595,
+          "significant": "False",
+          "p_value_corrected": 0.7819657685608785,
+          "significant_corrected": "False"
+        },
+        "vs_benchmark_significance": {
+          "test": "paired t-test",
+          "null_hypothesis": "returns = benchmark returns",
+          "t_statistic": 0.751962570184243,
+          "p_value": 0.452200146838331,
+          "significant": "False",
+          "p_value_corrected": 1.0,
+          "significant_corrected": false
+        }
+      },
+      "academic_caveats": [
+        "Non-significant results for: mean_return_significance, sharpe_ratio_significance, vs_benchmark_significance",
+        "Returns show excess kurtosis (15.12)",
+        "Large drawdown observed (-23.0%)"
+      ],
+      "methodology": "Standard academic methods with parametric tests"
+    },
+    "LSTM": {
+      "metrics": {
+        "mean_return": 0.0001425409288375374,
+        "volatility": 0.00319776355624567,
+        "skewness": 0.5876424371192291,
+        "kurtosis": 8.33963054567656,
+        "sharpe_ratio": 0.04457519335947633,
+        "sortino_ratio": 0.06231166083784364,
+        "calmar_ratio": 0.0017033964875399039,
+        "max_drawdown": -0.08368041726057523,
+        "var_95": -0.004974858143711154,
+        "cvar_95": -0.007262034750561214,
+        "tracking_error": 0.0033065809713493815,
+        "information_ratio": 0.009622092905468442
+      },
+      "confidence_intervals": {
+        "sharpe_ratio": [
+          -0.00807661881340438,
+          0.09552275904046742
+        ],
+        "mean_return": [
+          -2.1648521719012718e-05,
+          0.0003071788168045062
+        ],
+        "volatility": [
+          0.0029401470709256843,
+          0.0034865611111400885
+        ],
+        "sortino_ratio": [
+          -0.010076402604419674,
+          0.1442389813474899
+        ]
+      },
+      "significance_tests": {
+        "mean_return_significance": {
+          "test": "one-sample t-test",
+          "null_hypothesis": "mean return = 0",
+          "t_statistic": 1.6666592670736617,
+          "p_value": 0.09580617731723946,
+          "significant": "False",
+          "p_value_corrected": 0.2874185319517184,
+          "significant_corrected": "False"
+        },
+        "sharpe_ratio_significance": {
+          "test": "asymptotic z-test",
+          "null_hypothesis": "Sharpe ratio = 0",
+          "z_statistic": 1.6664276767844128,
+          "p_value": 0.09562826207539565,
+          "significant": "False",
+          "p_value_corrected": 0.28688478622618696,
+          "significant_corrected": "False"
+        },
+        "vs_benchmark_significance": {
+          "test": "paired t-test",
+          "null_hypothesis": "returns = benchmark returns",
+          "t_statistic": 0.35976849680077555,
+          "p_value": 0.7190746022544572,
+          "significant": "False",
+          "p_value_corrected": 1.0,
+          "significant_corrected": false
+        }
+      },
+      "academic_caveats": [
+        "Non-significant results for: mean_return_significance, sharpe_ratio_significance, vs_benchmark_significance",
+        "Returns show excess kurtosis (8.34)"
+      ],
+      "methodology": "Standard academic methods with parametric tests"
+    },
+    "GAT-MST": {
+      "metrics": {
+        "mean_return": 0.00017882009743720373,
+        "volatility": 0.008044841982895479,
+        "skewness": 0.044292792303657014,
+        "kurtosis": 6.179298991212544,
+        "sharpe_ratio": 0.02222791918317372,
+        "sortino_ratio": 0.02946322623358248,
+        "calmar_ratio": 0.0005032314833592967,
+        "max_drawdown": -0.35534362087900195,
+        "var_95": -0.012505901453670405,
+        "cvar_95": -0.01907624584408313,
+        "tracking_error": 0.006063197037149327,
+        "information_ratio": 0.01123093930285001
+      },
+      "confidence_intervals": {
+        "sharpe_ratio": [
+          -0.030688698077198102,
+          0.07470403845791418
+        ],
+        "mean_return": [
+          -0.00024211964575882212,
+          0.0005985237428572536
+        ],
+        "volatility": [
+          0.007457388609307766,
+          0.008644420178780332
+        ],
+        "sortino_ratio": [
+          -0.03735555617744707,
+          0.10531477624849553
+        ]
+      },
+      "significance_tests": {
+        "mean_return_significance": {
+          "test": "one-sample t-test",
+          "null_hypothesis": "mean return = 0",
+          "t_statistic": 0.8310983015966016,
+          "p_value": 0.4060600185335925,
+          "significant": "False",
+          "p_value_corrected": 1.0,
+          "significant_corrected": false
+        },
+        "sharpe_ratio_significance": {
+          "test": "asymptotic z-test",
+          "null_hypothesis": "Sharpe ratio = 0",
+          "z_statistic": 0.8312928188890205,
+          "p_value": 0.4058082303536903,
+          "significant": "False",
+          "p_value_corrected": 1.0,
+          "significant_corrected": false
+        },
+        "vs_benchmark_significance": {
+          "test": "paired t-test",
+          "null_hypothesis": "returns = benchmark returns",
+          "t_statistic": 0.4199230032741394,
+          "p_value": 0.6746062291518544,
+          "significant": "False",
+          "p_value_corrected": 1.0,
+          "significant_corrected": false
+        }
+      },
+      "academic_caveats": [
+        "Non-significant results for: mean_return_significance, sharpe_ratio_significance, vs_benchmark_significance",
+        "Returns show excess kurtosis (6.18)",
+        "Large drawdown observed (-35.5%)"
+      ],
+      "methodology": "Standard academic methods with parametric tests"
+    },
+    "GAT-kNN": {
+      "metrics": {
+        "mean_return": 0.0001013951161734097,
+        "volatility": 0.00982790672808662,
+        "skewness": 0.4908370567786445,
+        "kurtosis": 18.591110194986094,
+        "sharpe_ratio": 0.010317061300921623,
+        "sortino_ratio": 0.013238612194319843,
+        "calmar_ratio": 0.0002998605640069657,
+        "max_drawdown": -0.3381408839444934,
+        "var_95": -0.012966366833133628,
+        "cvar_95": -0.022162871547131764,
+        "tracking_error": 0.008137203542030246,
+        "information_ratio": -0.0011465343480915467
+      },
+      "confidence_intervals": {
+        "sharpe_ratio": [
+          -0.04259463835501744,
+          0.06244787146453694
+        ],
+        "mean_return": [
+          -0.00041213154036033074,
+          0.0006166923846254804
+        ],
+        "volatility": [
+          0.00867010799892155,
+          0.010993865621476714
+        ],
+        "sortino_ratio": [
+          -0.05173900241125037,
+          0.0903032405301748
+        ]
+      },
+      "significance_tests": {
+        "mean_return_significance": {
+          "test": "one-sample t-test",
+          "null_hypothesis": "mean return = 0",
+          "t_statistic": 0.3857532526551013,
+          "p_value": 0.6997381106785492,
+          "significant": "False",
+          "p_value_corrected": 1.0,
+          "significant_corrected": false
+        },
+        "sharpe_ratio_significance": {
+          "test": "asymptotic z-test",
+          "null_hypothesis": "Sharpe ratio = 0",
+          "z_statistic": 0.3858809257811102,
+          "p_value": 0.699584857661752,
+          "significant": "False",
+          "p_value_corrected": 1.0,
+          "significant_corrected": false
+        },
+        "vs_benchmark_significance": {
+          "test": "paired t-test",
+          "null_hypothesis": "returns = benchmark returns",
+          "t_statistic": -0.042868733756346054,
+          "p_value": 0.965812294389135,
+          "significant": "False",
+          "p_value_corrected": 1.0,
+          "significant_corrected": false
+        }
+      },
+      "academic_caveats": [
+        "Non-significant results for: mean_return_significance, sharpe_ratio_significance, vs_benchmark_significance",
+        "Returns show excess kurtosis (18.59)",
+        "Large drawdown observed (-33.8%)"
+      ],
+      "methodology": "Standard academic methods with parametric tests"
+    },
+    "GAT-TMFG": {
+      "metrics": {
+        "mean_return": 0.0002482929771046654,
+        "volatility": 0.006796003463142372,
+        "skewness": 0.518630970905674,
+        "kurtosis": 14.361480288245826,
+        "sharpe_ratio": 0.03653514575901325,
+        "sortino_ratio": 0.04853569231517432,
+        "calmar_ratio": 0.0014770573730456076,
+        "max_drawdown": -0.16809975132699112,
+        "var_95": -0.009210512001917548,
+        "cvar_95": -0.015112305820083983,
+        "tracking_error": 0.005390427333661914,
+        "information_ratio": 0.02552084817354373
+      },
+      "confidence_intervals": {
+        "sharpe_ratio": [
+          -0.015687496840030946,
+          0.08793503855860865
+        ],
+        "mean_return": [
+          -0.00010079855543850886,
+          0.0006111101547157439
+        ],
+        "volatility": [
+          0.006091772117895893,
+          0.007509251321784518
+        ],
+        "sortino_ratio": [
+          -0.019400991907945517,
+          0.13221035576480478
+        ]
+      },
+      "significance_tests": {
+        "mean_return_significance": {
+          "test": "one-sample t-test",
+          "null_hypothesis": "mean return = 0",
+          "t_statistic": 1.3660431882389434,
+          "p_value": 0.1721451102740819,
+          "significant": "False",
+          "p_value_corrected": 0.5164353308222457,
+          "significant_corrected": "False"
+        },
+        "sharpe_ratio_significance": {
+          "test": "asymptotic z-test",
+          "null_hypothesis": "Sharpe ratio = 0",
+          "z_statistic": 1.36607588217723,
+          "p_value": 0.17191514731778046,
+          "significant": "False",
+          "p_value_corrected": 0.5157454419533414,
+          "significant_corrected": "False"
+        },
+        "vs_benchmark_significance": {
+          "test": "paired t-test",
+          "null_hypothesis": "returns = benchmark returns",
+          "t_statistic": 0.9542203837232279,
+          "p_value": 0.3401370597570572,
+          "significant": "False",
+          "p_value_corrected": 1.0,
+          "significant_corrected": false
+        }
+      },
+      "academic_caveats": [
+        "Non-significant results for: mean_return_significance, sharpe_ratio_significance, vs_benchmark_significance",
+        "Returns show excess kurtosis (14.36)"
+      ],
+      "methodology": "Standard academic methods with parametric tests"
+    },
+    "EqualWeight": {
+      "metrics": {
+        "mean_return": 0.00011072469953175955,
+        "volatility": 0.0041069306556911125,
+        "skewness": -0.027848354481201893,
+        "kurtosis": 3.935023448347426,
+        "sharpe_ratio": 0.026960450227793496,
+        "sortino_ratio": 0.03865925524843027,
+        "calmar_ratio": 0.0010255844722060962,
+        "max_drawdown": -0.10796253505436156,
+        "var_95": -0.006297260204400755,
+        "cvar_95": -0.00917646122306438,
+        "tracking_error": 0.0,
+        "information_ratio": 0
+      },
+      "confidence_intervals": {
+        "sharpe_ratio": [
+          -0.02566626715580896,
+          0.07859090564785269
+        ],
+        "mean_return": [
+          -0.00010587453858530908,
+          0.00032032806584400997
+        ],
+        "volatility": [
+          0.00384589417004729,
+          0.004372135733287043
+        ],
+        "sortino_ratio": [
+          -0.03477630147471506,
+          0.12226765099323489
+        ]
+      },
+      "significance_tests": {
+        "mean_return_significance": {
+          "test": "one-sample t-test",
+          "null_hypothesis": "mean return = 0",
+          "t_statistic": 1.0080468715920365,
+          "p_value": 0.3136064003602348,
+          "significant": "False",
+          "p_value_corrected": 0.9408192010807044,
+          "significant_corrected": "False"
+        },
+        "sharpe_ratio_significance": {
+          "test": "asymptotic z-test",
+          "null_hypothesis": "Sharpe ratio = 0",
+          "z_statistic": 1.008224144639118,
+          "p_value": 0.3133468692712009,
+          "significant": "False",
+          "p_value_corrected": 0.9400406078136028,
+          "significant_corrected": "False"
+        },
+        "vs_benchmark_significance": {
+          "test": "paired t-test",
+          "null_hypothesis": "returns = benchmark returns",
+          "t_statistic": NaN,
+          "p_value": NaN,
+          "significant": "False",
+          "p_value_corrected": NaN,
+          "significant_corrected": "False"
+        }
+      },
+      "academic_caveats": [
+        "Non-significant results for: mean_return_significance, sharpe_ratio_significance, vs_benchmark_significance",
+        "Returns show excess kurtosis (3.94)"
+      ],
+      "methodology": "Standard academic methods with parametric tests"
+    },
+    "MarketCapWeighted": {
+      "metrics": {
+        "mean_return": 0.00017486692304370907,
+        "volatility": 0.005251642694289201,
+        "skewness": -0.0475161828086056,
+        "kurtosis": 3.539643024074083,
+        "sharpe_ratio": 0.033297566727809716,
+        "sortino_ratio": 0.04821262050407056,
+        "calmar_ratio": 0.0012876789280696847,
+        "max_drawdown": -0.13580009677245095,
+        "var_95": -0.008280767976501763,
+        "cvar_95": -0.011647299117625418,
+        "tracking_error": 0.0012464688388042606,
+        "information_ratio": 0.051459147244692624
+      },
+      "confidence_intervals": {
+        "sharpe_ratio": [
+          -0.019452103642675647,
+          0.08675326056151443
+        ],
+        "mean_return": [
+          -9.912532688195542e-05,
+          0.00044640716538605474
+        ],
+        "volatility": [
+          0.004937651757529064,
+          0.0055753093379176475
+        ],
+        "sortino_ratio": [
+          -0.025745993513505077,
+          0.13304525210048077
+        ]
+      },
+      "significance_tests": {
+        "mean_return_significance": {
+          "test": "one-sample t-test",
+          "null_hypothesis": "mean return = 0",
+          "t_statistic": 1.2449906321294675,
+          "p_value": 0.2133438433635317,
+          "significant": "False",
+          "p_value_corrected": 0.6400315300905951,
+          "significant_corrected": "False"
+        },
+        "sharpe_ratio_significance": {
+          "test": "asymptotic z-test",
+          "null_hypothesis": "Sharpe ratio = 0",
+          "z_statistic": 1.2450907592357368,
+          "p_value": 0.21309839049174428,
+          "significant": "False",
+          "p_value_corrected": 0.6392951714752328,
+          "significant_corrected": "False"
+        },
+        "vs_benchmark_significance": {
+          "test": "paired t-test",
+          "null_hypothesis": "returns = benchmark returns",
+          "t_statistic": 1.9240491889608846,
+          "p_value": 0.05455122951335598,
+          "significant": "False",
+          "p_value_corrected": 0.16365368854006795,
+          "significant_corrected": "False"
+        }
+      },
+      "academic_caveats": [
+        "Non-significant results for: mean_return_significance, sharpe_ratio_significance, vs_benchmark_significance",
+        "Returns show excess kurtosis (3.54)"
+      ],
+      "methodology": "Standard academic methods with parametric tests"
+    },
+    "MeanReversion": {
+      "metrics": {
+        "mean_return": 0.00012322132926446649,
+        "volatility": 0.004229915116769623,
+        "skewness": 0.006774896726799164,
+        "kurtosis": 5.054941859348464,
+        "sharpe_ratio": 0.029130922456564644,
+        "sortino_ratio": 0.04147150208084646,
+        "calmar_ratio": 0.0010552054793712248,
+        "max_drawdown": -0.11677472461372312,
+        "var_95": -0.006413461773420793,
+        "cvar_95": -0.009387189464915513,
+        "tracking_error": 0.000300551423332771,
+        "information_ratio": 0.041579006993657255
+      },
+      "confidence_intervals": {
+        "sharpe_ratio": [
+          -0.022818793059672403,
+          0.08148760305152425
+        ],
+        "mean_return": [
+          -9.95771157085315e-05,
+          0.0003446007218537386
+        ],
+        "volatility": [
+          0.003946855115276904,
+          0.0045243971621887254
+        ],
+        "sortino_ratio": [
+          -0.030292861090003568,
+          0.1246103639850276
+        ]
+      },
+      "significance_tests": {
+        "mean_return_significance": {
+          "test": "one-sample t-test",
+          "null_hypothesis": "mean return = 0",
+          "t_statistic": 1.0892004770253247,
+          "p_value": 0.27625320669765796,
+          "significant": "False",
+          "p_value_corrected": 0.8287596200929739,
+          "significant_corrected": "False"
+        },
+        "sharpe_ratio_significance": {
+          "test": "asymptotic z-test",
+          "null_hypothesis": "Sharpe ratio = 0",
+          "z_statistic": 1.0893588781925012,
+          "p_value": 0.2759956578860465,
+          "significant": "False",
+          "p_value_corrected": 0.8279869736581396,
+          "significant_corrected": "False"
+        },
+        "vs_benchmark_significance": {
+          "test": "paired t-test",
+          "null_hypothesis": "returns = benchmark returns",
+          "t_statistic": 1.5546323436635692,
+          "p_value": 0.12025999531019449,
+          "significant": "False",
+          "p_value_corrected": 0.36077998593058347,
+          "significant_corrected": "False"
+        }
+      },
+      "academic_caveats": [
+        "Non-significant results for: mean_return_significance, sharpe_ratio_significance, vs_benchmark_significance",
+        "Returns show excess kurtosis (5.05)"
+      ],
+      "methodology": "Standard academic methods with parametric tests"
+    }
+  },
+  "top_performers": {
+    "best_sharpe": {
+      "model": "GAT-TMFG",
+      "value": 0.39445074873611985
+    },
+    "best_return": {
+      "model": "GAT-TMFG",
+      "value": 0.3703840390389668
+    }
+  }
+}

@@ -1,0 +1,95 @@
+2025-09-21 17:28:26,704 - __main__ - INFO - Starting comprehensive performance analytics execution...
+2025-09-21 17:28:26,867 - __main__ - INFO - Loading backtest results from results/ml_backtest_rolling
+2025-09-21 17:28:26,870 - __main__ - INFO - Loaded LSTM from ml: 1399 observations
+2025-09-21 17:28:26,871 - __main__ - INFO - Loaded HRP from ml: 1399 observations
+2025-09-21 17:28:26,872 - __main__ - INFO - Loaded EqualWeight from baseline: 1399 observations
+2025-09-21 17:28:26,873 - __main__ - INFO - Loaded MeanReversion from baseline: 1399 observations
+2025-09-21 17:28:26,874 - __main__ - INFO - Loaded MarketCapWeighted from baseline: 1399 observations
+2025-09-21 17:28:26,875 - __main__ - INFO - Loaded GAT-TMFG from gat: 1399 observations
+2025-09-21 17:28:26,876 - __main__ - INFO - Loaded GAT-kNN from gat: 1399 observations
+2025-09-21 17:28:26,877 - __main__ - INFO - Loaded GAT-MST from gat: 1399 observations
+2025-09-21 17:28:26,877 - __main__ - INFO - Successfully loaded 8 return series
+2025-09-21 17:28:26,877 - __main__ - INFO - ================================================================================
+2025-09-21 17:28:26,877 - __main__ - INFO - EXECUTING PERFORMANCE ANALYTICS AND STATISTICAL VALIDATION
+2025-09-21 17:28:26,877 - __main__ - INFO - ================================================================================
+2025-09-21 17:28:26,877 - __main__ - INFO - Task 1: Executing comprehensive performance analytics calculation...
+2025-09-21 17:28:26,877 - __main__ - INFO - Calculating metrics for LSTM
+2025-09-21 17:28:26,879 - __main__ - ERROR - Failed to calculate metrics for LSTM: Only valid with DatetimeIndex, TimedeltaIndex or PeriodIndex, but got an instance of 'Index'
+2025-09-21 17:28:26,879 - __main__ - INFO - Calculating metrics for HRP
+2025-09-21 17:28:26,880 - __main__ - ERROR - Failed to calculate metrics for HRP: Only valid with DatetimeIndex, TimedeltaIndex or PeriodIndex, but got an instance of 'Index'
+2025-09-21 17:28:26,880 - __main__ - INFO - Calculating metrics for EqualWeight
+2025-09-21 17:28:26,880 - __main__ - ERROR - Failed to calculate metrics for EqualWeight: Only valid with DatetimeIndex, TimedeltaIndex or PeriodIndex, but got an instance of 'Index'
+2025-09-21 17:28:26,880 - __main__ - INFO - Calculating metrics for MeanReversion
+2025-09-21 17:28:26,881 - __main__ - ERROR - Failed to calculate metrics for MeanReversion: Only valid with DatetimeIndex, TimedeltaIndex or PeriodIndex, but got an instance of 'Index'
+2025-09-21 17:28:26,881 - __main__ - INFO - Calculating metrics for MarketCapWeighted
+2025-09-21 17:28:26,882 - __main__ - ERROR - Failed to calculate metrics for MarketCapWeighted: Only valid with DatetimeIndex, TimedeltaIndex or PeriodIndex, but got an instance of 'Index'
+2025-09-21 17:28:26,882 - __main__ - INFO - Calculating metrics for GAT-TMFG
+2025-09-21 17:28:26,883 - __main__ - ERROR - Failed to calculate metrics for GAT-TMFG: Only valid with DatetimeIndex, TimedeltaIndex or PeriodIndex, but got an instance of 'Index'
+2025-09-21 17:28:26,883 - __main__ - INFO - Calculating metrics for GAT-kNN
+2025-09-21 17:28:26,884 - __main__ - ERROR - Failed to calculate metrics for GAT-kNN: Only valid with DatetimeIndex, TimedeltaIndex or PeriodIndex, but got an instance of 'Index'
+2025-09-21 17:28:26,884 - __main__ - INFO - Calculating metrics for GAT-MST
+2025-09-21 17:28:26,885 - __main__ - ERROR - Failed to calculate metrics for GAT-MST: Only valid with DatetimeIndex, TimedeltaIndex or PeriodIndex, but got an instance of 'Index'
+2025-09-21 17:28:26,885 - __main__ - INFO - Task 1 completed: calculated metrics for 8 models
+2025-09-21 17:28:26,885 - __main__ - INFO - Task 2: Executing statistical significance testing framework...
+2025-09-21 17:28:28,972 - __main__ - INFO - Task 2 completed: 15 pairwise comparisons, 0 improvement tests
+2025-09-21 17:28:28,972 - __main__ - INFO - Task 3: Executing rolling window consistency analysis...
+2025-09-21 17:28:28,972 - __main__ - INFO - Analyzing rolling consistency for LSTM
+2025-09-21 17:28:28,972 - __main__ - ERROR - Performance analytics execution failed: Only valid with DatetimeIndex, TimedeltaIndex or PeriodIndex, but got an instance of 'Index'
+2025-09-21 17:37:02,910 - __main__ - INFO - Starting comprehensive performance analytics execution...
+2025-09-21 17:37:03,078 - __main__ - INFO - Loading backtest results from results/ml_backtest_rolling
+2025-09-21 17:37:03,099 - __main__ - INFO - Loaded LSTM from ml: 1399 observations
+2025-09-21 17:37:03,100 - __main__ - INFO - Loaded HRP from ml: 1399 observations
+2025-09-21 17:37:03,101 - __main__ - INFO - Loaded EqualWeight from baseline: 1399 observations
+2025-09-21 17:37:03,102 - __main__ - INFO - Loaded MeanReversion from baseline: 1399 observations
+2025-09-21 17:37:03,103 - __main__ - INFO - Loaded MarketCapWeighted from baseline: 1399 observations
+2025-09-21 17:37:03,104 - __main__ - INFO - Loaded GAT-TMFG from gat: 1399 observations
+2025-09-21 17:37:03,105 - __main__ - INFO - Loaded GAT-kNN from gat: 1399 observations
+2025-09-21 17:37:03,105 - __main__ - INFO - Loaded GAT-MST from gat: 1399 observations
+2025-09-21 17:37:03,105 - __main__ - INFO - Successfully loaded 8 return series
+2025-09-21 17:37:03,105 - __main__ - INFO - ================================================================================
+2025-09-21 17:37:03,105 - __main__ - INFO - EXECUTING PERFORMANCE ANALYTICS AND STATISTICAL VALIDATION
+2025-09-21 17:37:03,105 - __main__ - INFO - ================================================================================
+2025-09-21 17:37:03,105 - __main__ - INFO - Task 1: Executing comprehensive performance analytics calculation...
+2025-09-21 17:37:03,106 - __main__ - INFO - Calculating metrics for LSTM
+2025-09-21 17:37:03,110 - __main__ - INFO - Calculating metrics for HRP
+2025-09-21 17:37:03,113 - __main__ - INFO - Calculating metrics for EqualWeight
+2025-09-21 17:37:03,115 - __main__ - INFO - Calculating metrics for MeanReversion
+2025-09-21 17:37:03,118 - __main__ - INFO - Calculating metrics for MarketCapWeighted
+2025-09-21 17:37:03,121 - __main__ - INFO - Calculating metrics for GAT-TMFG
+2025-09-21 17:37:03,124 - __main__ - INFO - Calculating metrics for GAT-kNN
+2025-09-21 17:37:03,126 - __main__ - INFO - Calculating metrics for GAT-MST
+2025-09-21 17:37:03,129 - __main__ - INFO - Task 1 completed: calculated metrics for 8 models
+2025-09-21 17:37:03,129 - __main__ - INFO - Task 2: Executing statistical significance testing framework...
+2025-09-21 17:37:05,195 - __main__ - INFO - Task 2 completed: 15 pairwise comparisons, 0 improvement tests
+2025-09-21 17:37:05,195 - __main__ - INFO - Task 3: Executing rolling window consistency analysis...
+2025-09-21 17:37:05,195 - __main__ - INFO - Analyzing rolling consistency for LSTM
+2025-09-21 17:37:05,196 - __main__ - INFO - Analyzing rolling consistency for HRP
+2025-09-21 17:37:05,197 - __main__ - INFO - Analyzing rolling consistency for EqualWeight
+2025-09-21 17:37:05,197 - __main__ - INFO - Analyzing rolling consistency for MeanReversion
+2025-09-21 17:37:05,198 - __main__ - INFO - Analyzing rolling consistency for MarketCapWeighted
+2025-09-21 17:37:05,199 - __main__ - INFO - Analyzing rolling consistency for GAT-TMFG
+2025-09-21 17:37:05,199 - __main__ - INFO - Analyzing rolling consistency for GAT-kNN
+2025-09-21 17:37:05,200 - __main__ - INFO - Analyzing rolling consistency for GAT-MST
+2025-09-21 17:37:05,200 - __main__ - INFO - Task 3 completed: analyzed 0 models across rolling windows
+2025-09-21 17:37:05,200 - __main__ - INFO - Task 4: Executing sensitivity analysis...
+2025-09-21 17:37:05,224 - __main__ - INFO - Task 4 completed: sensitivity analysis across multiple dimensions
+2025-09-21 17:37:05,224 - __main__ - INFO - Task 5: Generating publication-ready statistical reporting...
+2025-09-21 17:37:05,241 - __main__ - INFO - Task 5 completed: generated 5 publication-ready tables
+2025-09-21 17:37:05,241 - __main__ - INFO - Task 6: Executing results validation and quality assurance...
+2025-09-21 17:37:07,071 - __main__ - INFO - Task 6 completed: comprehensive validation and quality assurance checks
+2025-09-21 17:37:07,071 - __main__ - INFO - Task 7: Implementing enhanced risk mitigation framework...
+2025-09-21 17:37:07,072 - __main__ - INFO - Task 7 completed: enhanced risk mitigation framework implemented
+2025-09-21 17:37:07,072 - __main__ - INFO - Saving performance analytics results to results/performance_analytics
+2025-09-21 17:37:07,100 - __main__ - INFO - Results saved successfully
+2025-09-21 17:37:07,100 - __main__ - INFO - ================================================================================
+2025-09-21 17:37:07,100 - __main__ - INFO - PERFORMANCE ANALYTICS COMPLETED
+2025-09-21 17:37:07,100 - __main__ - INFO - ================================================================================
+2025-09-21 17:37:07,100 - __main__ - INFO - Execution time: 0.00 hours
+2025-09-21 17:37:07,100 - __main__ - INFO - Models analyzed: 8
+2025-09-21 17:37:07,100 - __main__ - INFO - Statistical tests: 15
+2025-09-21 17:37:07,100 - __main__ - INFO - Publication tables: 10
+2025-09-21 17:37:07,100 - __main__ - INFO - Validation score: 1.000
+2025-09-21 17:37:07,100 - __main__ - INFO - Risk mitigation score: 1.000
+2025-09-21 17:37:07,100 - __main__ - INFO - Constraints met: True
+2025-09-21 17:37:07,100 - __main__ - INFO - Results saved to: results/performance_analytics
+2025-09-21 17:37:07,100 - __main__ - INFO - ================================================================================

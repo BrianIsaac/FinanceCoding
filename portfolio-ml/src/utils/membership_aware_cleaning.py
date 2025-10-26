@@ -18,14 +18,36 @@ def load_dynamic_universe(universe_path: str) -> pd.DataFrame:
     Load and process dynamic universe membership data.
 
     Args:
-        universe_path: Path to universe membership CSV file
+        universe_path: Path to universe membership CSV or parquet file
 
     Returns:
-        DataFrame with MultiIndex (date, ticker) showing membership status
+        DataFrame with columns: ticker, start, end
     """
-    universe_df = pd.read_csv(universe_path)
+    from pathlib import Path
 
-    # Convert dates
+    path = Path(universe_path)
+
+    # Support both CSV and parquet formats
+    if path.suffix == '.parquet':
+        universe_df = pd.read_parquet(universe_path)
+
+        # If parquet has ticker, date format, convert to ticker, start, end format
+        if 'date' in universe_df.columns and 'ticker' in universe_df.columns:
+            # Group by ticker and get min/max dates
+            membership = []
+            for ticker in universe_df['ticker'].unique():
+                ticker_data = universe_df[universe_df['ticker'] == ticker]
+                membership.append({
+                    'ticker': ticker,
+                    'start': ticker_data['date'].min(),
+                    'end': ticker_data['date'].max()
+                })
+            universe_df = pd.DataFrame(membership)
+    else:
+        # Load CSV file
+        universe_df = pd.read_csv(universe_path)
+
+    # Convert dates to datetime if not already
     universe_df['start'] = pd.to_datetime(universe_df['start'])
     universe_df['end'] = pd.to_datetime(universe_df['end'])
 

@@ -1,0 +1,17 @@
+
+Table: Bootstrap Confidence Intervals Table
+
+            Model Original Sharpe Bootstrap Mean Bootstrap Std 95% CI Lower 95% CI Upper CI Width
+             LSTM          0.7076         0.7161        0.4408      -0.4579       1.6815   2.1393
+              HRP          0.4775         0.5107        0.4354      -0.5883       1.5506   2.1389
+      EqualWeight          0.4280         0.4282        0.4486      -0.6616       1.5626   2.2242
+    MeanReversion          0.4624         0.4419        0.4274      -0.6235       1.6783   2.3018
+MarketCapWeighted          0.5286         0.5473        0.4450      -0.6478       1.6118   2.2596
+         GAT-TMFG          0.5800         0.5964        0.4251      -0.4975       1.7164   2.2139
+          GAT-kNN          0.1638         0.1766        0.4331      -1.0876       1.2708   2.3584
+          GAT-MST          0.3529         0.3596        0.4243      -0.7076       1.4841   2.1917
+
+Note. CI = confidence interval; *** p < .001, ** p < .01, * p < .05.
+All statistical tests use Jobson-Korkie methodology with Memmel correction.
+Bootstrap confidence intervals based on 10,000 samples with bias correction.
+Sharpe ratios calculated using √252 annualization factor.

@@ -1,0 +1,133 @@
+2025-10-25 14:49:31,031 - __main__ - INFO - ================================================================================
+2025-10-25 14:49:31,031 - __main__ - INFO - MANUAL VERIFICATION: SAMPLE PIPELINE RUN
+2025-10-25 14:49:31,031 - __main__ - INFO - ================================================================================
+2025-10-25 14:49:31,053 - __main__ - INFO - Loaded universe calendar: 44522 snapshots
+2025-10-25 14:49:32,398 - __main__ - INFO - Built membership intervals: 808 tickers
+2025-10-25 14:49:32,400 - __main__ - INFO - Selected 50 tickers for sample run:
+2025-10-25 14:49:32,400 - __main__ - INFO -   - Active: 30
+2025-10-25 14:49:32,400 - __main__ - INFO -   - Historical: 20
+2025-10-25 14:49:32,400 - __main__ - INFO - ============================================================
+2025-10-25 14:49:32,400 - __main__ - INFO - PHASE 1: DATA SOURCE SELECTION
+2025-10-25 14:49:32,400 - __main__ - INFO - ============================================================
+2025-10-25 14:49:37,160 - __main__ - INFO - Using Stooq as primary source
+2025-10-25 14:49:37,160 - __main__ - INFO - ============================================================
+2025-10-25 14:49:37,160 - __main__ - INFO - PHASE 2: DATA COLLECTION (STOOQ)
+2025-10-25 14:49:37,160 - __main__ - INFO - ============================================================
+2025-10-25 14:49:37,160 - scripts.data_collection_pipeline - INFO - === Collecting data via stooq with per-ticker periods ===
+2025-10-25 14:49:37,163 - scripts.data_collection_pipeline - INFO - Prepared 50 ticker-period combinations
+2025-10-25 14:49:37,163 - src.data.collectors.stooq.StooqCollector - INFO - Collecting data for 50 ticker-period combinations (SEQUENTIAL)
+2025-10-25 14:53:14,861 - src.data.collectors.stooq.StooqCollector - INFO - Progress: 25/50 (50.0%) - 17 successful, 7 failed
+2025-10-25 14:56:11,276 - src.data.collectors.stooq.StooqCollector - INFO - Progress: 50/50 (100.0%) - 39 successful, 10 failed
+2025-10-25 14:56:15,774 - src.data.collectors.stooq.StooqCollector - INFO - Stooq collection completed: 40/50 tickers successful
+2025-10-25 14:56:15,774 - src.data.collectors.stooq.StooqCollector - WARNING - Failed tickers (10): CAB, CEB, CTLT, EV, FRT, JOY, SWI, ERI, IIVI, ENV
+2025-10-25 14:56:15,794 - src.data.collectors.stooq.StooqCollector - INFO - Built open DataFrame: 40 tickers × 2264 dates
+2025-10-25 14:56:15,804 - src.data.collectors.stooq.StooqCollector - INFO - Built high DataFrame: 40 tickers × 2264 dates
+2025-10-25 14:56:15,814 - src.data.collectors.stooq.StooqCollector - INFO - Built low DataFrame: 40 tickers × 2264 dates
+2025-10-25 14:56:15,825 - src.data.collectors.stooq.StooqCollector - INFO - Built close DataFrame: 40 tickers × 2264 dates
+2025-10-25 14:56:15,835 - src.data.collectors.stooq.StooqCollector - INFO - Built volume DataFrame: 40 tickers × 2264 dates
+2025-10-25 14:56:15,835 - scripts.data_collection_pipeline - INFO - Collection complete: 40 tickers collected
+2025-10-25 14:56:15,835 - scripts.data_collection_pipeline - INFO - Date range: 2016-01-04 00:00:00 to 2024-12-31 00:00:00
+2025-10-25 14:56:15,835 - __main__ - INFO - Collected data shape: (2264, 40)
+2025-10-25 14:56:15,835 - __main__ - INFO - Tickers collected: 40/50
+2025-10-25 14:56:15,835 - __main__ - INFO - ============================================================
+2025-10-25 14:56:15,835 - __main__ - INFO - VERIFYING DATE RANGES
+2025-10-25 14:56:15,836 - __main__ - INFO - ============================================================
+2025-10-25 14:56:15,863 - __main__ - INFO - Date range verification: 40/40 tickers passed
+2025-10-25 14:56:15,863 - __main__ - INFO - ============================================================
+2025-10-25 14:56:15,863 - __main__ - INFO - PHASE 3: GAP FILLING
+2025-10-25 14:56:15,863 - __main__ - INFO - ============================================================
+2025-10-25 14:56:15,916 - __main__ - INFO - Gap filling completed: 120 total gaps filled
+2025-10-25 14:56:15,916 - __main__ - INFO - ============================================================
+2025-10-25 14:56:15,916 - __main__ - INFO - PHASE 4: DATA QUALITY VALIDATION
+2025-10-25 14:56:15,916 - __main__ - INFO - ============================================================
+2025-10-25 14:56:15,976 - __main__ - INFO - Data quality score: 0.923
+2025-10-25 14:56:15,976 - __main__ - INFO - ============================================================
+2025-10-25 14:56:15,977 - __main__ - INFO - PHASE 5: SAVING SAMPLE RESULTS
+2025-10-25 14:56:15,977 - __main__ - INFO - ============================================================
+2025-10-25 14:56:16,033 - __main__ - INFO - ================================================================================
+2025-10-25 14:56:16,033 - __main__ - INFO - VERIFICATION SUMMARY
+2025-10-25 14:56:16,033 - __main__ - INFO - ================================================================================
+2025-10-25 14:56:16,033 - __main__ - INFO - Sample size: 50 tickers
+2025-10-25 14:56:16,033 - __main__ - INFO - Collected: 40 tickers (80.0%)
+2025-10-25 14:56:16,033 - __main__ - INFO - Data shape: (2264, 40)
+2025-10-25 14:56:16,033 - __main__ - INFO - Quality score: 0.923
+2025-10-25 14:56:16,033 - __main__ - INFO - Average coverage: 60.5%
+2025-10-25 14:56:16,033 - __main__ - INFO - Date verification: 40/40 passed
+2025-10-25 14:56:16,033 - __main__ - INFO - Execution time: 405.0s
+2025-10-25 14:56:16,033 - __main__ - INFO - ================================================================================
+2025-10-25 14:56:16,033 - __main__ - INFO - ✓ ALL MANUAL VERIFICATION CHECKS PASSED
+2025-10-25 14:56:16,033 - __main__ - INFO - ================================================================================
+2025-10-25 14:56:16,033 - __main__ - INFO - Results saved to: data/manual_verification_sample
+2025-10-26 13:16:41,601 - __main__ - INFO - ================================================================================
+2025-10-26 13:16:41,602 - __main__ - INFO - STARTING COMPLETE NEW PIPELINE IMPLEMENTATION
+2025-10-26 13:16:41,602 - __main__ - INFO - ================================================================================
+2025-10-26 13:16:41,602 - __main__ - INFO - Setting up pipeline configuration...
+2025-10-26 13:16:41,602 - __main__ - INFO - Initializing data processors...
+2025-10-26 13:16:41,602 - src.data.collectors.tiingo.TiingoCollector - INFO - TiingoCollector initialised successfully
+2025-10-26 13:16:41,602 - __main__ - INFO - Loading universe composition...
+2025-10-26 13:16:42,901 - __main__ - INFO - Loaded universe: 808 ticker-period combinations
+2025-10-26 13:16:42,901 - __main__ - INFO - Unique tickers: 808
+2025-10-26 13:16:42,902 - __main__ - INFO - ============================================================
+2025-10-26 13:16:42,902 - __main__ - INFO - PHASE 2: WATERFALL DATA COLLECTION
+2025-10-26 13:16:42,902 - __main__ - INFO - ============================================================
+2025-10-26 13:16:42,902 - __main__ - INFO - Target universe: 808 tickers
+2025-10-26 13:16:42,902 - __main__ - INFO - Collection strategy: Stooq → Tiingo → Polygon → YFinance (waterfall)
+2025-10-26 13:16:42,902 - __main__ - INFO - 
+2025-10-26 13:16:42,902 - __main__ - INFO - ============================================================
+2025-10-26 13:16:42,902 - __main__ - INFO - SOURCE 1/4: STOOQ
+2025-10-26 13:16:42,902 - __main__ - INFO - ============================================================
+2025-10-26 13:16:42,907 - __main__ - INFO - Attempting to collect 808 remaining tickers
+2025-10-26 13:16:42,907 - __main__ - INFO -   (808/808 = 100.0% of universe)
+2025-10-26 13:16:42,907 - __main__ - INFO - === Collecting data via stooq with per-ticker periods ===
+2025-10-26 13:16:42,916 - __main__ - INFO - Prepared 808 ticker-period combinations
+2025-10-26 13:16:42,916 - src.data.collectors.stooq.StooqCollector - INFO - Collecting data for 808 ticker-period combinations (SEQUENTIAL)
+2025-10-26 13:38:38,598 - __main__ - INFO - ================================================================================
+2025-10-26 13:38:38,598 - __main__ - INFO - STARTING COMPLETE NEW PIPELINE IMPLEMENTATION
+2025-10-26 13:38:38,598 - __main__ - INFO - ================================================================================
+2025-10-26 13:38:38,598 - __main__ - INFO - Setting up pipeline configuration...
+2025-10-26 13:38:38,598 - __main__ - INFO - Initializing data processors...
+2025-10-26 13:38:38,598 - src.data.collectors.tiingo.TiingoCollector - INFO - TiingoCollector initialised successfully
+2025-10-26 13:38:38,598 - __main__ - INFO - Loading universe composition...
+2025-10-26 13:38:39,980 - __main__ - INFO - Loaded universe: 808 ticker-period combinations
+2025-10-26 13:38:39,981 - __main__ - INFO - Unique tickers: 808
+2025-10-26 13:38:39,981 - __main__ - INFO - ============================================================
+2025-10-26 13:38:39,981 - __main__ - INFO - PHASE 2: WATERFALL DATA COLLECTION
+2025-10-26 13:38:39,981 - __main__ - INFO - ============================================================
+2025-10-26 13:38:39,981 - __main__ - INFO - Target universe: 808 tickers
+2025-10-26 13:38:39,981 - __main__ - INFO - Collection strategy: Stooq → Tiingo → Polygon → YFinance (waterfall)
+2025-10-26 13:38:39,981 - __main__ - INFO - 
+2025-10-26 13:38:39,981 - __main__ - INFO - ============================================================
+2025-10-26 13:38:39,981 - __main__ - INFO - SOURCE 1/4: STOOQ
+2025-10-26 13:38:39,981 - __main__ - INFO - ============================================================
+2025-10-26 13:38:39,981 - __main__ - INFO - Attempting to collect 808 remaining tickers
+2025-10-26 13:38:39,981 - __main__ - INFO -   (808/808 = 100.0% of universe)
+2025-10-26 13:38:39,981 - __main__ - INFO - === Collecting data via stooq with per-ticker periods ===
+2025-10-26 13:38:39,993 - __main__ - INFO - Prepared 808 ticker-period combinations
+2025-10-26 13:38:39,993 - src.data.collectors.stooq.StooqCollector - INFO - Collecting data for 808 ticker-period combinations (SEQUENTIAL)
+2025-10-26 13:46:35,714 - src.data.collectors.stooq.StooqCollector - INFO - Progress: 25/808 (3.1%) - 19 successful, 5 failed
+2025-10-26 18:22:34,370 - __main__ - INFO - ================================================================================
+2025-10-26 18:22:34,371 - __main__ - INFO - STARTING COMPLETE NEW PIPELINE IMPLEMENTATION
+2025-10-26 18:22:34,371 - __main__ - INFO - ================================================================================
+2025-10-26 18:22:34,371 - __main__ - INFO - ============================================================
+2025-10-26 18:22:34,371 - __main__ - INFO - PHASE 1: CONFIGURATION AND UNIVERSE LOADING
+2025-10-26 18:22:34,371 - __main__ - INFO - ============================================================
+2025-10-26 18:22:34,371 - __main__ - INFO - Setting up pipeline configuration...
+2025-10-26 18:22:34,371 - __main__ - INFO - Initializing data processors...
+2025-10-26 18:22:34,371 - src.data.collectors.tiingo.TiingoCollector - INFO - TiingoCollector initialised successfully
+2025-10-26 18:22:34,371 - __main__ - INFO - Loading universe composition...
+2025-10-26 18:22:35,742 - __main__ - INFO - Loaded universe: 808 ticker-period combinations
+2025-10-26 18:22:35,742 - __main__ - INFO - Unique tickers: 808
+2025-10-26 18:22:35,742 - __main__ - INFO - ============================================================
+2025-10-26 18:22:35,742 - __main__ - INFO - PHASE 2: WATERFALL DATA COLLECTION
+2025-10-26 18:22:35,742 - __main__ - INFO - ============================================================
+2025-10-26 18:22:35,742 - __main__ - INFO - Target universe: 808 tickers
+2025-10-26 18:22:35,742 - __main__ - INFO - Collection strategy: Stooq → Tiingo → Polygon → YFinance (waterfall)
+2025-10-26 18:22:35,742 - __main__ - INFO - 
+2025-10-26 18:22:35,742 - __main__ - INFO - ============================================================
+2025-10-26 18:22:35,742 - __main__ - INFO - SOURCE 1/4: STOOQ
+2025-10-26 18:22:35,742 - __main__ - INFO - ============================================================
+2025-10-26 18:22:35,743 - __main__ - INFO - Attempting to collect 808 remaining tickers
+2025-10-26 18:22:35,743 - __main__ - INFO -   (808/808 = 100.0% of universe)
+2025-10-26 18:22:35,743 - __main__ - INFO - === Collecting data via stooq with per-ticker periods ===
+2025-10-26 18:22:35,754 - __main__ - INFO - Prepared 808 ticker-period combinations
+2025-10-26 18:22:35,754 - src.data.collectors.stooq.StooqCollector - INFO - Collecting data for 808 ticker-period combinations (SEQUENTIAL)

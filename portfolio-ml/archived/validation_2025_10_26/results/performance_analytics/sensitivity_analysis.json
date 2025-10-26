@@ -1,0 +1,437 @@
+{
+  "parameter_sensitivity": {},
+  "market_regime_analysis": {
+    "LSTM": {
+      "low_volatility": {
+        "mean_return": 0.0034634713758145545,
+        "volatility": 0.031099148102355777,
+        "sharpe_ratio": 0.11136868972794131,
+        "max_drawdown": -0.025669286642894116,
+        "periods": 308
+      },
+      "normal_volatility": {
+        "mean_return": 0.019720730848157054,
+        "volatility": 0.041480916560133,
+        "sharpe_ratio": 0.47541695033591674,
+        "max_drawdown": -0.0774090690039013,
+        "periods": 586
+      },
+      "high_volatility": {
+        "mean_return": 0.07451370677038564,
+        "volatility": 0.0675045193607725,
+        "sharpe_ratio": 1.1038328615029924,
+        "max_drawdown": -0.05312955899348591,
+        "periods": 505
+      }
+    },
+    "HRP": {
+      "low_volatility": {
+        "mean_return": 0.04792951317015955,
+        "volatility": 0.05338268916053597,
+        "sharpe_ratio": 0.8978474843412767,
+        "max_drawdown": -0.031304516327667335,
+        "periods": 434
+      },
+      "normal_volatility": {
+        "mean_return": 0.10691611333741836,
+        "volatility": 0.08568249527368943,
+        "sharpe_ratio": 1.2478174567150961,
+        "max_drawdown": -0.08057643562908536,
+        "periods": 451
+      },
+      "high_volatility": {
+        "mean_return": 0.00669975763364357,
+        "volatility": 0.15239589868171785,
+        "sharpe_ratio": 0.043962847370559235,
+        "max_drawdown": -0.22976395984900705,
+        "periods": 514
+      }
+    },
+    "EqualWeight": {
+      "low_volatility": {
+        "mean_return": -0.05679997677141243,
+        "volatility": 0.03808418012470839,
+        "sharpe_ratio": -1.4914323108812717,
+        "max_drawdown": -0.09112030143734098,
+        "periods": 329
+      },
+      "normal_volatility": {
+        "mean_return": 0.007763685123786475,
+        "volatility": 0.05686640303707048,
+        "sharpe_ratio": 0.13652499031326862,
+        "max_drawdown": -0.10913642898785705,
+        "periods": 626
+      },
+      "high_volatility": {
+        "mean_return": 0.11906057847033075,
+        "volatility": 0.08792207692813779,
+        "sharpe_ratio": 1.3541602135677901,
+        "max_drawdown": -0.07343436846059129,
+        "periods": 444
+      }
+    },
+    "MeanReversion": {
+      "low_volatility": {
+        "mean_return": -0.060816635884531,
+        "volatility": 0.038025275029576526,
+        "sharpe_ratio": -1.599373991042197,
+        "max_drawdown": -0.0904130327304024,
+        "periods": 335
+      },
+      "normal_volatility": {
+        "mean_return": 0.012531919269157128,
+        "volatility": 0.05686047027980546,
+        "sharpe_ratio": 0.22039774218342967,
+        "max_drawdown": -0.11498692395790475,
+        "periods": 610
+      },
+      "high_volatility": {
+        "mean_return": 0.12372364638031029,
+        "volatility": 0.09193081296008646,
+        "sharpe_ratio": 1.3458343551691132,
+        "max_drawdown": -0.070342110945287,
+        "periods": 454
+      }
+    },
+    "MarketCapWeighted": {
+      "low_volatility": {
+        "mean_return": -0.042064849783822675,
+        "volatility": 0.05151572607018456,
+        "sharpe_ratio": -0.8165438593743958,
+        "max_drawdown": -0.0881998357405325,
+        "periods": 318
+      },
+      "normal_volatility": {
+        "mean_return": 0.042451090431214804,
+        "volatility": 0.0742196131252532,
+        "sharpe_ratio": 0.5719659351979408,
+        "max_drawdown": -0.09697127360068697,
+        "periods": 674
+      },
+      "high_volatility": {
+        "mean_return": 0.11403825863840171,
+        "volatility": 0.11270715338450976,
+        "sharpe_ratio": 1.0118102996475369,
+        "max_drawdown": -0.08009660231657817,
+        "periods": 407
+      }
+    },
+    "GAT-TMFG": {
+      "low_volatility": {
+        "mean_return": -0.06077595452361889,
+        "volatility": 0.061790764818941225,
+        "sharpe_ratio": -0.9835766671881159,
+        "max_drawdown": -0.11701614905923503,
+        "periods": 378
+      },
+      "normal_volatility": {
+        "mean_return": 0.07414134547915141,
+        "volatility": 0.09894189662589797,
+        "sharpe_ratio": 0.7493422706407367,
+        "max_drawdown": -0.14187385016585152,
+        "periods": 671
+      },
+      "high_volatility": {
+        "mean_return": 0.17359902995917903,
+        "volatility": 0.15369355496046497,
+        "sharpe_ratio": 1.1295140515412923,
+        "max_drawdown": -0.11182210676663484,
+        "periods": 350
+      }
+    },
+    "GAT-kNN": {
+      "low_volatility": {
+        "mean_return": -0.10297863789007929,
+        "volatility": 0.07510301448553977,
+        "sharpe_ratio": -1.3711651735351669,
+        "max_drawdown": -0.18150096700875132,
+        "periods": 411
+      },
+      "normal_volatility": {
+        "mean_return": 0.02927564872081728,
+        "volatility": 0.1213935133866701,
+        "sharpe_ratio": 0.2411632047222052,
+        "max_drawdown": -0.2144526670229114,
+        "periods": 631
+      },
+      "high_volatility": {
+        "mean_return": 0.16694098388428477,
+        "volatility": 0.2508413222692022,
+        "sharpe_ratio": 0.6655242540346848,
+        "max_drawdown": -0.1970387304046679,
+        "periods": 357
+      }
+    },
+    "GAT-MST": {
+      "low_volatility": {
+        "mean_return": 0.03962606051588215,
+        "volatility": 0.08210055552986538,
+        "sharpe_ratio": 0.482652769644994,
+        "max_drawdown": -0.0894403686253969,
+        "periods": 375
+      },
+      "normal_volatility": {
+        "mean_return": 0.06155021646331187,
+        "volatility": 0.1030608675361311,
+        "sharpe_ratio": 0.5972219906040825,
+        "max_drawdown": -0.11132815176314029,
+        "periods": 575
+      },
+      "high_volatility": {
+        "mean_return": 0.02848890991409758,
+        "volatility": 0.17802147772175234,
+        "sharpe_ratio": 0.16003074616999735,
+        "max_drawdown": -0.33123327358947013,
+        "periods": 449
+      }
+    }
+  },
+  "transaction_cost_sensitivity": {
+    "LSTM": {
+      "5_bps": {
+        "gross_annual_return": 2.54380183607727,
+        "net_annual_return": 2.54320183607727,
+        "cost_impact": 0.0005999999999999339,
+        "gross_sharpe": 0,
+        "net_sharpe": 0
+      },
+      "10_bps": {
+        "gross_annual_return": 2.54380183607727,
+        "net_annual_return": 2.54260183607727,
+        "cost_impact": 0.0011999999999998678,
+        "gross_sharpe": 0,
+        "net_sharpe": 0
+      },
+      "15_bps": {
+        "gross_annual_return": 2.54380183607727,
+        "net_annual_return": 2.5420018360772696,
+        "cost_impact": 0.0018000000000001348,
+        "gross_sharpe": 0,
+        "net_sharpe": 0
+      },
+      "20_bps": {
+        "gross_annual_return": 2.54380183607727,
+        "net_annual_return": 2.5414018360772697,
+        "cost_impact": 0.0024000000000000687,
+        "gross_sharpe": 0,
+        "net_sharpe": 0
+      }
+    },
+    "HRP": {
+      "5_bps": {
+        "gross_annual_return": 3.4818361786738343,
+        "net_annual_return": 3.4812361786738344,
+        "cost_impact": 0.0005999999999999339,
+        "gross_sharpe": 0,
+        "net_sharpe": 0
+      },
+      "10_bps": {
+        "gross_annual_return": 3.4818361786738343,
+        "net_annual_return": 3.4806361786738345,
+        "cost_impact": 0.0011999999999998678,
+        "gross_sharpe": 0,
+        "net_sharpe": 0
+      },
+      "15_bps": {
+        "gross_annual_return": 3.4818361786738343,
+        "net_annual_return": 3.4800361786738345,
+        "cost_impact": 0.0017999999999998018,
+        "gross_sharpe": 0,
+        "net_sharpe": 0
+      },
+      "20_bps": {
+        "gross_annual_return": 3.4818361786738343,
+        "net_annual_return": 3.4794361786738346,
+        "cost_impact": 0.0023999999999997357,
+        "gross_sharpe": 0,
+        "net_sharpe": 0
+      }
+    },
+    "EqualWeight": {
+      "5_bps": {
+        "gross_annual_return": 1.8461133691294913,
+        "net_annual_return": 1.8455133691294914,
+        "cost_impact": 0.0005999999999999339,
+        "gross_sharpe": 0,
+        "net_sharpe": 0
+      },
+      "10_bps": {
+        "gross_annual_return": 1.8461133691294913,
+        "net_annual_return": 1.8449133691294914,
+        "cost_impact": 0.0011999999999998678,
+        "gross_sharpe": 0,
+        "net_sharpe": 0
+      },
+      "15_bps": {
+        "gross_annual_return": 1.8461133691294913,
+        "net_annual_return": 1.844313369129491,
+        "cost_impact": 0.0018000000000001348,
+        "gross_sharpe": 0,
+        "net_sharpe": 0
+      },
+      "20_bps": {
+        "gross_annual_return": 1.8461133691294913,
+        "net_annual_return": 1.8437133691294911,
+        "cost_impact": 0.0024000000000000687,
+        "gross_sharpe": 0,
+        "net_sharpe": 0
+      }
+    },
+    "MeanReversion": {
+      "5_bps": {
+        "gross_annual_return": 2.080199353698557,
+        "net_annual_return": 2.079599353698557,
+        "cost_impact": 0.0005999999999999339,
+        "gross_sharpe": 0,
+        "net_sharpe": 0
+      },
+      "10_bps": {
+        "gross_annual_return": 2.080199353698557,
+        "net_annual_return": 2.078999353698557,
+        "cost_impact": 0.0011999999999998678,
+        "gross_sharpe": 0,
+        "net_sharpe": 0
+      },
+      "15_bps": {
+        "gross_annual_return": 2.080199353698557,
+        "net_annual_return": 2.0783993536985568,
+        "cost_impact": 0.0018000000000001348,
+        "gross_sharpe": 0,
+        "net_sharpe": 0
+      },
+      "20_bps": {
+        "gross_annual_return": 2.080199353698557,
+        "net_annual_return": 2.077799353698557,
+        "cost_impact": 0.0024000000000000687,
+        "gross_sharpe": 0,
+        "net_sharpe": 0
+      }
+    },
+    "MarketCapWeighted": {
+      "5_bps": {
+        "gross_annual_return": 3.0327905251763987,
+        "net_annual_return": 3.0321905251763988,
+        "cost_impact": 0.0005999999999999339,
+        "gross_sharpe": 0,
+        "net_sharpe": 0
+      },
+      "10_bps": {
+        "gross_annual_return": 3.0327905251763987,
+        "net_annual_return": 3.031590525176399,
+        "cost_impact": 0.0011999999999998678,
+        "gross_sharpe": 0,
+        "net_sharpe": 0
+      },
+      "15_bps": {
+        "gross_annual_return": 3.0327905251763987,
+        "net_annual_return": 3.030990525176399,
+        "cost_impact": 0.0017999999999998018,
+        "gross_sharpe": 0,
+        "net_sharpe": 0
+      },
+      "20_bps": {
+        "gross_annual_return": 3.0327905251763987,
+        "net_annual_return": 3.030390525176399,
+        "cost_impact": 0.0023999999999997357,
+        "gross_sharpe": 0,
+        "net_sharpe": 0
+      }
+    },
+    "GAT-TMFG": {
+      "5_bps": {
+        "gross_annual_return": 4.444608468467591,
+        "net_annual_return": 4.44400846846759,
+        "cost_impact": 0.0005999999999999339,
+        "gross_sharpe": 0,
+        "net_sharpe": 0
+      },
+      "10_bps": {
+        "gross_annual_return": 4.444608468467591,
+        "net_annual_return": 4.443408468467591,
+        "cost_impact": 0.0011999999999998678,
+        "gross_sharpe": 0,
+        "net_sharpe": 0
+      },
+      "15_bps": {
+        "gross_annual_return": 4.444608468467591,
+        "net_annual_return": 4.442808468467591,
+        "cost_impact": 0.0017999999999998018,
+        "gross_sharpe": 0,
+        "net_sharpe": 0
+      },
+      "20_bps": {
+        "gross_annual_return": 4.444608468467591,
+        "net_annual_return": 4.442208468467591,
+        "cost_impact": 0.0023999999999997357,
+        "gross_sharpe": 0,
+        "net_sharpe": 0
+      }
+    },
+    "GAT-kNN": {
+      "5_bps": {
+        "gross_annual_return": 0.9274017130020846,
+        "net_annual_return": 0.9268017130020847,
+        "cost_impact": 0.0005999999999999339,
+        "gross_sharpe": 0,
+        "net_sharpe": 0
+      },
+      "10_bps": {
+        "gross_annual_return": 0.9274017130020846,
+        "net_annual_return": 0.9262017130020845,
+        "cost_impact": 0.0012000000000000344,
+        "gross_sharpe": 0,
+        "net_sharpe": 0
+      },
+      "15_bps": {
+        "gross_annual_return": 0.9274017130020846,
+        "net_annual_return": 0.9256017130020846,
+        "cost_impact": 0.0017999999999999683,
+        "gross_sharpe": 0,
+        "net_sharpe": 0
+      },
+      "20_bps": {
+        "gross_annual_return": 0.9274017130020846,
+        "net_annual_return": 0.9250017130020846,
+        "cost_impact": 0.0024000000000000687,
+        "gross_sharpe": 0,
+        "net_sharpe": 0
+      }
+    },
+    "GAT-MST": {
+      "5_bps": {
+        "gross_annual_return": 2.728668606061298,
+        "net_annual_return": 2.728068606061298,
+        "cost_impact": 0.0005999999999999339,
+        "gross_sharpe": 0,
+        "net_sharpe": 0
+      },
+      "10_bps": {
+        "gross_annual_return": 2.728668606061298,
+        "net_annual_return": 2.727468606061298,
+        "cost_impact": 0.0011999999999998678,
+        "gross_sharpe": 0,
+        "net_sharpe": 0
+      },
+      "15_bps": {
+        "gross_annual_return": 2.728668606061298,
+        "net_annual_return": 2.7268686060612977,
+        "cost_impact": 0.0018000000000001348,
+        "gross_sharpe": 0,
+        "net_sharpe": 0
+      },
+      "20_bps": {
+        "gross_annual_return": 2.728668606061298,
+        "net_annual_return": 2.7262686060612977,
+        "cost_impact": 0.0024000000000000687,
+        "gross_sharpe": 0,
+        "net_sharpe": 0
+      }
+    }
+  },
+  "universe_construction_robustness": {
+    "methodology": "Placeholder for universe construction sensitivity",
+    "data_source_sensitivity": "Would analyze Stooq vs Yahoo Finance impact",
+    "universe_size_sensitivity": "Would analyze S&P 400 vs expanded universe",
+    "rebalancing_frequency_sensitivity": "Would analyze monthly vs quarterly rebalancing"
+  }
+}

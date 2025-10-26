@@ -136,14 +136,10 @@ portfolio-ml/
 │   ├── run_comprehensive_backtest.py    # Training & backtesting
 │   └── run_performance_analytics.py     # Statistical analysis
 │
-├── experiments/
-│   └── run_experiments.py               # Experimental model variations
-│
 ├── configs/
 │   ├── data/            # Data pipeline configurations
 │   ├── models/          # Model-specific parameters
-│   ├── evaluation/      # Backtesting configurations
-│   └── experiments/     # Experiment workflows
+│   └── evaluation/      # Backtesting configurations
 │
 └── legacy_scripts/      # Historical reference (18 scripts)
 ```

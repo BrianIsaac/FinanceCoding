@@ -150,7 +150,8 @@ def load_market_data(config: dict[str, Any] | DictConfig) -> dict[str, pd.DataFr
 
     # Load returns data from parquet files (data is already daily returns)
     returns_path = Path("data/final_new_pipeline/returns_daily_final.parquet")
-    universe_path = Path("data/processed/universe_membership_clean.csv")
+    # Use parquet file for universe membership (supports both parquet and CSV)
+    universe_path = Path("data/processed/universe_calendar_midcap400.parquet")
 
     if not returns_path.exists():
         raise FileNotFoundError(f"Returns data not found at {returns_path}")

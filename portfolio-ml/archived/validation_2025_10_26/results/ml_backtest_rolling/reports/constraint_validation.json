@@ -1,0 +1,55 @@
+{
+  "model_violations": {
+    "HRP": {
+      "long_only_violations": 0,
+      "turnover_violations": 55,
+      "position_limit_violations": 69,
+      "weight_sum_violations": 0
+    },
+    "LSTM": {
+      "long_only_violations": 0,
+      "turnover_violations": 69,
+      "position_limit_violations": 22,
+      "weight_sum_violations": 0
+    },
+    "GAT-MST": {
+      "long_only_violations": 0,
+      "turnover_violations": 69,
+      "position_limit_violations": 64,
+      "weight_sum_violations": 0
+    },
+    "GAT-kNN": {
+      "long_only_violations": 0,
+      "turnover_violations": 69,
+      "position_limit_violations": 63,
+      "weight_sum_violations": 0
+    },
+    "GAT-TMFG": {
+      "long_only_violations": 0,
+      "turnover_violations": 69,
+      "position_limit_violations": 33,
+      "weight_sum_violations": 0
+    },
+    "EqualWeight": {
+      "long_only_violations": 0,
+      "turnover_violations": 0,
+      "position_limit_violations": 0,
+      "weight_sum_violations": 0
+    },
+    "MarketCapWeighted": {
+      "long_only_violations": 0,
+      "turnover_violations": 4,
+      "position_limit_violations": 0,
+      "weight_sum_violations": 0
+    },
+    "MeanReversion": {
+      "long_only_violations": 0,
+      "turnover_violations": 0,
+      "position_limit_violations": 0,
+      "weight_sum_violations": 0
+    }
+  },
+  "total_violations": 586,
+  "models_with_violations": 6,
+  "validation_passed": false
+}

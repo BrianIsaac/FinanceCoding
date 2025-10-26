@@ -1,0 +1,10 @@
+{
+  "rolling_windows_results": {},
+  "outperformance_analysis": {},
+  "persistence_analysis": {},
+  "analysis_parameters": {
+    "window_months": 12,
+    "step_months": 3,
+    "total_windows_analyzed": 0
+  }
+}
