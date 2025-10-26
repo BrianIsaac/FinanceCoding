@@ -35,6 +35,8 @@ from omegaconf import DictConfig, OmegaConf
 # Add project root to path
 sys.path.append(str(Path(__file__).parent.parent))
 
+logger = logging.getLogger(__name__)
+
 from src.evaluation.backtest.rolling_engine import RollingBacktestConfig, RollingBacktestEngine
 
 # Import academic reporting and performance metrics with uncertainty
@@ -89,7 +91,6 @@ logging.basicConfig(
         logging.StreamHandler(),
     ],
 )
-logger = logging.getLogger(__name__)
 
 
 @dataclass

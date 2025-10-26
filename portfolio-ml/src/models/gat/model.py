@@ -397,7 +397,9 @@ class GATPortfolioModel(PortfolioModel):
                                 ).unsqueeze(0)  # [1, n_assets]
 
                                 # Always calculate correlation matrix for loss functions
-                                corr = training_window.corr()
+                                # Use historical returns up to current date
+                                hist_returns = returns.loc[:date, universe].tail(min(252, len(returns.loc[:date])))
+                                corr = hist_returns.corr()
                                 correlation_matrix = torch.tensor(
                                     corr.values, dtype=torch.float32, device=self.device
                                 )
@@ -436,7 +438,9 @@ class GATPortfolioModel(PortfolioModel):
                             ).unsqueeze(0)  # [1, n_assets]
 
                             # Always calculate correlation matrix for loss functions
-                            corr = training_window.corr()
+                            # Use historical returns up to current date
+                            hist_returns = returns.loc[:date, universe].tail(min(252, len(returns.loc[:date])))
+                            corr = hist_returns.corr()
                             correlation_matrix = torch.tensor(
                                 corr.values, dtype=torch.float32, device=self.device
                             )

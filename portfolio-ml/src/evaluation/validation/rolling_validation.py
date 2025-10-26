@@ -922,7 +922,7 @@ class TemporalIntegrityMonitor:
                     validation_result = self.flexible_validator.validate_with_confidence(
                         data=dummy_data,
                         universe=universe_estimate,
-                        context={"split_index": split_idx}
+                        context={}
                     )
 
                     if not validation_result.can_proceed:
