@@ -45,6 +45,7 @@ from src.config.data import CollectorConfig, UniverseConfig, ValidationConfig  #
 from src.data.collectors.polygon import PolygonCollector  # noqa: E402
 from src.data.collectors.stooq import StooqCollector  # noqa: E402
 from src.data.collectors.tiingo import TiingoCollector  # noqa: E402
+from src.data.collectors.wikipedia import WikipediaCollector  # noqa: E402
 from src.data.collectors.yfinance import YFinanceCollector  # noqa: E402
 from src.data.processors.data_quality_validator import DataQualityValidator  # noqa: E402
 from src.data.processors.gap_filling import GapFiller  # noqa: E402
@@ -187,6 +188,14 @@ def main():
         source_name="yfinance", rate_limit=5.0, timeout=10, retry_attempts=3, retry_delay=1.0
     )
 
+    wiki_config = CollectorConfig(
+        source_name="wikipedia",
+        rate_limit=1.0,  # Conservative: 1 request per second
+        timeout=30,  # Longer timeout for HTML parsing
+        retry_attempts=3,
+        retry_delay=2.0,
+    )
+
     validation_config = ValidationConfig(
         missing_data_threshold=0.10,
         price_change_threshold=0.50,
@@ -204,6 +213,7 @@ def main():
     tiingo_collector = TiingoCollector(tiingo_config)
     polygon_collector = PolygonCollector(polygon_config)
     yfinance_collector = YFinanceCollector(yfinance_config)
+    wiki_collector = WikipediaCollector(wiki_config)
     gap_filler = GapFiller(validation_config)
     quality_validator = DataQualityValidator(validation_config)
 
@@ -247,6 +257,7 @@ def main():
         ("Tiingo", tiingo_collector),
         ("Polygon", polygon_collector),
         ("YFinance", yfinance_collector),
+        ("Wikipedia", wiki_collector),
     ]
 
     # Track collection results across all sources
