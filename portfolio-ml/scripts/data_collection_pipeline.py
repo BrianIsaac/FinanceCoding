@@ -620,6 +620,15 @@ def main(cfg: DictConfig) -> None:
     logger.info(f"  Non-null values: {combined_prices.notna().sum().sum():,}")
     logger.info("")
 
+    # Save raw combined data before gap filling for EDA
+    raw_output_dir = Path(cfg.output_dir) / "raw"
+    raw_output_dir.mkdir(parents=True, exist_ok=True)
+    logger.info(f"Saving raw combined data to {raw_output_dir}...")
+    combined_prices.to_parquet(raw_output_dir / "prices_raw.parquet", compression="gzip")
+    combined_volumes.to_parquet(raw_output_dir / "volumes_raw.parquet", compression="gzip")
+    logger.info("Raw data saved successfully")
+    logger.info("")
+
     logger.info("Collection breakdown by source:")
     total_collection_time = sum(source_collection_time.values())
     for source_name, count in collection_stats.items():
@@ -689,6 +698,17 @@ def main(cfg: DictConfig) -> None:
 
     total_filled = sum(stats["filled"] for stats in fill_stats.values())
     logger.info(f"Gap filling completed: {total_filled} total gaps filled across all tickers")
+
+    # Save gap filling statistics for EDA
+    logger.info(f"Saving gap fill statistics to {raw_output_dir}...")
+    fill_stats_df = pd.DataFrame(fill_stats).T
+    fill_stats_df.to_parquet(raw_output_dir / "gap_fill_stats.parquet", compression="gzip")
+
+    # Save source mapping for quality analysis
+    source_map_df = pd.DataFrame(list(source_map.items()), columns=["ticker", "source"])
+    source_map_df.to_parquet(raw_output_dir / "source_mapping.parquet", compression="gzip")
+    logger.info("Metadata saved successfully")
+    logger.info("")
 
     # Calculate and log per-ticker coverage statistics
     logger.info("=" * 60)
