@@ -469,6 +469,15 @@ def main(cfg: DictConfig) -> None:
     # Convert string dates to datetime for membership mask compatibility
     membership_df['start'] = pd.to_datetime(membership_df['start'])
     membership_df['end'] = pd.to_datetime(membership_df['end'])
+
+    # Fill NaT end dates for active tickers (still in index) with global end date
+    # This ensures membership mask comparisons work correctly for active tickers
+    global_end_date = pd.to_datetime(cfg.end_date)
+    nat_count = membership_df['end'].isna().sum()
+    if nat_count > 0:
+        logger.info(f"Found {nat_count} active tickers with no end date - setting to global end: {global_end_date}")
+        membership_df['end'] = membership_df['end'].fillna(global_end_date)
+
     logger.info("Converted membership dates to datetime format for gap filling")
 
     # Extract ticker list for backward compatibility (will be replaced in later phases)
