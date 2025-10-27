@@ -36,6 +36,10 @@ class YFinanceCollector:
         self.config = config
         self.logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}")
 
+        # YFinance now uses curl_cffi sessions internally (v0.2.58+)
+        # No need to create custom session - let yfinance manage it
+        self.logger.info(f"YFinanceCollector initialised with timeout={self.config.timeout}s")
+
     def _yahoo_symbol_map(self, ticker: str) -> str:
         """Map US ticker to Yahoo Finance symbol format.
 
@@ -98,6 +102,7 @@ class YFinanceCollector:
                     progress=False,
                     group_by="ticker",
                     threads=True,
+                    timeout=self.config.timeout,
                 )
 
                 # Handle multi-ticker vs single-ticker response format
@@ -443,7 +448,7 @@ class YFinanceCollector:
 
             # Use yfinance to download data
             stock = yf.Ticker(symbol)
-            df = stock.history(start=start_date, end=end_date, auto_adjust=True)
+            df = stock.history(start=start_date, end=end_date, auto_adjust=True, timeout=self.config.timeout)
 
             if df.empty:
                 return None

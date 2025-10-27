@@ -3,7 +3,7 @@
 Data Collection Pipeline with Waterfall Fallback Strategy
 
 Collects S&P MidCap 400 historical data using a waterfall approach across four
-data sources (Stooq → Tiingo → Polygon → YFinance), where each source fills
+data sources (Tiingo → Polygon → Stooq → YFinance), where each source fills
 only the gaps left by previous sources. Respects per-ticker membership periods
 to avoid collecting unnecessary historical data.
 
@@ -17,6 +17,7 @@ Architecture:
 7. Save final datasets (prices, volumes, returns)
 """
 
+import json
 import logging
 import sys
 import time
@@ -243,6 +244,147 @@ def collect_single_ticker_approach(
     return prices_df, volumes_df, collected_tickers
 
 
+def collect_single_ticker_waterfall(
+    ticker: str,
+    membership_period: dict[str, str],
+    sources: list[tuple[str, any]],
+    global_start: str = "2010-01-01",
+    global_end: str = "2024-12-31",
+) -> tuple[pd.Series | None, pd.Series | None, str | None]:
+    """Try collecting a single ticker from multiple sources in priority order.
+
+    Args:
+        ticker: Ticker symbol to collect
+        membership_period: Dict with 'start' and 'end' dates for this ticker
+        sources: List of (source_name, collector) tuples in priority order
+        global_start: Fallback start date
+        global_end: Fallback end date
+
+    Returns:
+        Tuple of (price_series, volume_series, successful_source_name)
+        Returns (None, None, None) if all sources fail
+    """
+    start = membership_period.get("start", global_start)
+    end = membership_period.get("end", global_end)
+
+    ticker_periods = [{"ticker": ticker, "start": start, "end": end}]
+
+    for source_name, collector in sources:
+        # Skip Polygon if no API key
+        if source_name == "Polygon" and not collector.api_key:
+            continue
+
+        try:
+            # Call appropriate collector method
+            if collector.config.source_name in ["stooq", "tiingo", "polygon"]:
+                ohlcv_data = collector.collect_ohlcv_data(ticker_periods)
+                prices_df = ohlcv_data["close"]
+                volumes_df = ohlcv_data["volume"]
+            elif collector.config.source_name == "yfinance":
+                prices_df, volumes_df = collector.download_with_ticker_periods(ticker_periods)
+            else:
+                continue
+
+            # Check if we got data
+            if not prices_df.empty and ticker in prices_df.columns:
+                return (
+                    prices_df[ticker],
+                    volumes_df[ticker] if ticker in volumes_df.columns else None,
+                    source_name,
+                )
+
+        except Exception as e:
+            logger.debug(f"  {source_name} failed for {ticker}: {e}")
+            continue
+
+    return None, None, None
+
+
+def save_checkpoint(
+    checkpoint_path: Path,
+    collected_prices: dict[str, pd.Series],
+    collected_volumes: dict[str, pd.Series],
+    source_map: dict[str, str],
+    processed_tickers: list[str],
+) -> None:
+    """Save collection progress to checkpoint file.
+
+    Args:
+        checkpoint_path: Path to checkpoint JSON file
+        collected_prices: Dict of {ticker: price_series}
+        collected_volumes: Dict of {ticker: volume_series}
+        source_map: Dict of {ticker: source_name}
+        processed_tickers: List of all processed tickers (including failures)
+    """
+    checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+
+    checkpoint_data = {
+        "timestamp": pd.Timestamp.now().isoformat(),
+        "processed_tickers": processed_tickers,
+        "successful_tickers": list(collected_prices.keys()),
+        "source_map": source_map,
+        "total_processed": len(processed_tickers),
+        "total_successful": len(collected_prices),
+    }
+
+    # Save checkpoint metadata
+    with open(checkpoint_path, "w") as f:
+        json.dump(checkpoint_data, f, indent=2)
+
+    # Save price and volume data as separate parquet files
+    if collected_prices:
+        prices_df = pd.DataFrame(collected_prices)
+        prices_df.to_parquet(checkpoint_path.parent / "checkpoint_prices.parquet")
+
+    if collected_volumes:
+        volumes_df = pd.DataFrame(collected_volumes)
+        volumes_df.to_parquet(checkpoint_path.parent / "checkpoint_volumes.parquet")
+
+    logger.info(
+        f"Checkpoint saved: {len(processed_tickers)} processed, {len(collected_prices)} successful"
+    )
+
+
+def load_checkpoint(
+    checkpoint_path: Path,
+) -> tuple[dict[str, pd.Series], dict[str, pd.Series], dict[str, str], list[str]]:
+    """Load collection progress from checkpoint file.
+
+    Args:
+        checkpoint_path: Path to checkpoint JSON file
+
+    Returns:
+        Tuple of (collected_prices, collected_volumes, source_map, processed_tickers)
+    """
+    if not checkpoint_path.exists():
+        return {}, {}, {}, []
+
+    # Load checkpoint metadata
+    with open(checkpoint_path, "r") as f:
+        checkpoint_data = json.load(f)
+
+    processed_tickers = checkpoint_data.get("processed_tickers", [])
+    source_map = checkpoint_data.get("source_map", {})
+
+    # Load price and volume data
+    collected_prices = {}
+    collected_volumes = {}
+
+    prices_path = checkpoint_path.parent / "checkpoint_prices.parquet"
+    if prices_path.exists():
+        prices_df = pd.read_parquet(prices_path)
+        collected_prices = {col: prices_df[col] for col in prices_df.columns}
+
+    volumes_path = checkpoint_path.parent / "checkpoint_volumes.parquet"
+    if volumes_path.exists():
+        volumes_df = pd.read_parquet(volumes_path)
+        collected_volumes = {col: volumes_df[col] for col in volumes_df.columns}
+
+    logger.info(f"Checkpoint loaded: {len(processed_tickers)} previously processed")
+
+    return collected_prices, collected_volumes, source_map, processed_tickers
+
+
 @hydra.main(
     version_base=None,
     config_path="../configs/data_collection",
@@ -325,12 +467,14 @@ def main(cfg: DictConfig) -> None:
     # Extract ticker list for backward compatibility (will be replaced in later phases)
     all_tickers = sorted(membership_df["ticker"].unique())
 
-    # New unified implementation
+    # New per-ticker waterfall implementation
     logger.info("=" * 60)
-    logger.info("PHASE 2: WATERFALL DATA COLLECTION")
+    logger.info("PHASE 2: PER-TICKER WATERFALL DATA COLLECTION")
     logger.info("=" * 60)
     logger.info(f"Target universe: {len(all_tickers)} tickers")
-    logger.info("Collection strategy: Stooq → Tiingo → Polygon → YFinance (waterfall)")
+    logger.info(
+        "Collection strategy: Try all sources per ticker (Stooq → Tiingo → Polygon → YFinance)"
+    )
     logger.info("")
 
     # Define collection sources in priority order
@@ -339,142 +483,132 @@ def main(cfg: DictConfig) -> None:
         ("Tiingo", tiingo_collector),
         ("Polygon", polygon_collector),
         ("YFinance", yfinance_collector),
-        ("Wikipedia", wiki_collector),
     ]
 
-    # Track collection results across all sources
-    all_prices_list = []
-    all_volumes_list = []
-    collected_tickers = set()
-    collection_stats = {}
-    source_collection_time = {}
+    # Setup checkpoint
+    checkpoint_dir = Path("data/checkpoints")
+    checkpoint_path = checkpoint_dir / "collection_checkpoint.json"
 
-    # Start with full universe
-    remaining_tickers = set(all_tickers)
-    initial_ticker_count = len(all_tickers)
+    # Load existing checkpoint if available
+    collected_prices, collected_volumes, source_map, processed_tickers = load_checkpoint(
+        checkpoint_path
+    )
 
-    for source_idx, (source_name, collector) in enumerate(sources, 1):
-        logger.info("=" * 60)
-        logger.info(f"SOURCE {source_idx}/4: {source_name.upper()}")
-        logger.info("=" * 60)
+    if processed_tickers:
+        logger.info(f"Resuming from checkpoint: {len(processed_tickers)} already processed")
+        logger.info(f"  Successful: {len(collected_prices)}")
+        logger.info(f"  Failed: {len(processed_tickers) - len(collected_prices)}")
 
-        # Skip if no tickers remaining
-        if not remaining_tickers:
-            logger.info(f"✓ All {initial_ticker_count} tickers already collected")
-            logger.info(f"  Skipping {source_name}")
-            collection_stats[source_name] = 0
+    # Track statistics
+    collection_stats = {name: 0 for name, _ in sources}
+    failed_tickers = []
+
+    # Filter to unprocessed tickers
+    remaining_tickers = [t for t in all_tickers if t not in processed_tickers]
+    total_tickers = len(all_tickers)
+
+    logger.info(f"Tickers to process: {len(remaining_tickers)}/{total_tickers}")
+    logger.info("")
+
+    # Process each ticker through waterfall
+    start_time = time.time()
+    checkpoint_interval = 10  # Save every 10 tickers
+
+    for idx, ticker in enumerate(remaining_tickers, start=len(processed_tickers) + 1):
+        # Get membership period for this ticker
+        ticker_membership = membership_df[membership_df["ticker"] == ticker]
+        if ticker_membership.empty:
+            logger.warning(f"[{idx}/{total_tickers}] {ticker}: No membership data, skipping")
+            processed_tickers.append(ticker)
+            failed_tickers.append(ticker)
             continue
 
-        # Skip Polygon if no API key
-        if source_name == "Polygon" and not collector.api_key:
-            logger.info("⊘ Polygon API key not available - skipping")
-            collection_stats[source_name] = 0
-            continue
+        membership_period = {
+            "start": ticker_membership.iloc[0]["start"],
+            "end": ticker_membership.iloc[0]["end"],
+        }
 
-        # Filter membership to remaining tickers only
-        remaining_membership = membership_df[membership_df["ticker"].isin(remaining_tickers)]
+        logger.info(f"[{idx}/{total_tickers}] Processing {ticker}...")
 
-        logger.info(f"Attempting to collect {len(remaining_tickers)} remaining tickers")
-        logger.info(
-            f"  ({len(remaining_tickers)}/{initial_ticker_count} = "
-            f"{len(remaining_tickers) / initial_ticker_count * 100:.1f}% of universe)"
+        # Try waterfall collection
+        price_series, volume_series, source = collect_single_ticker_waterfall(
+            ticker, membership_period, sources
         )
 
-        # Track collection time
-        source_start_time = time.time()
+        if price_series is not None:
+            collected_prices[ticker] = price_series
+            if volume_series is not None:
+                collected_volumes[ticker] = volume_series
+            source_map[ticker] = source
+            collection_stats[source] += 1
+            logger.info(f"  ✓ Success via {source}")
+        else:
+            failed_tickers.append(ticker)
+            logger.info(f"  ✗ Failed: All sources exhausted")
 
-        try:
-            # Collect data for remaining tickers
-            prices, volumes, collected = collect_single_ticker_approach(
-                collector, remaining_membership
+        processed_tickers.append(ticker)
+
+        # Save checkpoint periodically
+        if idx % checkpoint_interval == 0 or idx == total_tickers:
+            save_checkpoint(
+                checkpoint_path,
+                collected_prices,
+                collected_volumes,
+                source_map,
+                processed_tickers,
             )
 
-            source_elapsed = time.time() - source_start_time
-            source_collection_time[source_name] = source_elapsed
+            # Progress report
+            elapsed = time.time() - start_time
+            rate = idx / elapsed if elapsed > 0 else 0
+            remaining = total_tickers - idx
+            eta_seconds = remaining / rate if rate > 0 else 0
 
-            if not prices.empty:
-                # Log successful collection details
-                logger.info(f"✓ {source_name} collection successful:")
-                logger.info(f"  Tickers collected: {len(collected)}")
-                logger.info(
-                    f"  Coverage: {len(collected)}/{len(remaining_tickers)} "
-                    f"({len(collected) / len(remaining_tickers) * 100:.1f}% of remaining)"
-                )
-                logger.info(f"  Data shape: {prices.shape[1]} tickers × {prices.shape[0]} dates")
-                logger.info(f"  Date range: {prices.index.min()} to {prices.index.max()}")
-                logger.info(f"  Non-null values: {prices.notna().sum().sum():,}")
-                logger.info(f"  Collection time: {source_elapsed:.1f}s")
+            logger.info("")
+            logger.info(f"Progress: {idx}/{total_tickers} ({idx/total_tickers*100:.1f}%)")
+            logger.info(f"  Successful: {len(collected_prices)} tickers")
+            logger.info(f"  Failed: {len(failed_tickers)} tickers")
+            logger.info(f"  Rate: {rate:.2f} tickers/sec")
+            logger.info(f"  Elapsed: {elapsed/60:.1f} min")
+            logger.info(f"  ETA: {eta_seconds/60:.1f} min")
+            logger.info(f"  Sources: {dict(collection_stats)}")
+            logger.info("")
 
-                # Log sample tickers
-                sample_tickers = sorted(collected)[:5]
-                logger.info(f"  Sample tickers: {', '.join(sample_tickers)}")
-                if len(collected) > 5:
-                    logger.info(f"  ... and {len(collected) - 5} more")
+    # Final statistics
+    logger.info("=" * 60)
+    logger.info("COLLECTION SUMMARY")
+    logger.info("=" * 60)
+    logger.info(f"Total processed: {len(processed_tickers)}/{total_tickers}")
+    logger.info(
+        f"Successful: {len(collected_prices)} ({len(collected_prices)/total_tickers*100:.1f}%)"
+    )
+    logger.info(f"Failed: {len(failed_tickers)} ({len(failed_tickers)/total_tickers*100:.1f}%)")
+    logger.info("")
+    logger.info("Data sources breakdown:")
+    for source, count in collection_stats.items():
+        pct = (count / len(collected_prices) * 100) if collected_prices else 0
+        logger.info(f"  {source}: {count} tickers ({pct:.1f}%)")
 
-                all_prices_list.append(prices)
-                all_volumes_list.append(volumes)
-                collected_tickers.update(collected)
-                remaining_tickers -= set(collected)
-                collection_stats[source_name] = len(collected)
-
-                # Log updated status
-                total_collected = len(collected_tickers)
-                logger.info(
-                    f"  Progress: {total_collected}/{initial_ticker_count} "
-                    f"({total_collected / initial_ticker_count * 100:.1f}%) total collected"
-                )
-                logger.info(f"  Remaining: {len(remaining_tickers)} tickers")
-
-                if remaining_tickers and len(remaining_tickers) <= 10:
-                    logger.info(f"  Still missing: {', '.join(sorted(remaining_tickers))}")
-
-            else:
-                collection_stats[source_name] = 0
-                logger.warning(f"✗ {source_name} returned empty DataFrame")
-                logger.warning(f"  All {len(remaining_tickers)} tickers failed")
-                logger.warning("  Moving to next source...")
-
-        except ValueError as e:
-            # Handle API key errors specifically
-            collection_stats[source_name] = 0
-            source_collection_time[source_name] = time.time() - source_start_time
-            logger.error(f"✗ {source_name} configuration error:")
-            logger.error(f"  Error: {e}")
-            logger.error("  This usually means an API key is missing or invalid")
-            logger.info("  Moving to next source...")
-            continue
-
-        except Exception as e:
-            collection_stats[source_name] = 0
-            source_collection_time[source_name] = time.time() - source_start_time
-            logger.error(f"✗ {source_name} collection failed:")
-            logger.error(f"  Error type: {type(e).__name__}")
-            logger.error(f"  Error message: {e}")
-            logger.info("  Moving to next source...")
-            continue
-
-        logger.info("")  # Blank line for readability
+    if failed_tickers:
+        logger.warning(f"Failed tickers ({len(failed_tickers)}): {', '.join(failed_tickers[:20])}")
+        if len(failed_tickers) > 20:
+            logger.warning(f"  ... and {len(failed_tickers) - 20} more")
 
     # Verify we collected something
-    if not all_prices_list:
+    if not collected_prices:
         logger.error("=" * 60)
         logger.error("CRITICAL ERROR: NO DATA COLLECTED")
         logger.error("=" * 60)
-        logger.error("All data sources failed to collect any tickers")
-        logger.error("Possible causes:")
-        logger.error("  - All API keys missing or invalid")
-        logger.error("  - All sources rate-limited simultaneously")
-        logger.error("  - Network connectivity issues")
-        logger.error("  - Invalid ticker symbols in universe")
         raise RuntimeError("No data collected from any source")
 
-    # Combine all sources
+    # Convert to DataFrames
+    logger.info("")
     logger.info("=" * 60)
     logger.info("PHASE 3: COMBINING DATA FROM ALL SOURCES")
     logger.info("=" * 60)
 
-    combined_prices = pd.concat(all_prices_list, axis=1)
-    combined_volumes = pd.concat(all_volumes_list, axis=1)
+    combined_prices = pd.DataFrame(collected_prices)
+    combined_volumes = pd.DataFrame(collected_volumes)
 
     logger.info("Combined dataset statistics:")
     logger.info(

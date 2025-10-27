@@ -11,8 +11,6 @@ from polygon import RESTClient
 
 from src.config_schemas import CollectorConfig
 
-load_dotenv()
-
 
 class PolygonCollector:
     """
@@ -48,7 +46,25 @@ class PolygonCollector:
         self.config = config
         self.logger = logging.getLogger(__name__)
 
+        # Load .env file from project root (handles Hydra working directory changes)
+        from pathlib import Path
+        project_root = Path(__file__).parent.parent.parent
+        load_dotenv(project_root / ".env")
+
         self.api_key = os.getenv("POLYGON_API_KEY")
+
+        # Create a configured session with timeout for Polygon SDK
+        import requests
+        self.session = requests.Session()
+        _original_request = self.session.request
+
+        def _request_with_timeout(*args, **kwargs):
+            # Apply configured timeout (default 15s for Polygon)
+            kwargs.setdefault('timeout', self.config.timeout)
+            return _original_request(*args, **kwargs)
+
+        self.session.request = _request_with_timeout
+        self.logger.info(f"PolygonCollector initialised with timeout={self.config.timeout}s")
 
     def collect_ohlcv_data(
         self,
@@ -74,7 +90,17 @@ class PolygonCollector:
         if not self.api_key:
             raise ValueError("Polygon API key not set. Set collector.api_key before collection.")
 
-        client = RESTClient(api_key=self.api_key)
+        # Pass custom session with timeout to RESTClient
+        # Note: RESTClient may or may not use this session depending on SDK version
+        # but this approach is compatible with most versions
+        try:
+            client = RESTClient(api_key=self.api_key, session=self.session)
+        except TypeError:
+            # Fallback if SDK doesn't support session parameter
+            client = RESTClient(api_key=self.api_key)
+            # Try to patch the client's session after initialization if it has one
+            if hasattr(client, '_session'):
+                client._session = self.session
 
         all_data = {field: {} for field in ["open", "high", "low", "close", "volume"]}
         successful = []
@@ -92,20 +118,28 @@ class PolygonCollector:
             start_date = period.get("start")
             end_date = period.get("end")
 
+            # Per-ticker progress logging
+            self.logger.info(f"[{i}/{len(ticker_periods)}] Processing {ticker}...")
+
+            # If end_date is None (active ticker), use today's date
+            if end_date is None:
+                end_date = datetime.now().strftime("%Y-%m-%d")
+
+            # Skip tickers whose membership period ended before the 2-year limit
+            if end_date < two_years_ago:
+                self.logger.info(
+                    f"  └─ Skipped: {ticker} (membership ended {end_date}, before free tier limit {two_years_ago})"
+                )
+                failed.append(ticker)
+                continue
+
             if start_date and start_date < two_years_ago:
                 self.logger.debug(
                     f"{ticker}: Start date {start_date} exceeds free tier limit, adjusting to {two_years_ago}"
                 )
                 start_date = two_years_ago
 
-            if i % 25 == 0 or i == len(ticker_periods):
-                self.logger.info(
-                    f"Progress: {i}/{len(ticker_periods)} ({i/len(ticker_periods)*100:.1f}%)"
-                )
-
             try:
-                time.sleep(self.config.rate_limit)
-
                 aggs = client.get_aggs(
                     ticker=ticker,
                     multiplier=1,
@@ -116,8 +150,12 @@ class PolygonCollector:
                     sort='asc'
                 )
 
+                # Apply rate limiting AFTER receiving response
+                if self.config.rate_limit > 0:
+                    time.sleep(1.0 / self.config.rate_limit)
+
                 if not aggs:
-                    self.logger.debug(f"{ticker}: No data returned")
+                    self.logger.info(f"  └─ Failed: {ticker} (No data returned)")
                     failed.append(ticker)
                     continue
 
@@ -135,7 +173,7 @@ class PolygonCollector:
                 df = pd.DataFrame(records).set_index('date')
 
                 if df.empty:
-                    self.logger.debug(f"{ticker}: Empty DataFrame")
+                    self.logger.info(f"  └─ Failed: {ticker} (Empty DataFrame)")
                     failed.append(ticker)
                     continue
 
@@ -143,9 +181,10 @@ class PolygonCollector:
                     all_data[field][ticker] = df[field]
 
                 successful.append(ticker)
+                self.logger.info(f"  └─ Success: {ticker} ({len(df)} rows, {df.index.min().date()} to {df.index.max().date()})")
 
             except Exception as e:
-                self.logger.warning(f"{ticker}: Collection failed - {e}")
+                self.logger.info(f"  └─ Error: {ticker} - {e}")
                 failed.append(ticker)
 
         self.logger.info(

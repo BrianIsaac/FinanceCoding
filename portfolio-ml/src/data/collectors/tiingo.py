@@ -67,7 +67,28 @@ class TiingoCollector:
 
         # Initialise Tiingo client (reads API key from TIINGO_API_KEY env var)
         self.client = TiingoClient()
-        self.logger.info("TiingoCollector initialised successfully")
+
+        # Patch the client's session to enforce HTTP-level timeout
+        # This prevents individual HTTP requests from hanging indefinitely
+        # while allowing the full API call to take 2-5 minutes for large datasets
+        if hasattr(self.client, 'session'):
+            _original_get = self.client.session.get
+            _original_post = self.client.session.post
+
+            def _get_with_timeout(*args, **kwargs):
+                # Apply 30-second HTTP timeout (connection + headers)
+                # This is separate from the data transfer time
+                kwargs.setdefault('timeout', 30)
+                return _original_get(*args, **kwargs)
+
+            def _post_with_timeout(*args, **kwargs):
+                kwargs.setdefault('timeout', 30)
+                return _original_post(*args, **kwargs)
+
+            self.client.session.get = _get_with_timeout
+            self.client.session.post = _post_with_timeout
+
+        self.logger.info(f"TiingoCollector initialised with HTTP timeout=30s (allows multi-minute data transfers)")
 
     def collect_ohlcv_data(
         self,
@@ -122,7 +143,10 @@ class TiingoCollector:
             start_date = period.get("start")
             end_date = period.get("end")
 
-            # Progress logging
+            # Per-ticker progress logging
+            self.logger.info(f"[{i}/{len(ticker_periods)}] Processing {ticker}...")
+
+            # Summary progress logging every 25 tickers
             if i % 25 == 0 or i == len(ticker_periods):
                 progress_pct = (i / len(ticker_periods)) * 100
                 self.logger.info(
@@ -131,9 +155,6 @@ class TiingoCollector:
                 )
 
             try:
-                # Rate limiting (72 seconds = 50 symbols/hour)
-                time.sleep(self.config.rate_limit)
-
                 # Fetch data using Tiingo client
                 df = self.client.get_dataframe(
                     ticker,
@@ -142,8 +163,12 @@ class TiingoCollector:
                     frequency="daily",
                 )
 
+                # Apply rate limiting AFTER receiving response
+                if self.config.rate_limit > 0:
+                    time.sleep(1.0 / self.config.rate_limit)
+
                 if df is None or df.empty:
-                    self.logger.debug(f"{ticker}: No data returned")
+                    self.logger.info(f"  └─ Failed: {ticker} (No data returned)")
                     failed.append(ticker)
                     continue
 
@@ -163,9 +188,10 @@ class TiingoCollector:
                         all_data[field][ticker] = df[field]
 
                 successful.append(ticker)
+                self.logger.info(f"  └─ Success: {ticker} ({len(df)} rows, {df.index.min().date()} to {df.index.max().date()})")
 
             except Exception as e:
-                self.logger.warning(f"{ticker}: Collection failed - {e}")
+                self.logger.info(f"  └─ Error: {ticker} - {e}")
                 failed.append(ticker)
 
         self.logger.info(

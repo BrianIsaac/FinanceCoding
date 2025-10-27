@@ -82,16 +82,17 @@ class StooqCollector:
             # Non-fatal: if it fails, we still try CSV endpoints
             pass
 
-    def _fetch_stooq_csv(self, symbol: str) -> pd.DataFrame | None:
+    def _fetch_stooq_csv(self, symbol: str) -> tuple[pd.DataFrame | None, str]:
         """Download daily CSV for a single Stooq symbol with enhanced error handling.
 
         Args:
             symbol: Stooq symbol like 'aapl.us'
 
         Returns:
-            DataFrame with OHLCV data or None if fetch failed
+            Tuple of (DataFrame with OHLCV data or None, failure reason string)
         """
         url = f"https://stooq.com/q/d/l/?s={symbol}&i=d"
+        last_error = "Unknown error"
 
         for attempt in range(self.config.retry_attempts + 1):
             try:
@@ -105,18 +106,29 @@ class StooqCollector:
 
                 # Enhanced response validation
                 if r.status_code == 429:  # Rate limited
-                    time.sleep(self.config.rate_limit * 2)
+                    last_error = "Rate limited (429)"
+                    # Sleep longer when rate limited (2 seconds by default)
+                    time.sleep(2.0 if self.config.rate_limit > 0 else 2.0)
                     continue
 
                 if r.status_code == 403:  # Forbidden - might need session warmup
+                    last_error = "Forbidden (403)"
                     continue
 
-                if (
-                    r.status_code != 200
-                    or not r.text
-                    or r.text.strip().lower().startswith("<!doctype")
-                    or "error" in r.text.lower()
-                ):
+                if r.status_code != 200:
+                    last_error = f"HTTP {r.status_code}"
+                    continue
+
+                if not r.text:
+                    last_error = "Empty response"
+                    continue
+
+                if r.text.strip().lower().startswith("<!doctype"):
+                    last_error = "HTML instead of CSV"
+                    continue
+
+                if "error" in r.text.lower():
+                    last_error = "Error in response text"
                     continue
 
                 df = pd.read_csv(io.StringIO(r.text))
@@ -124,40 +136,49 @@ class StooqCollector:
                 # Validate required columns
                 required_cols = ["Date", "Open", "High", "Low", "Close", "Volume"]
                 if not all(col in df.columns for col in ["Date", "Close"]):
+                    last_error = f"Missing required columns (have: {list(df.columns)})"
                     continue
 
                 df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
                 df = df.dropna(subset=["Date"]).sort_values("Date").set_index("Date")
 
                 # Validate data quality
-                if df.empty or len(df) < 10:  # Minimum data points
+                if df.empty:
+                    last_error = "No valid dates after parsing"
+                    continue
+
+                if len(df) < 10:
+                    last_error = f"Insufficient data points ({len(df)} < 10)"
                     continue
 
                 # Return available OHLCV columns
                 available_cols = [col for col in required_cols[1:] if col in df.columns]
-                return df[available_cols]
+                return df[available_cols], "Success"
 
-            except requests.RequestException:
+            except requests.RequestException as e:
+                last_error = f"Network error: {str(e)}"
                 if attempt < self.config.retry_attempts:
                     time.sleep(self.config.retry_delay * (attempt + 1))
                     continue
-            except Exception:
+            except Exception as e:
+                last_error = f"Parse error: {str(e)}"
                 if attempt < self.config.retry_attempts:
                     continue
 
-        return None
+        return None, last_error
 
-    def _fetch_stooq_csv_with_rate_limit(self, symbol: str) -> pd.DataFrame | None:
+    def _fetch_stooq_csv_with_rate_limit(self, symbol: str) -> tuple[pd.DataFrame | None, str]:
         """Wrapper for _fetch_stooq_csv with global rate limiting.
 
         Args:
             symbol: Stooq symbol like 'aapl.us'
 
         Returns:
-            DataFrame with OHLCV data or None if fetch failed
+            Tuple of (DataFrame with OHLCV data or None, failure reason string)
         """
-        # Apply rate limiting before each request
-        time.sleep(self.config.rate_limit)
+        # Apply rate limiting before each request (rate_limit = requests per second)
+        if self.config.rate_limit > 0:
+            time.sleep(1.0 / self.config.rate_limit)
         return self._fetch_stooq_csv(symbol)
 
     def _fetch_single_ticker_legacy_style(
@@ -274,25 +295,21 @@ class StooqCollector:
             start_date = period.get("start")
             end_date = period.get("end")
 
-            # Log progress every 25 tickers
-            if i % 25 == 0 or i == len(ticker_periods):
-                progress_pct = (i / len(ticker_periods)) * 100
-                self.logger.info(
-                    f"Progress: {i}/{len(ticker_periods)} ({progress_pct:.1f}%) - "
-                    f"{len(successful_tickers)} successful, {len(failed_tickers)} failed"
-                )
+            # Per-ticker progress logging
+            self.logger.info(f"[{i}/{len(ticker_periods)}] Processing {ticker}...")
 
             try:
-                # Apply rate limiting before each request
-                time.sleep(self.config.rate_limit)
-
                 # Fetch ticker data
                 symbol = self._to_stooq_symbol(ticker)
-                df = self._fetch_stooq_csv(symbol)
+                df, reason = self._fetch_stooq_csv(symbol)
+
+                # Apply rate limiting AFTER receiving response
+                if self.config.rate_limit > 0:
+                    time.sleep(1.0 / self.config.rate_limit)
 
                 if df is None or df.empty:
                     failed_tickers.append(ticker)
-                    self.logger.debug(f"Failed to download data for {ticker}")
+                    self.logger.info(f"  └─ Failed: {ticker} - {reason}")
                     continue
 
                 # Apply per-ticker date filtering
@@ -319,10 +336,10 @@ class StooqCollector:
                     ohlcv_data["volume"][ticker] = df["Volume"].rename(ticker)
 
                 successful_tickers.append(ticker)
-                self.logger.debug(f"Successfully collected {ticker} ({len(df)} rows)")
+                self.logger.info(f"  └─ Success: {ticker} ({len(df)} rows, {df.index.min().date()} to {df.index.max().date()})")
 
             except Exception as e:
-                self.logger.warning(f"{ticker}: Collection failed - {e}")
+                self.logger.info(f"  └─ Error: {ticker} - {e}")
                 failed_tickers.append(ticker)
 
         if not ohlcv_data["close"]:
@@ -386,7 +403,8 @@ class StooqCollector:
             DataFrame with OHLCV data or None if failed
         """
         symbol = self._to_stooq_symbol(ticker)
-        return self._fetch_stooq_csv(symbol)
+        df, _ = self._fetch_stooq_csv(symbol)  # Ignore reason for backwards compatibility
+        return df
 
     def validate_data_coverage(
         self, prices_df: pd.DataFrame, required_tickers: list[str], min_data_points: int = 100
