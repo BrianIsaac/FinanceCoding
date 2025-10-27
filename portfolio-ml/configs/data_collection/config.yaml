@@ -56,3 +56,4 @@ validation:
   fill_method: "forward"
   generate_reports: true
   report_output_dir: "logs/validation_reports"
+  outlier_detection_method: "zscore"

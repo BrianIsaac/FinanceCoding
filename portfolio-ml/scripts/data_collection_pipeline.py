@@ -688,10 +688,12 @@ def main(cfg: DictConfig) -> None:
 
     for ticker in combined_prices.columns:
         if ticker in combined_volumes.columns and ticker in membership_mask.columns:
-            original_na = combined_prices[ticker].isna().sum()
-
             # Get membership period mask for this ticker
             ticker_mask = membership_mask[ticker]
+            membership_days = ticker_mask.sum()
+
+            # Count NaN ONLY within membership periods (not full date range)
+            original_na = combined_prices[ticker][ticker_mask].isna().sum()
 
             # Only fill gaps during membership periods
             ticker_prices = combined_prices[ticker].copy()
@@ -716,12 +718,20 @@ def main(cfg: DictConfig) -> None:
             ticker_prices[~ticker_mask] = np.nan
             filled_prices[ticker] = ticker_prices
 
-            final_na = filled_prices[ticker].isna().sum()
+            # Count NaN ONLY within membership periods (not full date range)
+            final_na = filled_prices[ticker][ticker_mask].isna().sum()
+
+            # Calculate membership-aware coverage
+            coverage_before = (1 - original_na / membership_days) * 100 if membership_days > 0 else 0
+            coverage_after = (1 - final_na / membership_days) * 100 if membership_days > 0 else 0
+
             fill_stats[ticker] = {
-                "original_na": original_na,
-                "final_na": final_na,
-                "filled": original_na - final_na,
-                "membership_valid_dates": ticker_mask.sum()
+                "original_na": int(original_na),
+                "final_na": int(final_na),
+                "filled": int(original_na - final_na),
+                "membership_valid_dates": int(membership_days),
+                "membership_coverage_before": float(coverage_before),
+                "membership_coverage_after": float(coverage_after)
             }
 
     total_filled = sum(stats["filled"] for stats in fill_stats.values())
@@ -738,17 +748,33 @@ def main(cfg: DictConfig) -> None:
     logger.info("Metadata saved successfully")
     logger.info("")
 
-    # Calculate and log per-ticker coverage statistics
+    # Calculate and log per-ticker coverage statistics (MEMBERSHIP-AWARE)
     logger.info("=" * 60)
-    logger.info("DATA COVERAGE ANALYSIS")
+    logger.info("DATA COVERAGE ANALYSIS (MEMBERSHIP-AWARE)")
     logger.info("=" * 60)
 
-    # Calculate coverage per ticker (before gap filling)
-    pre_fill_coverage = (combined_prices.notna().sum() / len(combined_prices)) * 100
-    # Calculate coverage per ticker (after gap filling)
-    post_fill_coverage = (filled_prices.notna().sum() / len(filled_prices)) * 100
+    # Calculate per-ticker membership-aware coverage
+    pre_fill_coverage = pd.Series(index=combined_prices.columns, dtype=float)
+    post_fill_coverage = pd.Series(index=filled_prices.columns, dtype=float)
 
-    logger.info("Coverage distribution (after gap filling):")
+    for ticker in combined_prices.columns:
+        if ticker in membership_mask.columns:
+            ticker_mask = membership_mask[ticker]
+            membership_days = ticker_mask.sum()
+
+            if membership_days > 0:
+                # Coverage within membership period only
+                pre_fill_coverage[ticker] = (
+                    combined_prices[ticker][ticker_mask].notna().sum() / membership_days * 100
+                )
+                post_fill_coverage[ticker] = (
+                    filled_prices[ticker][ticker_mask].notna().sum() / membership_days * 100
+                )
+            else:
+                pre_fill_coverage[ticker] = 0.0
+                post_fill_coverage[ticker] = 0.0
+
+    logger.info("Coverage distribution (after gap filling, within membership periods):")
     coverage_bins = [0, 50, 70, 80, 90, 95, 100]
     for i in range(len(coverage_bins) - 1):
         low, high = coverage_bins[i], coverage_bins[i + 1]
@@ -764,7 +790,7 @@ def main(cfg: DictConfig) -> None:
     if not low_coverage_tickers.empty:
         logger.warning("")
         logger.warning(
-            f"⚠ Tickers with <{low_coverage_threshold}% coverage "
+            f"⚠ Tickers with <{low_coverage_threshold}% membership coverage "
             f"({len(low_coverage_tickers)} tickers):"
         )
         for ticker in sorted(low_coverage_tickers.index)[:20]:
@@ -775,7 +801,7 @@ def main(cfg: DictConfig) -> None:
 
     # Overall statistics
     logger.info("")
-    logger.info("Overall coverage statistics:")
+    logger.info("Overall coverage statistics (within membership periods):")
     logger.info(f"  Mean coverage: {post_fill_coverage.mean():.2f}%")
     logger.info(f"  Median coverage: {post_fill_coverage.median():.2f}%")
     logger.info(f"  Min coverage: {post_fill_coverage.min():.2f}%")
@@ -784,13 +810,22 @@ def main(cfg: DictConfig) -> None:
 
     # Gap filling impact
     logger.info("")
-    logger.info("Gap filling impact:")
+    logger.info("Gap filling impact (membership-aware):")
     logger.info(f"  Average coverage before: {pre_fill_coverage.mean():.2f}%")
     logger.info(f"  Average coverage after: {post_fill_coverage.mean():.2f}%")
-    logger.info(
-        f"  Improvement: +{post_fill_coverage.mean() - pre_fill_coverage.mean():.2f} percentage points"
-    )
-    logger.info(f"  Total gaps filled: {total_filled:,}")
+
+    improvement = post_fill_coverage.mean() - pre_fill_coverage.mean()
+    logger.info(f"  Coverage improvement: +{improvement:.2f} percentage points")
+    logger.info(f"  Total gaps filled (in membership periods): {total_filled:,}")
+
+    # Additional helpful statistics
+    total_membership_days = membership_mask.sum().sum()
+    total_valid_data_points = filled_prices.notna().sum().sum()
+    overall_density = (total_valid_data_points / total_membership_days * 100) if total_membership_days > 0 else 0
+
+    logger.info(f"  Total membership days across all tickers: {total_membership_days:,}")
+    logger.info(f"  Total valid data points: {total_valid_data_points:,}")
+    logger.info(f"  Overall data density in membership periods: {overall_density:.2f}%")
 
     # Quality validation
     logger.info("=" * 60)
@@ -825,16 +860,16 @@ def main(cfg: DictConfig) -> None:
     returns_daily.to_parquet(output_dir / "returns_daily_final.parquet", compression="gzip")
     logger.info("All datasets saved successfully")
 
-    # Calculate final metrics
-    final_coverage = (filled_prices.notna().sum() / len(filled_prices)) * 100
+    # Calculate final metrics (use already-computed membership-aware coverage)
+    # post_fill_coverage was calculated earlier with membership awareness
 
     summary = {
         "total_tickers": len(filled_prices.columns),
         "target_universe_size": len(all_tickers),
         "universe_coverage_pct": (len(collected_tickers) / len(all_tickers)) * 100,
         "date_range": f"{filled_prices.index.min()} to {filled_prices.index.max()}",
-        "average_coverage": final_coverage.mean(),
-        "tickers_95pct_coverage": (final_coverage >= 95).sum(),
+        "average_coverage": post_fill_coverage.mean(),
+        "tickers_95pct_coverage": (post_fill_coverage >= 95).sum(),
         "total_gaps_filled": total_filled,
         "quality_score": validation_results.get("overall_quality_score", 0),
         "stooq_tickers": collection_stats.get("Stooq", 0),
@@ -911,15 +946,15 @@ def main(cfg: DictConfig) -> None:
         else:
             logger.info(f"  ✓ Complete universe coverage ({summary['total_tickers']} tickers)")
 
-        # Calculate data density
-        total_possible_values = summary["total_tickers"] * len(filled_prices)
+        # Calculate membership-aware data density
+        total_possible_values = membership_mask.sum().sum()  # Sum of all valid membership days
         total_actual_values = filled_prices.notna().sum().sum()
         data_density = (
             (total_actual_values / total_possible_values * 100) if total_possible_values > 0 else 0
         )
         logger.info(
-            f"  Data density: {data_density:.2f}% "
-            f"({total_actual_values:,} / {total_possible_values:,} cells)"
+            f"  Data density (membership-aware): {data_density:.2f}% "
+            f"({total_actual_values:,} / {total_possible_values:,} valid cells)"
         )
 
     logger.info("")
