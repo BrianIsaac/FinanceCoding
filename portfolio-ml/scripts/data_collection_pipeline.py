@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Dict
 
 import hydra
+import numpy as np
 import pandas as pd
 from hydra.core.config_store import ConfigStore
 from omegaconf import MISSING, DictConfig, OmegaConf
@@ -55,6 +56,7 @@ from src.data.collectors.yfinance import YFinanceCollector  # noqa: E402
 from src.data.processors.data_quality_validator import DataQualityValidator  # noqa: E402
 from src.data.processors.gap_filling import GapFiller  # noqa: E402
 from src.data.processors.universe_builder import UniverseBuilder  # noqa: E402
+from src.utils.membership_aware_cleaning import create_membership_mask  # noqa: E402
 
 
 # Structured configuration classes for Hydra
@@ -464,6 +466,11 @@ def main(cfg: DictConfig) -> None:
         )
         logger.info(f"Built universe: {len(membership_df)} ticker-period combinations")
 
+    # Convert string dates to datetime for membership mask compatibility
+    membership_df['start'] = pd.to_datetime(membership_df['start'])
+    membership_df['end'] = pd.to_datetime(membership_df['end'])
+    logger.info("Converted membership dates to datetime format for gap filling")
+
     # Extract ticker list for backward compatibility (will be replaced in later phases)
     all_tickers = sorted(membership_df["ticker"].unique())
 
@@ -671,33 +678,54 @@ def main(cfg: DictConfig) -> None:
     logger.info("PHASE 4: GAP FILLING AND DATA CLEANING")
     logger.info("=" * 60)
 
+    # Create membership mask for gap filling
+    logger.info("Creating membership mask for gap filling...")
+    membership_mask = create_membership_mask(combined_prices, membership_df)
+    logger.info(f"Membership mask created: {membership_mask.sum().sum():,} valid ticker-date cells")
+
     filled_prices = combined_prices.copy()
     fill_stats = {}
 
     for ticker in combined_prices.columns:
-        if ticker in combined_volumes.columns:
+        if ticker in combined_volumes.columns and ticker in membership_mask.columns:
             original_na = combined_prices[ticker].isna().sum()
 
-            # Forward fill with volume validation
-            filled_prices[ticker] = gap_filler.forward_fill(
-                combined_prices[ticker],
-                volume_series=combined_volumes[ticker],
-                min_volume=validation_config.volume_threshold,
-                limit=10,
-            )
+            # Get membership period mask for this ticker
+            ticker_mask = membership_mask[ticker]
 
-            # Forward fill for remaining gaps (avoid temporal leakage)
-            filled_prices[ticker] = gap_filler.forward_fill(filled_prices[ticker], limit=10)
+            # Only fill gaps during membership periods
+            ticker_prices = combined_prices[ticker].copy()
+            ticker_volumes = combined_volumes[ticker]
+
+            # Forward fill with volume validation (only within membership)
+            for date in combined_prices.index:
+                if ticker_mask.loc[date] and pd.isna(ticker_prices.loc[date]):
+                    # Look back up to 10 days for last valid price
+                    lookback_start = max(0, combined_prices.index.get_loc(date) - 10)
+                    lookback_dates = combined_prices.index[lookback_start:combined_prices.index.get_loc(date)]
+
+                    # Find most recent valid price within membership period
+                    for prev_date in reversed(lookback_dates):
+                        if ticker_mask.loc[prev_date] and not pd.isna(ticker_prices.loc[prev_date]):
+                            # Validate volume if available
+                            if ticker_volumes.loc[date] >= validation_config.volume_threshold:
+                                ticker_prices.loc[date] = ticker_prices.loc[prev_date]
+                            break
+
+            # Explicitly set non-membership periods to NaN
+            ticker_prices[~ticker_mask] = np.nan
+            filled_prices[ticker] = ticker_prices
 
             final_na = filled_prices[ticker].isna().sum()
             fill_stats[ticker] = {
                 "original_na": original_na,
                 "final_na": final_na,
                 "filled": original_na - final_na,
+                "membership_valid_dates": ticker_mask.sum()
             }
 
     total_filled = sum(stats["filled"] for stats in fill_stats.values())
-    logger.info(f"Gap filling completed: {total_filled} total gaps filled across all tickers")
+    logger.info(f"Membership-aware gap filling completed: {total_filled} gaps filled within valid membership periods")
 
     # Save gap filling statistics for EDA
     logger.info(f"Saving gap fill statistics to {raw_output_dir}...")
