@@ -501,6 +501,7 @@ def main(cfg: DictConfig) -> None:
 
     # Track statistics
     collection_stats = {name: 0 for name, _ in sources}
+    source_collection_time = {name: 0.0 for name, _ in sources}
     failed_tickers = []
 
     # Filter to unprocessed tickers
@@ -635,15 +636,18 @@ def main(cfg: DictConfig) -> None:
         f"Total collection time: {total_collection_time:.1f}s "
         f"({total_collection_time / 60:.1f} minutes)"
     )
+
+    # Calculate collected tickers from the collected_prices dictionary
+    collected_tickers = list(collected_prices.keys())
     logger.info(
         f"Universe coverage: {len(collected_tickers)}/{len(all_tickers)} "
         f"({len(collected_tickers) / len(all_tickers) * 100:.1f}%)"
     )
 
-    if remaining_tickers:
+    if failed_tickers:
         logger.warning("")
-        logger.warning(f"⚠ Failed to collect {len(remaining_tickers)} tickers from any source:")
-        failed_list = sorted(remaining_tickers)
+        logger.warning(f"⚠ Failed to collect {len(failed_tickers)} tickers from any source:")
+        failed_list = sorted(failed_tickers)
         for i in range(0, len(failed_list), 10):
             batch = failed_list[i : i + 10]
             logger.warning(f"  {', '.join(batch)}")
