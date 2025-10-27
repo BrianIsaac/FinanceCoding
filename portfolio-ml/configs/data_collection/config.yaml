@@ -57,3 +57,11 @@ validation:
   generate_reports: true
   report_output_dir: "logs/validation_reports"
   outlier_detection_method: "zscore"
+  price_range_validation: true
+  min_price: 0.01
+  max_price: 100000.0
+  temporal_consistency_check: true
+  volume_consistency_check: true
+  outlier_threshold: 3.0
+  auto_fix_enabled: false
+  quality_score_threshold: 70.0
