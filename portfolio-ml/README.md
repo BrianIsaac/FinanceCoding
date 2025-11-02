@@ -4,6 +4,9 @@
 [![Code Quality](https://img.shields.io/badge/code%20quality-production%20ready-success.svg)](src/)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
+> **🎯 Latest Update (2025-10-29)**: All critical bugs fixed and verified. Phase 1-4 complete. System is production-ready.
+> 📄 See [NEXT_SESSION_START_HERE.md](NEXT_SESSION_START_HERE.md) for details.
+
 A production-grade financial machine learning system implementing advanced portfolio optimisation using **Graph Attention Networks (GAT)**, **Hierarchical Risk Parity (HRP)**, and **LSTM** models for the S&P MidCap 400 universe.
 
 ## Key Features

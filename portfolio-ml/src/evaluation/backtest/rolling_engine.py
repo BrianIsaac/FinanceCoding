@@ -29,6 +29,14 @@ from src.utils.universe_alignment import UniverseAlignmentManager
 
 logger = logging.getLogger(__name__)
 
+# Import DataQualityTracker for data quality logging
+try:
+    from .data_quality_tracker import DataQualityTracker
+    DATA_QUALITY_TRACKER_AVAILABLE = True
+except ImportError:
+    logger.warning("DataQualityTracker not available, data quality logging disabled")
+    DATA_QUALITY_TRACKER_AVAILABLE = False
+
 
 @dataclass
 class RollingBacktestConfig:
@@ -72,6 +80,7 @@ class RollingBacktestConfig:
     save_intermediate_results: bool = True
     enable_progress_tracking: bool = True
     model_checkpoint_dir: Path | None = None
+    quality_log_path: str | None = None  # Optional path for data quality CSV log
 
     def to_backtest_config(self) -> BacktestConfig:
         """Convert to BacktestConfig for rolling validation engine."""
@@ -155,9 +164,16 @@ class RollingBacktestEngine:
         if config.output_dir:
             config.output_dir.mkdir(parents=True, exist_ok=True)
 
+        # Initialize data quality tracker with optional CSV output
+        if DATA_QUALITY_TRACKER_AVAILABLE:
+            self.quality_tracker = DataQualityTracker(output_path=config.quality_log_path)
+        else:
+            self.quality_tracker = None
+
         # State tracking
         self.model_states: dict[str, ModelRetrainingState] = {}
         self._execution_log: list[dict[str, Any]] = []
+        self.universe_schedule: pd.DataFrame | None = None  # Will be set in run_rolling_backtest
 
     def run_rolling_backtest(
         self,
@@ -177,6 +193,9 @@ class RollingBacktestEngine:
             Comprehensive rolling backtest results
         """
         logger.info("Starting rolling backtest execution")
+
+        # Store universe schedule for membership-aware imputation
+        self.universe_schedule = universe_data
 
         # Validate inputs
         self._validate_inputs(models, data)
@@ -207,6 +226,14 @@ class RollingBacktestEngine:
         for model_name, model in models.items():
             logger.info(f"Starting backtest for model: {model_name}")
 
+            # Configure model with universe schedule for membership-aware imputation
+            if universe_data is not None and hasattr(model, 'set_universe_schedule'):
+                model.set_universe_schedule(universe_data)
+                logger.info(
+                    f"Configured {model_name} with universe schedule "
+                    f"({len(universe_data['ticker'].unique()) if 'ticker' in universe_data.columns else len(universe_data)} assets)"
+                )
+
             # Initialize model state tracking
             self.model_states[model_name] = ModelRetrainingState()
 
@@ -231,6 +258,16 @@ class RollingBacktestEngine:
 
         # Generate execution summary
         results.execution_summary = self._generate_execution_summary(results)
+
+        # Save data quality log to CSV
+        if self.quality_tracker is not None and self.quality_tracker.output_path is not None:
+            self.quality_tracker.save_to_csv()
+
+            # Generate degradation report
+            degradation_report = self.quality_tracker.generate_degradation_report()
+            if not degradation_report.empty:
+                logger.info("\nData Quality Degradation Summary:")
+                logger.info(f"\n{degradation_report}")
 
         # Save results if configured
         if self.config.output_dir and self.config.save_intermediate_results:
@@ -373,18 +410,10 @@ class RollingBacktestEngine:
             except Exception as e:
                 logger.warning(f"Failed to get dynamic universe: {e}, using static universe")
 
-        # Prepare universe for each period (fallback to old method if dynamic fails)
-        universe_train = (
-            universe_data.loc[split.train_period.start_date : split.train_period.end_date]
-            if universe_data is not None
-            else None
-        )
-
-        universe_test = (
-            universe_data.loc[split.test_period.start_date : split.test_period.end_date]
-            if universe_data is not None
-            else None
-        )
+        # Static universe deprecated - use dynamic_universe instead
+        # Setting to None as models should use dynamic_universe_train/test from split_data
+        universe_train = None
+        universe_test = None
 
         return {
             "train_returns": train_data,
@@ -558,11 +587,8 @@ class RollingBacktestEngine:
             }
 
         test_returns = split_data["test_returns"]
-        test_universe = (
-            split_data["test_universe"].columns.tolist()
-            if split_data["test_universe"] is not None
-            else test_returns.columns.tolist()
-        )
+        # Universe will be looked up dynamically at each rebalance date
+        fallback_universe = test_returns.columns.tolist()
 
         # Generate rebalancing dates for test period
         # First try to get actual trading dates from the returns index
@@ -605,9 +631,23 @@ class RollingBacktestEngine:
         returns_list = []
         costs_list = []
         previous_weights = None
+        previous_universe = None
 
         for i, rebalance_date in enumerate(rebalance_dates):
             try:
+                # Get universe for this specific rebalance date
+                dynamic_test_universe = split_data.get("dynamic_test_universe", {})
+                current_universe = (
+                    dynamic_test_universe.get(rebalance_date)
+                    if dynamic_test_universe
+                    else fallback_universe
+                )
+
+                # Log universe changes for validation
+                if i == 0 or (previous_universe is not None and len(current_universe) != len(previous_universe)):
+                    logger.info(f"Rebalance {rebalance_date.strftime('%Y-%m-%d')}: universe size = {len(current_universe)}")
+                previous_universe = current_universe
+
                 # Generate portfolio weights
                 # For baseline models, don't pass universe to avoid mismatch issues
                 if hasattr(model, '_is_baseline') and model._is_baseline:
@@ -618,8 +658,29 @@ class RollingBacktestEngine:
                 else:
                     current_weights = model.predict_weights(
                         date=rebalance_date,
-                        universe=test_universe,
+                        universe=current_universe,  # Time-varying universe
                     )
+
+                # Track and log data quality if model provides it
+                if self.quality_tracker is not None and hasattr(model, 'get_last_data_quality_metrics'):
+                    try:
+                        metrics = model.get_last_data_quality_metrics()
+
+                        # Record to tracker for CSV persistence
+                        self.quality_tracker.record_rebalance_metrics(
+                            date=rebalance_date,
+                            model_name=model.__class__.__name__,
+                            metrics=metrics,
+                        )
+
+                        # Log to console (debug level to avoid clutter)
+                        logger.debug(
+                            f"Data quality at {rebalance_date}: "
+                            f"{metrics.get('valid_assets', 0)}/{metrics.get('requested_assets', 0)} valid "
+                            f"({metrics.get('coverage_ratio', 0):.0%} coverage)"
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to track data quality metrics at {rebalance_date}: {e}")
 
                 if current_weights.empty:
                     logger.warning(f"Empty weights for {rebalance_date}")
@@ -628,6 +689,22 @@ class RollingBacktestEngine:
                 # Comprehensive weight validation
                 if not self._validate_weights(current_weights, rebalance_date):
                     continue
+
+                # Explicit position limit enforcement (safety gate)
+                # Note: Soft constraints may allow minor violations for rebalancing efficiency
+                # Only catch severe violations that indicate enforcement failure
+                max_position_limit = 0.20  # 20% maximum from portfolio constraints
+                max_weight = current_weights.max()
+                severe_violation_threshold = 0.50  # 50% concentration is a critical failure
+
+                if max_weight > severe_violation_threshold:
+                    logger.error(
+                        f"CRITICAL CONSTRAINT VIOLATION at {rebalance_date}: "
+                        f"Severe position limit exceeded: max weight = {max_weight:.1%} > {severe_violation_threshold:.1%}. "
+                        f"Model: {model.__class__.__name__}. "
+                        f"This indicates complete constraint enforcement failure. Skipping rebalance."
+                    )
+                    continue  # Skip this rebalance for severe violations
 
                 # Calculate transaction costs
                 costs = 0.0
@@ -792,12 +869,33 @@ class RollingBacktestEngine:
                 # Set negative weights to 0
                 weights[negative_mask] = 0.0
 
-            # Check for extreme concentration
+            # Check for position limit violations (use configured limit)
             max_weight = weights.max()
-            if max_weight > 0.5:  # Single position > 50%
-                logger.warning(f"Extreme concentration at {rebalance_date}: max weight={max_weight:.4f}")
-                # Cap at 40% maximum position
-                weights = weights.clip(upper=0.4)
+            max_position_limit = 0.20  # TODO: Get from model.constraints.max_position_weight
+
+            # Reduced tolerance from 1% to 0.1% (10 basis points)
+            # With iterative redistribution, violations should be eliminated
+            tolerance = 0.001  # 0.1% tolerance for numerical precision
+
+            if max_weight > max_position_limit + tolerance:
+                logger.error(
+                    f"Position limit violation at {rebalance_date}: "
+                    f"max weight = {max_weight:.1%} > limit {max_position_limit:.1%} (tolerance: {tolerance:.1%})"
+                )
+                logger.error(
+                    f"This indicates constraint engine failed. Weights should already be constrained."
+                )
+                # Don't clip and renormalise here - this creates the same bug
+                # Instead, fail validation to surface the issue
+                return False  # Validation fails
+
+            # Also check extreme concentration (>50% is critical failure)
+            if max_weight > 0.5:
+                logger.critical(
+                    f"CRITICAL: Extreme concentration at {rebalance_date}: "
+                    f"max weight = {max_weight:.1%} (>50%). Model constraint enforcement completely failed."
+                )
+                return False  # Fail validation for extreme violations
 
             # Renormalize weights to sum to 1.0
             weight_sum = weights.sum()

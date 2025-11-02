@@ -8,9 +8,13 @@ distributes capital based on hierarchical clustering structure and risk parity p
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 
 import numpy as np
 import pandas as pd
+import cvxpy as cp
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -21,6 +25,9 @@ class AllocationConfig:
     min_allocation: float = 0.001  # Minimum allocation per asset
     max_allocation: float = 0.5  # Maximum allocation per asset
     allocation_precision: int = 6  # Decimal precision for allocations
+    # ADDED: Use constrained optimisation instead of post-hoc redistribution
+    use_constrained_optimization: bool = True  # Enable constrained risk parity
+    max_position_constraint: float = 0.20  # Maximum position for constrained optimisation (20%)
 
 
 class HRPAllocation:
@@ -81,8 +88,18 @@ class HRPAllocation:
             cluster_tree, aligned_cov, initial_weights.sum()  # Total allocation for this cluster
         )
 
-        # Apply allocation constraints
-        constrained_weights = self._apply_allocation_constraints(weights)
+        # MODIFIED: Choose constraint enforcement method based on config
+        if self.config.use_constrained_optimization:
+            # Use constrained risk parity optimisation (RECOMMENDED)
+            constrained_weights = self.constrained_risk_parity_optimization(
+                covariance_matrix=aligned_cov,
+                hrp_initial_weights=weights,
+                max_position=self.config.max_position_constraint,
+                min_position=self.config.min_allocation,
+            )
+        else:
+            # Use iterative redistribution (legacy approach)
+            constrained_weights = self._apply_allocation_constraints(weights)
 
         return constrained_weights
 
@@ -333,6 +350,135 @@ class HRPAllocation:
             raise ValueError("No common assets between covariance matrix and cluster tree")
 
         return covariance_matrix.loc[common_assets, common_assets]
+
+    def constrained_risk_parity_optimization(
+        self,
+        covariance_matrix: pd.DataFrame,
+        hrp_initial_weights: pd.Series,
+        max_position: float = 0.20,
+        min_position: float = 0.001,
+    ) -> pd.Series:
+        """
+        ADDED: Constrained risk parity optimisation using cvxpy.
+
+        This method solves for portfolio weights that approximate HRP's risk parity
+        objective while strictly enforcing position limits during optimisation.
+
+        Objective: Minimise deviation from HRP risk contributions while enforcing constraints
+
+        Args:
+            covariance_matrix: Asset covariance matrix
+            hrp_initial_weights: Unconstrained HRP weights as starting point
+            max_position: Maximum weight per position (default 20%)
+            min_position: Minimum weight per position (default 0.1%)
+
+        Returns:
+            Constrained portfolio weights satisfying position limits
+        """
+        n_assets = len(covariance_matrix)
+        assets = covariance_matrix.index.tolist()
+
+        # Convert covariance matrix to numpy array
+        cov_matrix = covariance_matrix.values
+
+        # FIXED: Ensure covariance matrix is symmetric and positive definite
+        # Numerical issues can cause small asymmetries and negative eigenvalues
+        cov_matrix = (cov_matrix + cov_matrix.T) / 2  # Force symmetry
+
+        # Add small regularization to ensure positive definiteness
+        # This is standard practice in portfolio optimization
+        min_eigenvalue = np.linalg.eigvalsh(cov_matrix)[0]
+        if min_eigenvalue < 1e-8:
+            regularization = max(1e-8 - min_eigenvalue, 1e-8)
+            cov_matrix = cov_matrix + regularization * np.eye(n_assets)
+            logger.debug(f"Added regularization {regularization:.2e} to covariance matrix (min eigenvalue was {min_eigenvalue:.2e})")
+
+        # Convert HRP weights to numpy array (aligned with covariance matrix)
+        hrp_weights_np = np.array([hrp_initial_weights.get(asset, 0.0) for asset in assets])
+
+        # Define optimisation variables
+        w = cp.Variable(n_assets)
+
+        # Calculate portfolio variance with validated PSD matrix
+        portfolio_variance = cp.quad_form(w, cov_matrix)
+
+        # IMPROVED: Simplified and more robust objective function
+        # Instead of risk contribution variance, use a more stable formulation
+
+        # Penalty for deviating from HRP weights (preserve HRP structure)
+        weight_deviation = cp.sum_squares(w - hrp_weights_np)
+
+        # Penalty for concentration (encourage diversification)
+        concentration_penalty = cp.sum_squares(w)
+
+        # Combined objective: stay close to HRP + minimize variance + encourage diversification
+        # Weights: 1.0 for HRP deviation (most important), 0.5 for variance, 0.1 for diversification
+        objective = cp.Minimize(
+            1.0 * weight_deviation +
+            0.5 * portfolio_variance +
+            0.1 * concentration_penalty
+        )
+
+        # Constraints
+        constraints = [
+            cp.sum(w) == 1.0,                    # Weights sum to 1
+            w >= min_position,                    # Minimum position
+            w <= max_position,                    # Maximum position (enforced during optimisation!)
+        ]
+
+        # Solve the optimisation problem
+        problem = cp.Problem(objective, constraints)
+
+        # FIXED: Try multiple solvers in order of preference
+        # CLARABEL and OSQP are best for quadratic problems, SCS and SCIPY as fallbacks
+        solvers_to_try = [
+            (cp.CLARABEL, {"verbose": False, "max_iter": 200}),
+            (cp.OSQP, {"verbose": False, "max_iter": 200, "eps_abs": 1e-6, "eps_rel": 1e-6}),
+            (cp.SCS, {"verbose": False, "max_iters": 200}),
+            (cp.SCIPY, {"verbose": False}),
+        ]
+
+        last_error = None
+        for solver, kwargs in solvers_to_try:
+            try:
+                problem.solve(solver=solver, **kwargs)
+
+                if problem.status in [cp.OPTIMAL, cp.OPTIMAL_INACCURATE]:
+                    # Extract optimised weights
+                    optimised_weights = w.value
+
+                    # Convert back to pandas Series
+                    constrained_weights = pd.Series(optimised_weights, index=assets)
+
+                    # Final cleanup: ensure constraints are exactly met
+                    constrained_weights = constrained_weights.clip(lower=min_position, upper=max_position)
+                    constrained_weights = constrained_weights / constrained_weights.sum()
+
+                    # Log success
+                    max_weight = constrained_weights.max()
+                    logger.info(
+                        f"Constrained risk parity solved with {solver}: max_weight={max_weight:.1%}, "
+                        f"status={problem.status}, "
+                        f"deviation_from_HRP={np.linalg.norm(optimised_weights - hrp_weights_np):.4f}"
+                    )
+
+                    return constrained_weights
+                else:
+                    # Try next solver
+                    last_error = f"{solver} failed with status: {problem.status}"
+                    continue
+
+            except Exception as e:
+                # Try next solver
+                last_error = f"{solver} error: {e}"
+                continue
+
+        # All solvers failed, fall back to iterative redistribution
+        logger.warning(
+            f"All constrained risk parity solvers failed (last: {last_error}). "
+            f"Falling back to iterative redistribution."
+        )
+        return self._apply_allocation_constraints(hrp_initial_weights)
 
     def _apply_allocation_constraints(self, weights: pd.Series) -> pd.Series:
         """Apply allocation constraints and normalize."""

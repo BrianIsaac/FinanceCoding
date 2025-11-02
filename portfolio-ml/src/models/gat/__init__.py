@@ -8,6 +8,11 @@ to model complex asset relationships and optimize portfolio weights.
 from .gat_model import GATPortfolio, HeadCfg
 from .graph_builder import GraphBuildConfig, build_graph_from_returns
 from .model import GATModelConfig, GATPortfolioModel
+from .simplex_projection_head import (
+    SimplexProjectionHead,
+    RelationAwareAllocationHead,
+    DiversificationAwareProjectionHead,
+)
 
 __all__ = [
     "GATPortfolio",
@@ -16,4 +21,7 @@ __all__ = [
     "GATModelConfig",
     "GraphBuildConfig",
     "build_graph_from_returns",
+    "SimplexProjectionHead",
+    "RelationAwareAllocationHead",
+    "DiversificationAwareProjectionHead",
 ]

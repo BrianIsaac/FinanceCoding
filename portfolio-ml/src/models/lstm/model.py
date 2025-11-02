@@ -24,7 +24,9 @@ from ..base.confidence_weighted_training import (
     TrainingStrategy,
     create_confidence_weighted_trainer,
 )
-from .architecture import LSTMConfig, LSTMNetwork, create_lstm_network
+from .architecture import LSTMConfig
+from .ragged_architecture import RaggedLSTMNetwork, create_ragged_lstm_network
+from .ragged_utils import compute_sequence_statistics
 from .training import MemoryEfficientTrainer, TrainingConfig, create_trainer
 
 logger = logging.getLogger(__name__)
@@ -140,10 +142,15 @@ class LSTMPortfolioModel(PortfolioModel):
         super().__init__(constraints)
 
         self.config = config or LSTMModelConfig()
-        self.network: LSTMNetwork | None = None
+        self.network: RaggedLSTMNetwork | None = None
         self.trainer: MemoryEfficientTrainer | None = None
         self.universe: list[str] | None = None
         self.training_history: dict | None = None
+
+        # CRITICAL FIX: Track device for network recreation
+        # Auto-detect device (will be updated when trainer is created)
+        import torch
+        self._device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
         # Confidence-weighted training support
         self.confidence_trainer = create_confidence_weighted_trainer()
@@ -204,7 +211,7 @@ class LSTMPortfolioModel(PortfolioModel):
         start_date = end_date - pd.Timedelta(days=lookback_months * 30)
 
         # Load fresh returns data with buffer for sequence creation
-        training_data = self._load_fresh_returns_data(
+        training_data, valid_mask, sequence_lengths = self._load_fresh_returns_data(
             returns, start_date, end_date, universe
         )
 
@@ -212,6 +219,10 @@ class LSTMPortfolioModel(PortfolioModel):
             raise ValueError(
                 f"Insufficient data for rolling fit: {len(training_data)} < {min_observations}"
             )
+
+        # Store valid mask and sequence lengths for later use in prediction
+        self._last_valid_mask = valid_mask
+        self._sequence_lengths = sequence_lengths
 
         # Quick retrain with limited epochs
         self._quick_retrain(training_data, universe, max_epochs=20)
@@ -227,9 +238,9 @@ class LSTMPortfolioModel(PortfolioModel):
         start_date: pd.Timestamp,
         end_date: pd.Timestamp,
         universe: list[str],
-    ) -> pd.DataFrame:
+    ) -> tuple[pd.DataFrame, pd.Series, pd.Series]:
         """
-        Load sufficient data for LSTM sequences and prediction.
+        Load sufficient data for LSTM sequences and prediction with validity mask and sequence lengths.
 
         Args:
             returns: Full historical returns or path to data
@@ -238,7 +249,10 @@ class LSTMPortfolioModel(PortfolioModel):
             universe: Assets to include
 
         Returns:
-            Cleaned returns DataFrame with buffer for sequence creation
+            Tuple of (cleaned_returns, valid_mask, sequence_lengths) where:
+            - cleaned_returns: Imputed returns DataFrame
+            - valid_mask: Boolean Series of assets meeting quality criteria
+            - sequence_lengths: Series with actual sequence length per asset
         """
         # If returns is a path, load from disk
         if isinstance(returns, (str, Path)):
@@ -267,10 +281,46 @@ class LSTMPortfolioModel(PortfolioModel):
 
         filtered_returns = period_returns[available_assets]
 
-        # Clean data
-        cleaned_returns = filtered_returns.ffill().fillna(0.0)
+        # Use unified NA handling pipeline
+        from ...data.na_handling import (
+            prepare_rolling_window_data,
+            cross_sectional_mean_impute,
+            calculate_data_quality_metrics,
+        )
 
-        return cleaned_returns
+        prepared_returns, masks = prepare_rolling_window_data(
+            returns_window=filtered_returns,
+            universe=available_assets,
+            coverage_threshold=0.75,  # LSTM-specific threshold
+            variance_threshold=1e-8,
+            return_masks=True,
+        )
+
+        # Compute sequence lengths (count non-NA values per asset)
+        sequence_lengths = (~prepared_returns.isna()).sum(axis=0)
+
+        # Use cross-sectional mean imputation
+        if hasattr(self, 'universe_df') and self.universe_df is not None:
+            from ...utils.membership_aware_cleaning import create_membership_mask
+            mask_for_imputation = create_membership_mask(prepared_returns, self.universe_df)
+            cleaned_returns = cross_sectional_mean_impute(
+                prepared_returns,
+                membership_mask=mask_for_imputation,
+            )
+        else:
+            cleaned_returns = cross_sectional_mean_impute(prepared_returns)
+
+        # Final fallback
+        cleaned_returns = cleaned_returns.fillna(0.0)
+
+        # Store quality metrics for backtest tracking
+        self._last_data_quality_metrics = calculate_data_quality_metrics(
+            prepared_returns,
+            available_assets,
+            masks,
+        )
+
+        return cleaned_returns, masks['valid'], sequence_lengths
 
     def _adjust_data_to_optimal_size(self, data: pd.DataFrame, universe: list[str], target_size: int) -> pd.DataFrame:
         """
@@ -349,9 +399,20 @@ class LSTMPortfolioModel(PortfolioModel):
                 # Too much padding would be needed - use current size instead
                 logger.warning(f"Refusing to pad {current_size} -> {target_size} (would be {padding_needed/target_size:.1%} padding)")
                 # Update target size to current size
-                self.config.input_size = current_size
-                self.config.output_size = current_size
-                self.network = create_lstm_network(self.config)
+                self.config.lstm_config.input_size = current_size
+                self.config.lstm_config.output_size = current_size
+                self.network = create_ragged_lstm_network(self.config.lstm_config)
+
+                # CRITICAL FIX: Apply device placement to recreated network
+                # This ensures buffers are on the correct device (CUDA/CPU)
+                if hasattr(self, '_device'):
+                    self.network = self.network.to(self._device)
+                    for name, buffer in self.network.named_buffers():
+                        if buffer.device != self._device:
+                            buffer.data = buffer.data.to(self._device)
+                            logger.debug(f"Moved recreated network buffer '{name}' to {self._device}")
+                    logger.debug(f"Applied device placement to recreated network: {self._device}")
+
                 logger.info(f"Recreated network with input_size={current_size}")
                 return data
 
@@ -386,11 +447,25 @@ class LSTMPortfolioModel(PortfolioModel):
         max_size = getattr(self.config.lstm_config, 'max_input_size', 700)
         optimal_size = max(min_size, min(current_universe_size, max_size))
 
+        # CRITICAL FIX: Track if network is being recreated
+        network_recreated = False
+
         if self.network is None or self.config.lstm_config.input_size != optimal_size:
             # Create network with optimal size for current universe
             self.config.lstm_config.input_size = optimal_size
             self.config.lstm_config.output_size = optimal_size
-            self.network = create_lstm_network(self.config.lstm_config)
+            self.network = create_ragged_lstm_network(self.config.lstm_config)
+
+            # CRITICAL FIX: Immediately move network to correct device
+            if hasattr(self, '_device'):
+                self.network = self.network.to(self._device)
+                # Ensure ALL buffers are on the correct device
+                for name, buffer in self.network.named_buffers():
+                    if buffer.device != self._device:
+                        buffer.data = buffer.data.to(self._device)
+                logger.debug(f"Moved recreated network and all buffers to {self._device}")
+
+            network_recreated = True
             logger.info(f"Created LSTM network with input_size={optimal_size} for universe_size={current_universe_size}")
 
         # Check if we have sufficient data for training
@@ -400,7 +475,7 @@ class LSTMPortfolioModel(PortfolioModel):
             # Keep existing weights if any, or initialize random weights
             if self.network is None:
                 logger.info("Initializing network with random weights due to insufficient training data")
-                self.network = create_lstm_network(self.config.lstm_config)
+                self.network = create_ragged_lstm_network(self.config.lstm_config)
                 self.is_fitted = True  # Mark as fitted to allow predictions with random weights
             return
 
@@ -452,7 +527,9 @@ class LSTMPortfolioModel(PortfolioModel):
         )
 
         # Create or update trainer with adjusted parameters
-        if self.trainer is None:
+        # CRITICAL FIX: Always recreate trainer if network was recreated
+        # This ensures optimizer, scaler, and criterion are initialized with correct device
+        if self.trainer is None or network_recreated:
             # Create new trainer with confidence-adjusted epochs
             quick_config = TrainingConfig(
                 epochs=adjusted_params.get("epochs", max_epochs),
@@ -462,11 +539,30 @@ class LSTMPortfolioModel(PortfolioModel):
                 weight_decay=adjusted_params.get("weight_decay", 0.001),
                 use_mixed_precision=self.config.training_config.use_mixed_precision,
             )
+
+            # Clean up old trainer if it exists
+            if self.trainer is not None:
+                logger.debug("Recreating trainer due to network architecture change")
+                # Clear optimizer state
+                if hasattr(self.trainer, 'optimizer'):
+                    self.trainer.optimizer.zero_grad()
+                # Clear CUDA cache
+                import torch
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+
             self.trainer = create_trainer(self.network, quick_config)
+
+            # CRITICAL FIX: Update device reference from trainer for network recreation
+            self._device = self.trainer.device
+            logger.info(f"Created new trainer for network with input_size={self.network.config.input_size} on device {self._device}")
         else:
-            # Update existing trainer config
+            # Update existing trainer config only (network reference stays the same)
             self.trainer.config.epochs = max_epochs
             self.trainer.config.patience = 5
+            logger.debug(
+                f"Updated trainer config for network with input_size={self.network.config.input_size}"
+            )
 
         # Perform quick training
         try:
@@ -518,13 +614,16 @@ class LSTMPortfolioModel(PortfolioModel):
         logger.info(f"Using LSTM input_size={optimal_size} for universe_size={current_universe_size}")
 
         # Create LSTM network with optimal dimensions
-        self.network = create_lstm_network(self.config.lstm_config)
+        self.network = create_ragged_lstm_network(self.config.lstm_config)
 
         # Adjust training data to match optimal dimensions (minimal padding)
         training_data = self._adjust_data_to_optimal_size(training_data, universe, optimal_size)
 
         # Create trainer
         self.trainer = create_trainer(self.network, self.config.training_config)
+
+        # CRITICAL FIX: Update device reference from trainer for network recreation
+        self._device = self.trainer.device
 
         # Train model
         self.training_history = self.trainer.fit(
@@ -554,6 +653,12 @@ class LSTMPortfolioModel(PortfolioModel):
 
         Raises:
             ValueError: If model is not fitted or universe is invalid
+
+        Note:
+            During inference, the model processes a single batch containing all assets.
+            The lengths tensor has shape (1,) indicating the number of valid timesteps
+            in the sequence. We use the minimum sequence length across all selected
+            assets to ensure all data at each timestep is valid.
         """
         if not self.is_fitted or self.network is None:
             raise ValueError("Model must be fitted before generating predictions")
@@ -661,10 +766,33 @@ class LSTMPortfolioModel(PortfolioModel):
             device = next(self.network.parameters()).device
             input_sequences = input_sequences.to(device)
 
-            # Run forward pass through trained network
+            # Prepare lengths for batch (single sequence during inference)
+            # Shape must be (batch_size,) = (1,) for inference
+            if hasattr(self, '_sequence_lengths'):
+                # Use the minimum sequence length across selected assets
+                # This ensures all assets have valid data for this many timesteps
+                min_length = min(
+                    self._sequence_lengths.loc[asset] if asset in self._sequence_lengths.index
+                    else self.config.lstm_config.sequence_length
+                    for asset in selected_assets
+                )
+                pred_lengths = torch.tensor(
+                    [min_length],  # Single value for batch_size=1
+                    dtype=torch.long,
+                    device=device
+                )
+            else:
+                # Fallback: assume full length
+                pred_lengths = torch.tensor(
+                    [self.config.lstm_config.sequence_length],  # Shape is (1,)
+                    dtype=torch.long,
+                    device=device
+                )
+
+            # Run forward pass through trained network with ragged tensors
             self.network.eval()
             with torch.no_grad():
-                predictions, _ = self.network(input_sequences)
+                predictions, _ = self.network(input_sequences, pred_lengths)
                 # Extract predictions for the selected assets
                 predicted_returns_raw = predictions.cpu().numpy().flatten()
 
@@ -984,8 +1112,18 @@ class LSTMPortfolioModel(PortfolioModel):
 
                 historical_data = historical_data[available_assets]
 
-                # More flexible data cleaning - allow more missing data
-                historical_data = historical_data.ffill(limit=10).fillna(0)
+                # Use cross-sectional mean imputation (consistent with training)
+                from ...data.na_handling import cross_sectional_mean_impute
+
+                if hasattr(self, 'universe_df') and self.universe_df is not None:
+                    from ...utils.membership_aware_cleaning import create_membership_mask
+                    mask_for_imputation = create_membership_mask(historical_data, self.universe_df)
+                    historical_data = cross_sectional_mean_impute(
+                        historical_data,
+                        membership_mask=mask_for_imputation,
+                    )
+                else:
+                    historical_data = cross_sectional_mean_impute(historical_data)
 
                 if len(historical_data) >= 30:  # Reduced minimum observations
                     return historical_data
@@ -1035,8 +1173,18 @@ class LSTMPortfolioModel(PortfolioModel):
         mask = (returns.index >= fit_period[0]) & (returns.index <= fit_period[1])
         training_data = returns.loc[mask, universe].copy()
 
-        # Handle missing data
-        training_data = training_data.ffill().fillna(0.0)
+        # Use cross-sectional mean imputation (consistent with training)
+        from ...data.na_handling import cross_sectional_mean_impute
+
+        if hasattr(self, 'universe_df') and self.universe_df is not None:
+            from ...utils.membership_aware_cleaning import create_membership_mask
+            mask_for_imputation = create_membership_mask(training_data, self.universe_df)
+            training_data = cross_sectional_mean_impute(
+                training_data,
+                membership_mask=mask_for_imputation,
+            )
+        else:
+            training_data = cross_sectional_mean_impute(training_data)
 
         # Validate data quality
         if training_data.isna().sum().sum() > 0:
@@ -1147,7 +1295,7 @@ class LSTMPortfolioModel(PortfolioModel):
                 self.training_history = model_state.get("training_history", [])
 
                 # Recreate network with loaded config
-                self.network = create_lstm_network(self.config.lstm_config)
+                self.network = create_ragged_lstm_network(self.config.lstm_config)
 
                 # Load network weights
                 network_key = "network_state_dict" if "network_state_dict" in model_state else "model_state_dict"
@@ -1196,7 +1344,7 @@ class LSTMPortfolioModel(PortfolioModel):
                 logger.info(f"Inferred LSTM config from checkpoint: hidden_size={self.config.lstm_config.hidden_size}, input_size={self.config.lstm_config.input_size}, output_size={self.config.lstm_config.output_size}")
 
                 # Recreate network with loaded config
-                self.network = create_lstm_network(self.config.lstm_config)
+                self.network = create_ragged_lstm_network(self.config.lstm_config)
 
                 # Load model weights with flexible key names
                 model_key = None
@@ -1227,7 +1375,7 @@ class LSTMPortfolioModel(PortfolioModel):
                     self.config.lstm_config.dropout = config_obj["dropout"]
 
                 # Recreate network with loaded config
-                self.network = create_lstm_network(self.config.lstm_config)
+                self.network = create_ragged_lstm_network(self.config.lstm_config)
 
                 # Load model weights with flexible key names
                 model_key = None
@@ -1255,7 +1403,7 @@ class LSTMPortfolioModel(PortfolioModel):
 
             # Recreate and load network
             network_key = "network_state_dict" if "network_state_dict" in model_state else "model_state_dict"
-            self.network = create_lstm_network(self.config.lstm_config)
+            self.network = create_ragged_lstm_network(self.config.lstm_config)
             self.network.load_state_dict(model_state[network_key])
 
             self.is_fitted = True
@@ -1289,8 +1437,18 @@ class LSTMPortfolioModel(PortfolioModel):
 
                 historical_data = all_returns.loc[start_date:end_date, available_assets]
 
-                # Forward fill missing values and ensure sufficient data
-                historical_data = historical_data.ffill().fillna(0.0)
+                # Use cross-sectional mean imputation (consistent with training)
+                from ...data.na_handling import cross_sectional_mean_impute
+
+                if hasattr(self, 'universe_df') and self.universe_df is not None:
+                    from ...utils.membership_aware_cleaning import create_membership_mask
+                    mask_for_imputation = create_membership_mask(historical_data, self.universe_df)
+                    historical_data = cross_sectional_mean_impute(
+                        historical_data,
+                        membership_mask=mask_for_imputation,
+                    )
+                else:
+                    historical_data = cross_sectional_mean_impute(historical_data)
 
                 if len(historical_data) < self.config.lstm_config.sequence_length:
                     raise ValueError(f"Insufficient historical data: {len(historical_data)} < {self.config.lstm_config.sequence_length}")

@@ -111,6 +111,7 @@ class SharpeRatioLoss(nn.Module):
         lookback_window: int = 252,
         debug_mode: bool = False,
         min_loss_threshold: float = 1e-6,
+        formulation: str = "standard",
     ):
         """
         Initialize Sharpe ratio loss with enhanced debugging.
@@ -121,6 +122,7 @@ class SharpeRatioLoss(nn.Module):
             lookback_window: Window for return statistics calculation
             debug_mode: Enable detailed debugging output
             min_loss_threshold: Minimum loss value to prevent zero gradients
+            formulation: Loss formulation - "standard" (-μ/σ) or "logarithmic" (-ln(μ̂) + 2*ln(σ̂))
         """
         super().__init__()
         self.risk_free_rate = risk_free_rate
@@ -128,6 +130,7 @@ class SharpeRatioLoss(nn.Module):
         self.lookback_window = lookback_window
         self.debug_mode = debug_mode
         self.min_loss_threshold = min_loss_threshold
+        self.formulation = formulation
         self._call_count = 0
 
     def forward(
@@ -226,13 +229,43 @@ class SharpeRatioLoss(nn.Module):
                 # Use a reasonable default volatility estimate
                 std_excess = torch.tensor(0.01, device=excess_returns.device)
 
-        # Robust Sharpe ratio calculation with gradient-friendly clamping
-        eps = 1e-6
-        mean_excess_stable = torch.clamp(mean_excess, min=-10.0, max=10.0)
-        std_excess_stable = torch.clamp(std_excess, min=eps, max=10.0)
+        # Compute Sharpe ratio based on formulation
+        if self.formulation == "logarithmic":
+            # Paper formulation: -ln(μ̂) + 2*ln(σ̂)
+            # Shift mean to positive range for log stability
+            mean_excess_shifted = mean_excess + 1.0  # Shift to positive range
+            std_excess_stable = torch.clamp(std_excess, min=1e-6)
 
-        sharpe_ratio = mean_excess_stable / std_excess_stable
-        sharpe_ratio = torch.clamp(sharpe_ratio, min=-5.0, max=5.0)
+            # Logarithmic formulation
+            sharpe_loss = -torch.log(mean_excess_shifted + 1e-8) + 2.0 * torch.log(std_excess_stable)
+            sharpe_loss = torch.clamp(sharpe_loss, min=-10.0, max=10.0)  # Prevent extreme values
+
+            # Note: sharpe_loss is already the loss (not ratio), so we don't negate below
+            sharpe_ratio = sharpe_loss  # For consistency with variable naming
+        else:
+            # Standard formulation: -μ/σ with improved stability
+            # FIX: Use adaptive formulation based on std magnitude
+            eps = 1e-6
+
+            # Check if we have reasonable standard deviation
+            # Handle both scalar and tensor cases
+            if torch.all(std_excess > 0.001):
+                # Standard formulation when std is reasonable
+                mean_excess_stable = torch.clamp(mean_excess, min=-10.0, max=10.0)
+                std_excess_stable = torch.clamp(std_excess, min=eps, max=10.0)
+                sharpe_ratio = mean_excess_stable / std_excess_stable
+            else:
+                # Use logarithmic approximation for small std (more stable)
+                # This prevents division by near-zero values
+                mean_shifted = torch.clamp(mean_excess + 1.0, min=eps)
+                std_clamped = torch.clamp(std_excess, min=eps)
+
+                # Logarithmic Sharpe approximation
+                log_sharpe = torch.log(mean_shifted) - torch.log(std_clamped)
+                # Bounded output using tanh
+                sharpe_ratio = torch.tanh(log_sharpe / 2.0) * 3.0  # Bounded [-3, 3]
+
+            sharpe_ratio = torch.clamp(sharpe_ratio, min=-5.0, max=5.0)
 
         # Enhanced constraint penalties with proper gradient flow
         weight_sum_error = torch.abs(portfolio_weights.sum(dim=-1) - 1.0)
@@ -252,7 +285,13 @@ class SharpeRatioLoss(nn.Module):
             logger.debug(f"  Concentration penalty: {concentration_penalty:.6f}")
 
         # Compute loss components with enhanced stability
-        sharpe_component = -sharpe_ratio.mean()
+        if self.formulation == "logarithmic":
+            # sharpe_ratio is already the loss for logarithmic formulation
+            sharpe_component = sharpe_ratio.mean()
+        else:
+            # For standard formulation, negate to convert ratio to loss
+            sharpe_component = -sharpe_ratio.mean()
+
         constraint_component = (
             weight_sum_penalty +
             negative_weight_penalty +

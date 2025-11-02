@@ -13,8 +13,8 @@ Key features added/kept vs. your previous version:
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
 import logging
+from dataclasses import dataclass
 
 import torch
 from torch import nn
@@ -262,6 +262,7 @@ class GATBlock(nn.Module):
         use_edge_attr: bool = True,
         edge_dim: int = 1,
         residual: bool = True,
+        activation_fn: callable = F.gelu,
     ) -> None:
         super().__init__()
         Conv = GATv2Conv if (use_gatv2 and GATv2Conv is not None) else GATConv
@@ -269,6 +270,7 @@ class GATBlock(nn.Module):
             raise RuntimeError("torch_geometric is required for GAT/GATv2.")
         self.use_edge_attr = use_edge_attr
         self.edge_dim = edge_dim if use_edge_attr else None  # type: ignore
+        self.activation_fn = activation_fn
 
         self.conv = Conv(
             in_dim,
@@ -320,7 +322,7 @@ class GATBlock(nn.Module):
         if self.residual:
             h = h + x
 
-        h = F.gelu(h)  # Using GELU for better gradient flow
+        h = self.activation_fn(h)
         h = self.ln(h)
         h = self.dropout(h)
         return h
@@ -333,6 +335,7 @@ class GATBlock(nn.Module):
 class HeadCfg:
     mode: str = "markowitz"  # "markowitz" | "direct"
     activation: str = "sparsemax"  # used only if mode == "direct": "softmax" | "sparsemax"
+    projection_method: str = "softmax"  # "softmax" | "squared" (paper method)
 
 
 class GATPortfolio(nn.Module):
@@ -364,6 +367,11 @@ class GATPortfolio(nn.Module):
         constraint_aware: bool = True,
         portfolio_temperature: float = 1.0,
         graph_type: str = "default",  # For selecting appropriate projection head
+        projection_method: str = "softmax",  # "softmax" or "squared"
+        activation_fn: str = "gelu",  # "gelu" | "leaky_relu" | "relu"
+        use_temporal_encoder: bool = False,  # NEW: Enable temporal encoding
+        temporal_encoder_type: str = "conv1d",  # NEW: Type of temporal encoder
+        timeseries_length: int = 60,  # NEW: Expected time-series length
     ) -> None:
         super().__init__()
         self.graph_type = graph_type
@@ -372,10 +380,41 @@ class GATPortfolio(nn.Module):
         self.head_activation = activation if head == "direct" else "none"
         self.constraint_aware = constraint_aware
         self.portfolio_temperature = portfolio_temperature
+        self.projection_method = projection_method
+        self.use_temporal_encoder = use_temporal_encoder
+
+        # Map activation function name to torch function
+        activation_map = {
+            "gelu": F.gelu,
+            "leaky_relu": F.leaky_relu,
+            "relu": F.relu,
+        }
+        self.activation_fn = activation_map.get(activation_fn, F.gelu)
+
+        # Optional temporal encoder for time-series node features
+        if use_temporal_encoder:
+            from .temporal_encoders import create_temporal_encoder
+
+            self.temporal_encoder = create_temporal_encoder(
+                encoder_type=temporal_encoder_type,
+                input_features=in_dim,
+                hidden_dim=hidden_dim,
+            )
+
+            # GAT layers receive encoded features
+            gat_input_dim = hidden_dim
+
+            logger.info(
+                f"Using {temporal_encoder_type} temporal encoder: "
+                f"{in_dim} features × {timeseries_length} timesteps → {hidden_dim}D"
+            )
+        else:
+            self.temporal_encoder = None
+            gat_input_dim = in_dim
 
         # Backbone with enhanced architecture
         layers = []
-        d_in = in_dim
+        d_in = gat_input_dim
         for li in range(num_layers):
             # Progressive hidden dimension reduction for better feature compression
             layer_hidden = hidden_dim if li < num_layers - 1 else max(hidden_dim // 2, 32)
@@ -389,6 +428,7 @@ class GATPortfolio(nn.Module):
                 use_edge_attr=use_edge_attr,
                 edge_dim=3,  # Enhanced for [rho, |rho|, sign] edge attributes
                 residual=residual,
+                activation_fn=self.activation_fn,
             )
             layers.append(block)
             d_in = layer_hidden
@@ -400,9 +440,11 @@ class GATPortfolio(nn.Module):
         # Enhanced readout with portfolio-specific layers
         if constraint_aware and head == "direct":
             # Portfolio-aware readout for direct weight prediction
+            # FIX: Use LayerNorm instead of BatchNorm1d for single-sample training stability
+            # BatchNorm fails with small batch sizes (2-3 samples), causing NaN losses
             self.readout = nn.Sequential(
                 nn.Linear(self.head_in_dim, self.head_in_dim * 2),
-                nn.BatchNorm1d(self.head_in_dim * 2),
+                nn.LayerNorm(self.head_in_dim * 2),  # LayerNorm works with single samples
                 nn.GELU(),
                 nn.Dropout(dropout),
                 nn.Linear(self.head_in_dim * 2, hidden_dim),
@@ -464,8 +506,9 @@ class GATPortfolio(nn.Module):
                         diversification_strength=2.0,
                         dropout=dropout,
                         temperature=portfolio_temperature,
+                        projection_method=projection_method,
                     )
-                    logger.info(f"Using DiversificationAwareProjectionHead for {graph_type}")
+                    logger.info(f"Using DiversificationAwareProjectionHead with {projection_method} projection for {graph_type}")
                 elif graph_type.lower() == 'mst':
                     # MST benefits from relation-aware allocation
                     self.simplex_projection_head = RelationAwareAllocationHead(
@@ -475,8 +518,9 @@ class GATPortfolio(nn.Module):
                         attention_dim=heads,
                         dropout=dropout,
                         temperature=portfolio_temperature,
+                        projection_method=projection_method,
                     )
-                    logger.info(f"Using RelationAwareAllocationHead for {graph_type}")
+                    logger.info(f"Using RelationAwareAllocationHead with {projection_method} projection for {graph_type}")
                 else:
                     # Default simplex projection
                     self.simplex_projection_head = SimplexProjectionHead(
@@ -485,8 +529,9 @@ class GATPortfolio(nn.Module):
                         num_layers=2,
                         dropout=dropout,
                         temperature=portfolio_temperature,
+                        projection_method=projection_method,
                     )
-                    logger.info("Using standard SimplexProjectionHead")
+                    logger.info(f"Using standard SimplexProjectionHead with {projection_method} projection")
             else:
                 self.simplex_projection_head = None
                 logger.warning("Falling back to direct attention weights (incorrect but compatible)")
@@ -511,15 +556,66 @@ class GATPortfolio(nn.Module):
 
     def forward(
         self,
-        x: torch.Tensor,  # [N, F]
+        x: torch.Tensor,  # [N, F] or [N, T, F] if temporal
         edge_index: torch.Tensor,  # [2, E]
         mask_valid: torch.Tensor,  # [N] bool
         edge_attr: torch.Tensor | None = None,  # [E, d_e] optional
         prev_mem: torch.Tensor | None = None,  # [N, mem_dim] optional
         prev_weights: torch.Tensor | None = None,  # [N] for regularization
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]:
+        """
+        Forward pass through GAT portfolio model.
+
+        Node Features:
+        -------------
+        Current implementation (static features):
+            The input tensor x contains static/current features for each asset:
+            - Shape: (num_assets, input_features) for single instance or (batch_size, num_assets, input_features)
+            - Features typically include: returns, volatility, momentum, valuation metrics
+            - These are scalar values representing the current state of each asset
+
+        With temporal encoder (time-series features):
+            When use_temporal_encoder=True, x contains time-series features:
+            - Shape: (num_assets, time_steps, input_features)
+            - The temporal encoder (LSTM/Conv1D/Transformer) processes the time dimension
+            - Output is then fed to GAT layers as static features: (num_assets, hidden_dim)
+
+        Paper specification (time-series features):
+            The paper (arXiv:2407.15532) uses time-series volatility vectors as node features:
+            - Each node contains a vector of historical volatilities: v_u(t) = [σ_u(t-τ), ..., σ_u(t)]
+            - This captures temporal dynamics of volatility
+            - Implemented via temporal encoder modules
+
+        Args:
+            x: Static features [N, F] or time-series features [N, T, F] if temporal encoder enabled
+            edge_index: Graph connectivity (2, num_edges)
+            mask_valid: Asset availability mask (num_assets)
+            edge_attr: Optional edge features (num_edges, edge_dim)
+            prev_mem: Previous temporal memory state (num_assets, mem_dim)
+            prev_weights: Previous portfolio weights for regularisation (num_assets)
+
+        Returns:
+            Tuple of (portfolio_weights or mu_hat, new_memory_state, regularisation_loss)
+        """
+        # Handle temporal encoding if enabled
+        if self.temporal_encoder is not None:
+            # x: [N, T, F] time-series features
+            num_assets = x.shape[0]
+            time_steps = x.shape[1]
+            num_features = x.shape[2]
+
+            # Encode temporal patterns
+            h = self.temporal_encoder(x)  # [N, encoded_dim]
+
+            logger.debug(
+                f"Temporal encoding: [{num_assets}, {time_steps}, {num_features}] "
+                f"→ [{num_assets}, {h.shape[1]}]"
+            )
+        else:
+            # x: [N, F] static features (backward compatible)
+            h = x
+
         # Backbone
-        h = x
         for block in self.gnn:
             h = block(h, edge_index, edge_attr if self.use_edge_attr else None)
 
@@ -529,7 +625,7 @@ class GATPortfolio(nn.Module):
                 prev_mem = torch.zeros(h.size(0), self._mem_dim, device=h.device, dtype=h.dtype)
             m_new = self.mem_gru(h, prev_mem)
             h = torch.cat([h, m_new], dim=-1)
-            h = F.gelu(self.mem_fuse(h))
+            h = self.activation_fn(self.mem_fuse(h))
         else:
             m_new = torch.zeros(h.size(0), 0, device=h.device, dtype=h.dtype)
 

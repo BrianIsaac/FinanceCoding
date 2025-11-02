@@ -186,25 +186,55 @@ class HRPModel(PortfolioModel):
                 f"Insufficient observations: {len(fitted_returns)} < {self.hrp_config.min_observations}"
             )
 
-        # Remove assets with too much missing data
-        coverage_threshold = 0.8
-        asset_coverage = fitted_returns.count() / len(fitted_returns)
-        sufficient_assets = asset_coverage[asset_coverage >= coverage_threshold].index.tolist()
+        # Use unified NA handling pipeline
+        from ...data.na_handling import (
+            prepare_rolling_window_data,
+            cross_sectional_mean_impute,
+            calculate_data_quality_metrics,
+        )
+
+        prepared_returns, masks = prepare_rolling_window_data(
+            returns_window=fitted_returns,
+            universe=available_assets,
+            coverage_threshold=0.80,  # HRP requires high quality data
+            variance_threshold=1e-8,
+            return_masks=True,
+        )
 
         min_assets = min(2, len(universe))  # At least 2 assets for clustering, or size of universe
-        if len(sufficient_assets) < min_assets:
-            raise ValueError(f"Too few assets with sufficient data: {len(sufficient_assets)}")
+        if masks['valid'].sum() < min_assets:
+            raise ValueError(f"Too few assets with sufficient data: {masks['valid'].sum()}")
 
-        final_returns = fitted_returns[sufficient_assets]
+        # HRP requires complete data - use cross-sectional mean imputation
+        final_returns = prepared_returns
 
-        # Remove assets with zero variance to avoid NaN in correlation matrix
-        returns_std = final_returns.std()
-        non_zero_variance_assets = returns_std[returns_std > 1e-8].index.tolist()
+        # Create membership mask if universe_df is available
+        if hasattr(self, 'universe_df') and self.universe_df is not None:
+            from ...utils.membership_aware_cleaning import create_membership_mask
+            membership_mask = create_membership_mask(final_returns, self.universe_df)
+            final_returns = cross_sectional_mean_impute(
+                final_returns,
+                membership_mask=membership_mask,
+            )
+        else:
+            final_returns = cross_sectional_mean_impute(final_returns)
+
+        # Final fallback to zero for any remaining NAs
+        final_returns = final_returns.fillna(0.0)
+
+        non_zero_variance_assets = masks['valid'][masks['valid']].index.tolist()
 
         if len(non_zero_variance_assets) < 2:
             raise ValueError(f"Too few assets with non-zero variance: {len(non_zero_variance_assets)}")
 
         final_returns = final_returns[non_zero_variance_assets]
+
+        # Store data quality metrics for backtest tracking
+        self._last_data_quality_metrics = calculate_data_quality_metrics(
+            prepared_returns,
+            available_assets,
+            masks,
+        )
 
         # Calculate covariance matrix with shrinkage for large universes
         covariance_matrix = self._calculate_robust_covariance(final_returns)
@@ -319,15 +349,48 @@ class HRPModel(PortfolioModel):
 
         filtered_returns = period_returns[available_assets]
 
-        # Clean data: forward fill then drop remaining NaN
-        cleaned_returns = filtered_returns.ffill().dropna(axis=1, how='all')
+        # Use unified NA handling pipeline
+        from ...data.na_handling import prepare_rolling_window_data, cross_sectional_mean_impute
 
-        # Remove assets with zero variance
-        returns_std = cleaned_returns.std()
-        non_zero_variance_assets = returns_std[returns_std > 1e-8].index.tolist()
+        prepared_returns, masks = prepare_rolling_window_data(
+            returns_window=filtered_returns,
+            universe=available_assets,
+            coverage_threshold=0.80,  # HRP requires high quality data
+            variance_threshold=1e-8,
+            return_masks=True,
+        )
+
+        # HRP requires complete data - use cross-sectional mean imputation
+        cleaned_returns = prepared_returns
+
+        # Create membership mask if universe_df is available
+        if hasattr(self, 'universe_df') and self.universe_df is not None:
+            from ...utils.membership_aware_cleaning import create_membership_mask
+            membership_mask = create_membership_mask(cleaned_returns, self.universe_df)
+            cleaned_returns = cross_sectional_mean_impute(
+                cleaned_returns,
+                membership_mask=membership_mask,
+            )
+        else:
+            cleaned_returns = cross_sectional_mean_impute(cleaned_returns)
+
+        # Final fallback to zero for any remaining NAs (should be minimal after CS mean)
+        cleaned_returns = cleaned_returns.fillna(0.0)
+
+        # Extract valid assets from mask
+        non_zero_variance_assets = masks['valid'][masks['valid']].index.tolist()
 
         if len(non_zero_variance_assets) < 2:
             raise ValueError(f"Too few assets with non-zero variance: {len(non_zero_variance_assets)}")
+
+        # Store data quality metrics for backtest tracking
+        from ...data.na_handling import calculate_data_quality_metrics
+
+        self._last_data_quality_metrics = calculate_data_quality_metrics(
+            prepared_returns,
+            available_assets,
+            masks,
+        )
 
         return cleaned_returns[non_zero_variance_assets]
 
@@ -452,15 +515,59 @@ class HRPModel(PortfolioModel):
             raw_weights = self.allocation_engine.recursive_bisection(
                 prediction_covariance, cluster_tree
             )
+
+            # Detailed concentration logging for Phase 10 evaluation
+            max_weight = raw_weights.max()
+            top_5_sum = raw_weights.nlargest(5).sum()
+            top_10_sum = raw_weights.nlargest(min(10, len(raw_weights))).sum()
+
+            logger.info(
+                f"HRP concentration analysis: "
+                f"max={max_weight:.1%}, "
+                f"top5={top_5_sum:.1%}, "
+                f"top10={top_10_sum:.1%}, "
+                f"n_assets={len(raw_weights)}"
+            )
+
+            if max_weight > 0.35:
+                logger.warning(
+                    f"HRP generated extreme concentration: {max_weight:.1%}. "
+                    f"Constraint engine will handle redistribution via iterative algorithm."
+                )
+                # Don't clip here - let the constraint engine's iterative redistribution handle it
+                # This avoids cascading renormalisation issues
+
+            # Store unconstrained weights for deviation logging later
+            unconstrained_weights = raw_weights.copy()
+
         except Exception as e:
             logger.warning(f"HRP allocation failed: {str(e)}")
             logger.info(f"Using equal weights for {len(prediction_assets)} assets")
             raw_weights = pd.Series(1.0 / len(prediction_assets), index=prediction_assets)
+            unconstrained_weights = raw_weights.copy()  # Store for deviation logging
 
-        # Apply portfolio constraints using base class method
-        # This handles all constraints including min_weight_threshold, top_k_positions,
-        # max_position_weight, and proper normalization
-        constrained_weights = self.validate_weights(raw_weights)
+        # FIX: Avoid double constraint enforcement
+        # Check if constraints were already applied by the allocation engine
+        if self.hrp_config.allocation_config and self.hrp_config.allocation_config.use_constrained_optimization:
+            # Constraints already applied by constrained_risk_parity_optimization
+            # Skip base class validation to avoid double enforcement
+            constrained_weights = raw_weights
+            logger.debug("Skipping base class constraints (already applied by HRP allocation engine)")
+        else:
+            # Apply portfolio constraints using base class method
+            # This handles all constraints including min_weight_threshold, top_k_positions,
+            # max_position_weight, and proper normalization
+            constrained_weights = self.validate_weights(raw_weights)
+
+        # Log deviation from unconstrained HRP to understand constraint impact
+        if 'unconstrained_weights' in locals():
+            deviation = np.linalg.norm(constrained_weights - unconstrained_weights) / (np.linalg.norm(unconstrained_weights) + 1e-8)
+            unconstrained_max = unconstrained_weights.max()
+            constrained_max = constrained_weights.max()
+            logger.info(
+                f"Constraint impact: max weight {unconstrained_max:.1%} → {constrained_max:.1%}, "
+                f"L2 deviation={deviation:.3f}"
+            )
 
         # Fallback for impossible constraints (when all weights become zero or very small)
         if constrained_weights.sum() < 0.5:  # Weights sum is too small to be valid

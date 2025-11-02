@@ -158,8 +158,12 @@ def clean_returns_with_membership(
         # Get assets in universe at this date
         date_universe = get_universe_at_date(universe_df, date)
         if len(date_universe) > 1:
+            # Filter to only tickers that exist in both universe and returns
+            available_universe = [ticker for ticker in date_universe if ticker in cleaned_returns.columns]
+            if len(available_universe) <= 1:
+                continue
             # Calculate cross-sectional statistics only for in-universe assets
-            date_returns = cleaned_returns.loc[date, date_universe]
+            date_returns = cleaned_returns.loc[date, available_universe]
             valid_returns = date_returns.dropna()
 
             if len(valid_returns) > 1:

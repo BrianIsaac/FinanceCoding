@@ -197,7 +197,8 @@ class LSTMNetwork(nn.Module):
 
         # Output projection with clamping
         predictions = self.output_projection(final_hidden)  # (batch_size, output_size)
-        predictions = torch.clamp(predictions, -1.0, 1.0)  # Reasonable returns range
+        # Clamp to match normalized returns range (±3 std covers 99.7% of normal distribution)
+        predictions = torch.clamp(predictions, -3.0, 3.0)
 
         # Compute attention weights for interpretability (stable version)
         # Use the final hidden state to compute attention over the sequence
@@ -287,12 +288,30 @@ class SharpeRatioLoss(nn.Module):
             Negative Sharpe ratio as loss tensor
         """
         # Clamp inputs to prevent extreme values
-        predicted_returns = torch.clamp(predicted_returns, -1.0, 1.0)
-        actual_returns = torch.clamp(actual_returns, -1.0, 1.0)
+        # Use ±3 to match normalized returns range (99.7% of normal distribution)
+        predicted_returns = torch.clamp(predicted_returns, -3.0, 3.0)
+        actual_returns = torch.clamp(actual_returns, -3.0, 3.0)
 
         if portfolio_weights is None:
-            # Use predicted returns as weights (after normalization)
-            portfolio_weights = F.softmax(predicted_returns, dim=-1)
+            # FIX: Use differentiable softmax for gradient flow
+            # The argsort operation was non-differentiable and broke gradient computation
+            # Softmax provides smooth, differentiable portfolio weights
+
+            # Temperature parameter controls allocation sharpness
+            # Lower temperature = more concentrated allocations
+            # Higher temperature = more uniform allocations
+            temperature = 2.0  # Moderate temperature for balanced allocations
+
+            # Apply softmax to get differentiable portfolio weights
+            # This maintains gradient flow through the entire computation graph
+            portfolio_weights = F.softmax(predicted_returns / temperature, dim=-1)
+
+            # Optional: Apply position constraints if needed
+            if hasattr(self, 'max_position_weight') and self.max_position_weight is not None:
+                # Clamp weights to maximum position size
+                portfolio_weights = torch.clamp(portfolio_weights, max=self.max_position_weight)
+                # Renormalise to ensure weights sum to 1
+                portfolio_weights = portfolio_weights / portfolio_weights.sum(dim=-1, keepdim=True)
 
         # Compute portfolio returns with explicit shape alignment
         # Ensure both tensors have the same shape before multiplication
@@ -310,29 +329,39 @@ class SharpeRatioLoss(nn.Module):
 
         # Compute Sharpe ratio with numerical stability
         mean_excess = excess_returns.mean()
+        std_excess = excess_returns.std()
 
-        # Add larger epsilon for financial data stability (volatility can be very low)
-        eps = 1e-3
-        std_excess = excess_returns.std() + eps
+        # Use logarithmic formulation for better numerical stability
+        # This avoids division by small numbers and provides smoother gradients
+        eps = 1e-6
+
+        # Check if we have enough variation for standard Sharpe
+        # Handle both scalar and tensor cases
+        if torch.all(std_excess > 0.001):
+            # Standard formulation when std is reasonable
+            sharpe_ratio = mean_excess / std_excess
+        else:
+            # Logarithmic formulation for small std (more stable)
+            # log(mean/std) = log(mean) - log(std)
+            # Shift mean to positive range for log stability
+            mean_shifted = torch.clamp(mean_excess + 1.0, min=eps)
+            std_clamped = torch.clamp(std_excess, min=eps)
+
+            # Logarithmic Sharpe approximation
+            log_sharpe = torch.log(mean_shifted) - torch.log(std_clamped)
+            # Scale to match standard Sharpe magnitude
+            sharpe_ratio = torch.tanh(log_sharpe) * 3.0  # Bounded [-3, 3]
 
         # Check for NaN or inf values
-        if not torch.isfinite(mean_excess) or not torch.isfinite(std_excess):
-            # Fallback to MSE loss to provide gradient signal
-            mse_loss = F.mse_loss(predicted_returns, actual_returns)
-            # Scale MSE loss to similar magnitude as Sharpe ratio (no constant offset!)
-            return mse_loss * 10.0  # Scale but allow gradients to flow
-
-        sharpe_ratio = mean_excess / std_excess
-
-        # Check for NaN in final sharpe ratio
         if not torch.isfinite(sharpe_ratio):
             # Fallback to MSE loss to provide gradient signal
             mse_loss = F.mse_loss(predicted_returns, actual_returns)
-            # Scale MSE loss to similar magnitude as Sharpe ratio (no constant offset!)
+            # Scale MSE loss to similar magnitude as Sharpe ratio
             return mse_loss * 10.0  # Scale but allow gradients to flow
 
-        # Clamp the result to prevent extreme values (wider range for financial data)
-        sharpe_ratio = torch.clamp(sharpe_ratio, -5.0, 5.0)
+        # Clamp Sharpe ratio to prevent extreme gradients
+        # Realistic Sharpe ratios: -2 to +3 typical, -10 to +10 covers extremes
+        sharpe_ratio = torch.clamp(sharpe_ratio, -10.0, 10.0)
 
         # Add entropy regularisation to encourage diversification
         # Entropy = -sum(w * log(w)) where w are portfolio weights

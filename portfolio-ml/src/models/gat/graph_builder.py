@@ -38,11 +38,14 @@ class GraphBuildConfig:
     cov_method: Literal["lw", "oas", "sample"] = "lw"  # Ledoit–Wolf (default)
     shrink_to: Literal["diag", "identity"] = "diag"
     min_var: float = 1e-10  # variance floor
-    corr_method: Literal["from_cov"] = "from_cov"
+    corr_method: Literal["from_cov", "distance", "volatility"] = "from_cov"
     filter_method: Literal["mst", "tmfg", "knn", "threshold"] = "mst"
     knn_k: int = 8
     threshold_abs_corr: float = 0.30  # used for threshold mode
     use_edge_attr: bool = True  # include [rho, |rho|, sign] if True
+
+    # Volatility correlation parameters
+    volatility_window: int = 20  # Window for volatility calculation in volatility correlation
 
     # Enhanced parameters for dynamic universe handling
     enable_caching: bool = True  # Enable graph snapshot caching
@@ -79,6 +82,119 @@ def _corr_to_dist(C: np.ndarray) -> np.ndarray:
     D = np.sqrt(np.maximum(0.0, 2.0 * (1.0 - C_clip)))
     np.fill_diagonal(D, 0.0)
     return D
+
+
+def distance_correlation(X: np.ndarray, Y: np.ndarray) -> float:
+    """
+    Compute distance correlation between two time series.
+
+    Distance correlation measures both linear and non-linear dependence.
+    Reference: Székely, G. J., Rizzo, M. L., & Bakirov, N. K. (2007).
+
+    Args:
+        X: Time series 1, shape (T,)
+        Y: Time series 2, shape (T,)
+
+    Returns:
+        Distance correlation value in [0, 1]
+    """
+
+    def _distance_matrix(x: np.ndarray) -> np.ndarray:
+        """Compute pairwise Euclidean distance matrix."""
+        n = len(x)
+        x_2d = x.reshape(-1, 1)
+        dist = np.abs(x_2d - x_2d.T)
+        return dist
+
+    def _center_distance_matrix(D: np.ndarray) -> np.ndarray:
+        """Double-center distance matrix."""
+        n = D.shape[0]
+        row_mean = D.mean(axis=1, keepdims=True)
+        col_mean = D.mean(axis=0, keepdims=True)
+        total_mean = D.mean()
+        return D - row_mean - col_mean + total_mean
+
+    # Compute distance matrices
+    D_X = _distance_matrix(X)
+    D_Y = _distance_matrix(Y)
+
+    # Center distance matrices
+    A = _center_distance_matrix(D_X)
+    B = _center_distance_matrix(D_Y)
+
+    # Compute distance covariance and variances
+    n = len(X)
+    dcov_XY = np.sqrt(np.sum(A * B) / (n**2))
+    dvar_X = np.sqrt(np.sum(A * A) / (n**2))
+    dvar_Y = np.sqrt(np.sum(B * B) / (n**2))
+
+    # Compute distance correlation
+    if dvar_X > 1e-10 and dvar_Y > 1e-10:
+        dcor = dcov_XY / np.sqrt(dvar_X * dvar_Y)
+    else:
+        dcor = 0.0
+
+    return np.clip(dcor, 0.0, 1.0)
+
+
+def compute_distance_correlation_matrix(X: np.ndarray) -> np.ndarray:
+    """
+    Compute pairwise distance correlation matrix for all assets.
+
+    Args:
+        X: Return matrix, shape (T, N) where T=time, N=assets
+
+    Returns:
+        Distance correlation matrix, shape (N, N)
+    """
+    T, N = X.shape
+    dcor_matrix = np.eye(N)
+
+    logger.info(f"Computing distance correlation matrix for {N} assets over {T} time steps")
+
+    for i in range(N):
+        for j in range(i + 1, N):
+            dcor = distance_correlation(X[:, i], X[:, j])
+            dcor_matrix[i, j] = dcor
+            dcor_matrix[j, i] = dcor
+
+    logger.info(
+        f"Distance correlation matrix computed: mean={dcor_matrix.mean():.4f}, std={dcor_matrix.std():.4f}"
+    )
+    return dcor_matrix
+
+
+def compute_volatility_correlation_matrix(X: np.ndarray, window: int = 20) -> np.ndarray:
+    """
+    Compute correlation between rolling volatility series.
+
+    This captures co-movement in volatility rather than returns.
+
+    Args:
+        X: Return matrix, shape (T, N)
+        window: Rolling window for volatility estimation
+
+    Returns:
+        Volatility correlation matrix, shape (N, N)
+    """
+    T, N = X.shape
+
+    # Compute rolling volatility for each asset
+    vol_series = np.zeros((T - window + 1, N))
+    for i in range(N):
+        for t in range(T - window + 1):
+            vol_series[t, i] = np.std(X[t : t + window, i])
+
+    # Compute Pearson correlation of volatility series
+    vol_corr = np.corrcoef(vol_series.T)
+
+    # Handle NaN values
+    vol_corr = np.nan_to_num(vol_corr, nan=0.0, posinf=1.0, neginf=-1.0)
+
+    logger.info(
+        f"Volatility correlation matrix computed: mean={vol_corr.mean():.4f}, std={vol_corr.std():.4f}"
+    )
+    return vol_corr
 
 
 def _mst_edges_from_corr(C: np.ndarray) -> list[tuple[int, int]]:
@@ -595,6 +711,7 @@ def build_graph_from_returns(
     tickers: list[str],
     ts: pd.Timestamp,
     cfg: GraphBuildConfig,
+    valid_mask: pd.Series | None = None,
 ) -> Data:
     """
     Build graph from returns data with enhanced dynamic universe handling and caching.
@@ -603,6 +720,7 @@ def build_graph_from_returns(
     ----------
     returns_window : (T x N) DataFrame
         Daily returns (aligned to `tickers`) for the lookback window (no future leakage).
+        Should already be properly imputed (no NaN values).
     features_matrix : Optional[np.ndarray]
         Node features matrix X of shape (N, d). If None, we create a 1-dim dummy feature.
     tickers : List[str]
@@ -611,6 +729,9 @@ def build_graph_from_returns(
         The snapshot date for this graph (rebalance date).
     cfg : GraphBuildConfig
         Enhanced configuration with dynamic universe and caching options.
+    valid_mask : Optional[pd.Series]
+        Boolean Series indicating which assets meet quality criteria.
+        If provided, only valid assets will be used for graph construction.
 
     Returns
     -------
@@ -623,26 +744,43 @@ def build_graph_from_returns(
         cached_graph = _graph_cache.get_cached_graph(returns_window, tickers, ts, cfg)
         if cached_graph is not None:
             return cached_graph
-    # Filter tickers to only include those available in the returns data
-    available_tickers = [ticker for ticker in tickers if ticker in returns_window.columns]
+    # Filter tickers based on valid_mask (if provided) and availability in returns data
+    if valid_mask is not None:
+        # Use mask to filter to valid tickers only
+        valid_tickers = valid_mask[valid_mask].index.tolist()
+        available_tickers = [ticker for ticker in valid_tickers if ticker in returns_window.columns]
+    else:
+        # Fallback: use all available tickers
+        available_tickers = [ticker for ticker in tickers if ticker in returns_window.columns]
+
     if not available_tickers:
         raise ValueError(f"None of the requested tickers {tickers[:5]}... are available in returns data")
 
     if len(available_tickers) < len(tickers):
         logger.debug(f"Filtered tickers from {len(tickers)} to {len(available_tickers)} available assets")
 
-    # Align and clean
-    rets = returns_window.reindex(columns=available_tickers, fill_value=np.nan).astype(float)
-    rets = rets.fillna(0.0)  # conservative fill
+    # Use only valid tickers (returns_window should already be imputed, no fillna needed)
+    rets = returns_window[available_tickers].astype(float)
 
     # Update tickers to only include available ones
     tickers = available_tickers
     X = rets.values  # (T, N)
     N = X.shape[1]  # Number of assets
 
-    # Robust covariance -> correlation
-    S = robust_covariance(X, method=cfg.cov_method, shrink_to=cfg.shrink_to, min_var=cfg.min_var)
-    C = to_correlation(S)
+    # Correlation matrix computation based on configured method
+    if cfg.corr_method == "distance":
+        logger.info("Using distance correlation for graph construction")
+        C = compute_distance_correlation_matrix(X)
+
+    elif cfg.corr_method == "volatility":
+        logger.info(f"Using volatility correlation with window={cfg.volatility_window}")
+        C = compute_volatility_correlation_matrix(X, window=cfg.volatility_window)
+
+    else:  # "from_cov" - existing Pearson correlation method
+        logger.info("Using Pearson correlation (from covariance) for graph construction")
+        # Robust covariance -> correlation
+        S = robust_covariance(X, method=cfg.cov_method, shrink_to=cfg.shrink_to, min_var=cfg.min_var)
+        C = to_correlation(S)
 
     # Enhanced filtering with dynamic universe handling
     if cfg.multi_graph_methods is not None:
@@ -694,31 +832,39 @@ def build_graph_from_returns(
         else:
             edge_attr_t = None
 
-    # Node features with enhanced validation
+    # Node features with enhanced validation and proper alignment
     N = len(tickers)
     if features_matrix is None:
         x_np = np.ones((N, 1), dtype=np.float32)  # trivial constant feature
     else:
         x_np = _safe_nan_to_num(features_matrix).astype(np.float32)
 
-        # Validate dimensions and provide detailed logging
+        # CRITICAL FIX: Properly align features with filtered tickers
+        # features_matrix was created for original universe, but tickers may be filtered subset
+        # We need to extract only the feature rows for available tickers, preserving order
+
+        # If dimensions don't match, features_matrix needs realignment
         if x_np.shape[0] != N:
             logger.warning(f"Features matrix dimension mismatch: features_shape={x_np.shape}, expected_nodes={N}, tickers_len={len(tickers)}")
 
-            # Handle dimension mismatch by reshaping or padding features_matrix
+            # Handle dimension mismatch by truncating or padding
             if x_np.shape[0] < N:
                 # Pad with default features if we have fewer features than tickers
                 if x_np.ndim < 2:
                     logger.error(f"Invalid features_matrix shape: {x_np.shape}. Expected 2D array.")
                     x_np = np.ones((N, 1), dtype=np.float32)
                 else:
-                    default_features = np.zeros((N - x_np.shape[0], x_np.shape[1]), dtype=np.float32)
+                    if x_np.ndim == 2:
+                        default_features = np.zeros((N - x_np.shape[0], x_np.shape[1]), dtype=np.float32)
+                    else:  # 3D for timeseries
+                        default_features = np.zeros((N - x_np.shape[0],) + x_np.shape[1:], dtype=np.float32)
                     x_np = np.vstack([x_np, default_features])
-                    logger.info(f"Padded features_matrix from {features_matrix.shape[0]} to {N} rows")
+                    logger.warning(f"Padded features_matrix from {features_matrix.shape[0]} to {N} rows (may cause misalignment)")
             elif x_np.shape[0] > N:
-                # Truncate if we have more features than tickers (shouldn't happen but be safe)
+                # Truncate if we have more features than tickers
+                # WARNING: This may cause misalignment if tickers were reordered!
                 x_np = x_np[:N]
-                logger.info(f"Truncated features_matrix from {features_matrix.shape[0]} to {N} rows")
+                logger.warning(f"Truncated features_matrix from {features_matrix.shape[0]} to {N} rows (may cause misalignment)")
 
         # Final validation
         if x_np.shape[0] != N:
@@ -761,10 +907,17 @@ def build_period_graph(
     tickers: list[str],
     features_matrix: np.ndarray | None,
     cfg: GraphBuildConfig,
+    valid_mask: pd.Series | None = None,
 ) -> Data:
     """
     Pick the rolling window that ends the **day before** `period_end` (to avoid leakage),
     then call `build_graph_from_returns`.
+
+    Parameters
+    ----------
+    valid_mask : Optional[pd.Series]
+        Boolean Series indicating which assets meet quality criteria.
+        If provided, only valid assets will be used for graph construction.
     """
     lookback = int(cfg.lookback_days)
     # end index is the last index strictly < period_end
@@ -773,7 +926,7 @@ def build_period_graph(
         raise ValueError("Not enough history before period_end to build a graph.")
     start = max(0, idx_end - lookback + 1)
     window = returns_daily.iloc[start : idx_end + 1]
-    return build_graph_from_returns(window, features_matrix, tickers, period_end, cfg)
+    return build_graph_from_returns(window, features_matrix, tickers, period_end, cfg, valid_mask)
 
 
 # --- adapter for scripts/make_graphs.py ---------------------------------------

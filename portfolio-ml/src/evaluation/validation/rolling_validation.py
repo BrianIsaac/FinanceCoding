@@ -807,6 +807,19 @@ class TemporalIntegrityMonitor:
         self._integrity_log: list[dict[str, Any]] = []
         self._violations: list[dict[str, Any]] = []
 
+        # Initialise flexible academic validator if enabled
+        if hasattr(config, 'use_flexible_validation') and config.use_flexible_validation:
+            try:
+                self.flexible_validator = FlexibleAcademicValidator(
+                    min_confidence=config.academic_confidence_threshold,
+                    academic_standards=config.academic_standards_level,
+                )
+            except Exception:
+                # FlexibleAcademicValidator not available, set to None
+                self.flexible_validator = None
+        else:
+            self.flexible_validator = None
+
     def monitor_split_integrity(
         self, split: RollSplit, data_timestamps: list[pd.Timestamp], model_name: str = "unknown"
     ) -> dict[str, Any]:
@@ -910,18 +923,15 @@ class TemporalIntegrityMonitor:
             except ImportError:
                 # Try flexible validator if available
                 if self.config.use_flexible_validation and self.flexible_validator:
-                    dummy_data = pd.DataFrame(index=pd.date_range(
-                        start=split.train_period.start_date,
-                        periods=len(train_data),
-                        freq='D'
-                    )) if train_data else pd.DataFrame()
-
-                    # Estimate universe size
-                    universe_estimate = [f"asset_{i}" for i in range(min(100, len(data_timestamps) // 10))]
-
+                    # Create a proper dummy DataFrame with timestamps
+                    # train_data here is a list of timestamps, not a DataFrame
+                    dummy_data = pd.DataFrame(
+                        index=train_data,  # Use actual timestamps
+                        columns=[f"asset_{i}" for i in range(min(100, len(train_data) // 10))]
+                    )
                     validation_result = self.flexible_validator.validate_with_confidence(
                         data=dummy_data,
-                        universe=universe_estimate,
+                        universe=dummy_data.columns.tolist(),
                         context={}
                     )
 

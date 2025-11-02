@@ -114,7 +114,16 @@ def robust_covariance(
 
 def to_correlation(cov_matrix: np.ndarray) -> np.ndarray:
     """
-    Covariance → correlation with clipping/symmetrisation.
+    Convert covariance matrix to Pearson correlation matrix.
+
+    Note: This produces Pearson correlation. For alternative correlation
+    measures, use corr_method parameter in GraphBuildConfig.
+
+    Args:
+        cov_matrix: Covariance matrix (N, N)
+
+    Returns:
+        Correlation matrix (N, N) with values in [-1, 1]
     """
     cov_matrix = np.asarray(cov_matrix, dtype=float)
     d = np.sqrt(np.clip(np.diag(cov_matrix), 1e-12, None))

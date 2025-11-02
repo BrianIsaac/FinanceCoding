@@ -60,7 +60,53 @@ __all__ = [
 
 @dataclass
 class GATModelConfig:
-    """Configuration for GAT portfolio model."""
+    """
+    Configuration for GAT portfolio model.
+
+    Supports two presets:
+    - "enhanced": Current implementation with GATv2, residual connections, enhanced features
+    - "paper_reproduction": Matches paper specification (arXiv:2407.15532) as closely as possible
+
+    Presets automatically configure all parameters. Individual parameters can be overridden
+    after preset application by setting them explicitly after instantiation.
+
+    Key Configuration Groups:
+    ----------------------
+    Architecture: hidden_dim, num_layers, num_attention_heads, use_gatv2, residual
+    Graph Construction: graph_config (lookback_days, correlation method, filter method)
+    Loss Function: loss_formulation (standard vs logarithmic)
+    Simplex Projection: projection_method (softmax vs squared)
+    Training: learning_rate, batch_size, max_epochs, patience
+
+    Example Usage:
+    -------------
+    # Use enhanced preset (default)
+    config = GATModelConfig(preset="enhanced")
+
+    # Use paper reproduction preset
+    config = GATModelConfig(preset="paper_reproduction")
+
+    # Custom configuration
+    config = GATModelConfig(
+        preset="enhanced",
+        num_layers=4,  # Override preset value
+        hidden_dim=128,
+    )
+
+    Known Deviations from Paper:
+    ---------------------------
+    - Node features: Uses static features instead of time-series volatility vectors
+      (time-series features require architectural changes, planned for future)
+
+    See Also:
+    --------
+    - HeadCfg: Portfolio head configuration
+    - GraphBuildConfig: Graph construction configuration
+    - thoughts/shared/research/2025-10-28-gat-architecture-verification.md: Detailed comparison
+    """
+
+    # Preset selection
+    preset: str | None = None  # "enhanced" | "paper_reproduction" | None
 
     # GAT architecture parameters
     input_features: int = 10
@@ -88,6 +134,15 @@ class GATModelConfig:
     max_epochs: int = 200
     patience: int = 20
 
+    # Loss function configuration
+    loss_formulation: str = "standard"  # "standard" or "logarithmic"
+
+    # Simplex projection configuration
+    projection_method: str = "softmax"  # "softmax" or "squared"
+
+    # Activation function
+    activation_fn: str = "gelu"  # "gelu" | "leaky_relu" | "relu"
+
     # Memory optimization
     use_mixed_precision: bool = True
     gradient_checkpointing: bool = True
@@ -98,6 +153,146 @@ class GATModelConfig:
     correlation_penalty: float = 0.5  # Weight for correlation penalty
     cluster_selection: bool = True  # Use cluster-based selection
     correlation_threshold: float = 0.7  # Threshold for high correlation
+
+    # Node feature configuration
+    node_feature_type: str = "static"  # "static" | "timeseries"
+    timeseries_length: int = 60  # Window length for time-series features
+    timeseries_features: list[str] = field(
+        default_factory=lambda: ["volatility"]
+    )  # Features to compute: "volatility", "returns", "momentum"
+
+    # Temporal encoder configuration (auto-enabled when node_feature_type="timeseries")
+    use_temporal_encoder: bool = False  # Auto-set based on node_feature_type
+    temporal_encoder_type: str = "conv1d"  # "lstm" | "conv1d" | "transformer"
+    temporal_encoder_hidden: int = 64  # Hidden dimension for encoder
+    temporal_encoder_layers: int = 2  # Number of encoder layers
+
+    def __post_init__(self):
+        """Apply preset configuration and validate settings."""
+        # Apply preset if specified
+        if self.preset == "paper_reproduction":
+            self._apply_paper_preset()
+        elif self.preset == "enhanced":
+            self._apply_enhanced_preset()
+
+        # Validate node feature configuration
+        self._validate_node_features()
+
+    def _apply_paper_preset(self):
+        """Apply paper reproduction configuration (arXiv:2407.15532)."""
+        logger.info("Applying 'paper_reproduction' preset configuration")
+
+        # Architecture: Standard GAT
+        self.use_gatv2 = False
+        self.residual = False
+        self.num_layers = 2
+        self.num_attention_heads = 4
+        self.hidden_dim = 24
+
+        # Activation function
+        self.activation_fn = "leaky_relu"
+
+        # Graph construction: 756 day lookback, Pearson correlation
+        self.graph_config.lookback_days = 756
+        self.graph_config.corr_method = "from_cov"
+
+        # Loss function: Logarithmic Sharpe
+        self.loss_formulation = "logarithmic"
+
+        # Simplex projection: Squared-score method
+        self.projection_method = "squared"
+        self.head_config.projection_method = "squared"
+
+        # Enable time-series features (paper-accurate)
+        self.node_feature_type = "timeseries"
+        self.timeseries_length = 756  # Match paper: 3 years
+        self.timeseries_features = ["volatility"]  # Paper uses volatility series
+        self.use_temporal_encoder = True
+        self.temporal_encoder_type = "lstm"  # Paper uses LSTM
+        self.temporal_encoder_hidden = 64
+        self.temporal_encoder_layers = 1
+
+        logger.info(
+            "Paper preset: Using time-series volatility vectors (756 days) as node features"
+        )
+        logger.warning(
+            "This increases memory usage ~75x compared to static features. "
+            "Reduce timeseries_length to 60-120 if memory constrained."
+        )
+
+        logger.info(
+            f"Paper preset applied: GAT (standard), {self.num_layers} layers, "
+            f"{self.num_attention_heads} heads, dim={self.hidden_dim}, "
+            f"lookback={self.graph_config.lookback_days} days, "
+            f"loss={self.loss_formulation}, projection={self.projection_method}"
+        )
+
+    def _apply_enhanced_preset(self):
+        """Apply enhanced configuration (current implementation)."""
+        logger.info("Applying 'enhanced' preset configuration")
+
+        # Architecture: GATv2 with residual
+        self.use_gatv2 = True
+        self.residual = True
+        self.num_layers = 3
+        self.num_attention_heads = 8
+        self.hidden_dim = 64
+
+        # Activation function
+        self.activation_fn = "gelu"
+
+        # Graph construction: 252 day lookback
+        self.graph_config.lookback_days = 252
+        self.graph_config.corr_method = "from_cov"
+
+        # Loss function: Standard Sharpe
+        self.loss_formulation = "standard"
+
+        # Simplex projection: Softmax
+        self.projection_method = "softmax"
+        self.head_config.projection_method = "softmax"
+
+        logger.info(
+            f"Enhanced preset applied: GATv2, {self.num_layers} layers, "
+            f"{self.num_attention_heads} heads, dim={self.hidden_dim}, "
+            f"lookback={self.graph_config.lookback_days} days, "
+            f"loss={self.loss_formulation}, projection={self.projection_method}"
+        )
+
+    def _validate_node_features(self):
+        """Validate node feature configuration and auto-enable temporal encoder."""
+        # Auto-enable temporal encoder for time-series features
+        if self.node_feature_type == "timeseries":
+            self.use_temporal_encoder = True
+            logger.info(
+                f"Time-series node features enabled: "
+                f"using {self.temporal_encoder_type} encoder with "
+                f"window_length={self.timeseries_length}, features={self.timeseries_features}"
+            )
+
+            # Validate temporal encoder configuration
+            valid_encoders = ["lstm", "conv1d", "transformer"]
+            if self.temporal_encoder_type not in valid_encoders:
+                raise ValueError(
+                    f"temporal_encoder_type must be one of {valid_encoders}, "
+                    f"got {self.temporal_encoder_type}"
+                )
+
+            # Validate timeseries_length
+            if self.timeseries_length <= 0:
+                raise ValueError(
+                    f"timeseries_length must be positive, got {self.timeseries_length}"
+                )
+
+            # Validate timeseries_features
+            valid_features = ["volatility", "returns", "momentum"]
+            for feat in self.timeseries_features:
+                if feat not in valid_features:
+                    raise ValueError(
+                        f"Invalid feature '{feat}'. Must be one of {valid_features}"
+                    )
+
+        logger.debug(f"Node feature type: {self.node_feature_type}")
 
 
 class GATPortfolioModel(PortfolioModel):
@@ -134,7 +329,8 @@ class GATPortfolioModel(PortfolioModel):
                 final_sharpe_weight=1.5,
                 warmup_epochs=5,
                 total_epochs=config.max_epochs,
-                debug_mode=False
+                debug_mode=False,
+                formulation=config.loss_formulation
             )
             self.correlation_graph_builder = CorrelationAwareGraphBuilder(
                 correlation_threshold=config.correlation_threshold
@@ -155,7 +351,8 @@ class GATPortfolioModel(PortfolioModel):
                     diversification_weight=2.0,  # More emphasis on diversification
                     entropy_weight=0.2,       # More entropy regularization
                     concentration_penalty=3.0,  # Stronger penalty for concentration
-                    debug_mode=False
+                    debug_mode=False,
+                    formulation=config.loss_formulation
                 )
             else:
                 # Standard diversification for MST which already diversifies well
@@ -166,7 +363,8 @@ class GATPortfolioModel(PortfolioModel):
                     diversification_weight=1.0,
                     entropy_weight=0.1,
                     concentration_penalty=2.0,
-                    debug_mode=False
+                    debug_mode=False,
+                    formulation=config.loss_formulation
                 )
 
             self.correlation_graph_builder = None
@@ -294,8 +492,21 @@ class GATPortfolioModel(PortfolioModel):
 
         filtered_returns = period_returns[available_assets]
 
-        # Clean data
-        cleaned_returns = filtered_returns.ffill().fillna(0.0)
+        # Use unified NA handling with cross-sectional mean imputation
+        from ...data.na_handling import cross_sectional_mean_impute
+
+        if hasattr(self, 'universe_df') and self.universe_df is not None:
+            from ...utils.membership_aware_cleaning import create_membership_mask
+            mask_for_imputation = create_membership_mask(filtered_returns, self.universe_df)
+            cleaned_returns = cross_sectional_mean_impute(
+                filtered_returns,
+                membership_mask=mask_for_imputation,
+            )
+        else:
+            cleaned_returns = cross_sectional_mean_impute(filtered_returns)
+
+        # Final fallback to zero for any remaining NAs
+        cleaned_returns = cleaned_returns.fillna(0.0)
 
         return cleaned_returns
 
@@ -319,8 +530,15 @@ class GATPortfolioModel(PortfolioModel):
         )
 
         # Prepare features for current universe
-        features_matrix = self._prepare_features(returns, universe)
-        input_dim = features_matrix.shape[1]
+        features_matrix = self._get_node_features(returns, universe)
+
+        # Determine input dimension based on feature type
+        if self.config.node_feature_type == "timeseries":
+            # For time-series: [N, T, F] -> input_dim = F
+            input_dim = features_matrix.shape[2]
+        else:
+            # For static: [N, F] -> input_dim = F
+            input_dim = features_matrix.shape[1]
 
         # If model exists, keep it (warm start), otherwise create new
         if self.model is None:
@@ -358,6 +576,15 @@ class GATPortfolioModel(PortfolioModel):
             else:
                 selected_dates = rebalance_dates.tolist()
 
+            # Filter universe to available tickers BEFORE training loop
+            available_universe = [t for t in universe if t in returns.columns]
+            if len(available_universe) < len(universe):
+                logger.info(
+                    f"Filtered training universe from {len(universe)} to {len(available_universe)} "
+                    f"available tickers ({len(universe) - len(available_universe)} missing from returns)"
+                )
+
+            # Use filtered universe throughout training
             for epoch in range(max_epochs):
                 epoch_loss = 0.0
 
@@ -367,14 +594,14 @@ class GATPortfolioModel(PortfolioModel):
                         graph_data = build_period_graph(
                             returns_daily=returns,
                             period_end=date,
-                            tickers=universe,
+                            tickers=available_universe,
                             features_matrix=features_matrix,
                             cfg=self.config.graph_config,
                         )
 
                         # Get forward returns as labels
                         next_month_end = min(date + pd.Timedelta(days=30), returns.index[-1])
-                        forward_returns = returns.loc[date:next_month_end, universe].mean()
+                        forward_returns = returns.loc[date:next_month_end, available_universe].mean()
 
                         # Forward pass
                         self.optimizer.zero_grad()
@@ -385,7 +612,7 @@ class GATPortfolioModel(PortfolioModel):
                                 x = graph_data.x.to(self.device)
                                 edge_index = graph_data.edge_index.to(self.device)
                                 edge_attr = graph_data.edge_attr.to(self.device) if graph_data.edge_attr is not None else None
-                                mask_valid = torch.ones(len(universe), dtype=torch.bool, device=self.device)
+                                mask_valid = torch.ones(len(available_universe), dtype=torch.bool, device=self.device)
 
                                 weights, _, _ = self.model(x, edge_index, mask_valid, edge_attr)
 
@@ -398,7 +625,7 @@ class GATPortfolioModel(PortfolioModel):
 
                                 # Always calculate correlation matrix for loss functions
                                 # Use historical returns up to current date
-                                hist_returns = returns.loc[:date, universe].tail(min(252, len(returns.loc[:date])))
+                                hist_returns = returns.loc[:date, available_universe].tail(min(252, len(returns.loc[:date])))
                                 corr = hist_returns.corr()
                                 correlation_matrix = torch.tensor(
                                     corr.values, dtype=torch.float32, device=self.device
@@ -418,7 +645,10 @@ class GATPortfolioModel(PortfolioModel):
                             self.scaler.scale(loss).backward()
                             # Add gradient clipping to prevent exploding gradients
                             self.scaler.unscale_(self.optimizer)
-                            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+                            grad_norm = torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+                            # ADDED: Log gradient norm for monitoring
+                            if epoch % 5 == 0:
+                                logger.debug(f"Gradient norm: {grad_norm:.4f}")
                             self.scaler.step(self.optimizer)
                             self.scaler.update()
                         else:
@@ -426,7 +656,7 @@ class GATPortfolioModel(PortfolioModel):
                             x = graph_data.x.to(self.device)
                             edge_index = graph_data.edge_index.to(self.device)
                             edge_attr = graph_data.edge_attr.to(self.device) if graph_data.edge_attr is not None else None
-                            mask_valid = torch.ones(len(universe), dtype=torch.bool, device=self.device)
+                            mask_valid = torch.ones(len(available_universe), dtype=torch.bool, device=self.device)
 
                             weights, _, _ = self.model(x, edge_index, mask_valid, edge_attr)
 
@@ -439,7 +669,7 @@ class GATPortfolioModel(PortfolioModel):
 
                             # Always calculate correlation matrix for loss functions
                             # Use historical returns up to current date
-                            hist_returns = returns.loc[:date, universe].tail(min(252, len(returns.loc[:date])))
+                            hist_returns = returns.loc[:date, available_universe].tail(min(252, len(returns.loc[:date])))
                             corr = hist_returns.corr()
                             correlation_matrix = torch.tensor(
                                 corr.values, dtype=torch.float32, device=self.device
@@ -457,7 +687,10 @@ class GATPortfolioModel(PortfolioModel):
                             )
                             loss.backward()
                             # Add gradient clipping to prevent exploding gradients
-                            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+                            grad_norm = torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+                            # ADDED: Log gradient norm for monitoring
+                            if epoch % 5 == 0:
+                                logger.debug(f"Gradient norm: {grad_norm:.4f}")
                             self.optimizer.step()
 
                         epoch_loss += loss.item()
@@ -470,9 +703,20 @@ class GATPortfolioModel(PortfolioModel):
                         logger.debug(f"Skipped training sample at {date}: {e}")
                         continue
 
+                # ADDED: Log epoch progress
+                if epoch % 5 == 0 or epoch == max_epochs - 1:
+                    logger.info(
+                        f"GAT {self.config.graph_config.filter_method} epoch {epoch}/{max_epochs}: "
+                        f"loss={epoch_loss:.6f}, samples={len(selected_dates)}"
+                    )
+
                 # Early stopping if loss is good enough
                 avg_loss = epoch_loss / len(selected_dates) if selected_dates else float('inf')
                 if avg_loss < 0.01:  # Good enough for quick retrain
+                    logger.info(
+                        f"GAT {self.config.graph_config.filter_method} early stopping at epoch {epoch}: "
+                        f"avg_loss={avg_loss:.6f} < threshold (0.01)"
+                    )
                     break
 
         except Exception as e:
@@ -520,6 +764,11 @@ class GATPortfolioModel(PortfolioModel):
                 activation=self.config.head_config.activation,
                 mem_hidden=self.config.mem_hidden,
                 graph_type=graph_type,  # Pass graph type for proper projection head selection
+                projection_method=self.config.head_config.projection_method,  # Pass projection method
+                activation_fn=self.config.activation_fn,  # Pass activation function
+                use_temporal_encoder=self.config.use_temporal_encoder,  # Temporal encoding
+                temporal_encoder_type=self.config.temporal_encoder_type,
+                timeseries_length=self.config.timeseries_length,
             ).to(self.device)
 
         # Note: gradient checkpointing is handled during forward pass in training pipeline
@@ -555,11 +804,47 @@ class GATPortfolioModel(PortfolioModel):
         # Calculate market proxy from available data
         market_proxy = returns_subset.mean(axis=1)
 
-        # Process each asset in the full universe
+        # ENHANCED: Calculate cross-sectional statistics for missing asset defaults
+        # Use median values from available assets instead of zeros
+        available_features = []
+
+        # First pass: calculate features for available assets
+        temp_features = []
+        for ticker in available_universe:
+            asset_returns = returns_subset[ticker]
+            asset_returns_clean = asset_returns.dropna()
+
+            if len(asset_returns_clean) >= 20:
+                # Calculate robust features
+                mean_ret = float(np.nanmean(asset_returns_clean))
+                vol = float(np.nanstd(asset_returns_clean))
+                temp_features.append([mean_ret, vol if vol > 1e-8 else 0.02])
+
+        # Calculate cross-sectional medians for defaults
+        if temp_features:
+            temp_array = np.array(temp_features)
+            default_mean_return = float(np.median(temp_array[:, 0]))
+            default_volatility = float(np.median(temp_array[:, 1]))
+        else:
+            default_mean_return = 0.0
+            default_volatility = 0.02
+
+        # Second pass: create features with cross-sectional defaults
         for ticker in universe:
             if ticker not in available_universe:
-                # Use default features for missing assets
-                features.append([0.0, 0.02, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, -0.02])
+                # Use cross-sectional medians for missing assets (prevents zero-feature issue)
+                features.append([
+                    default_mean_return,
+                    default_volatility,
+                    0.0,  # skewness
+                    0.0,  # kurtosis
+                    0.0,  # momentum
+                    1.0,  # sharpe (neutral)
+                    0.0,  # beta
+                    0.0,  # max_drawdown
+                    0.0,  # downside_deviation
+                    default_mean_return * 0.5  # sortino (conservative)
+                ])
                 continue
 
             # Get asset returns
@@ -570,8 +855,19 @@ class GATPortfolioModel(PortfolioModel):
 
             # Require minimum data for reliable features
             if len(asset_returns_clean) < 20:
-                # Use conservative defaults for insufficient data
-                features.append([0.0, 0.02, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, -0.02])
+                # Use cross-sectional defaults for insufficient data
+                features.append([
+                    default_mean_return,
+                    default_volatility,
+                    0.0,  # skewness
+                    0.0,  # kurtosis
+                    0.0,  # momentum
+                    1.0,  # sharpe (neutral)
+                    0.0,  # beta
+                    0.0,  # max_drawdown
+                    0.0,  # downside_deviation
+                    default_mean_return * 0.5  # sortino (conservative)
+                ])
                 continue
 
             # Robust statistical features with error handling
@@ -726,6 +1022,171 @@ class GATPortfolioModel(PortfolioModel):
 
         return feature_matrix
 
+    def _prepare_timeseries_features(
+        self,
+        returns: pd.DataFrame,
+        universe: list[str],
+        window_length: int = 60,
+        features: list[str] | None = None,
+    ) -> np.ndarray:
+        """Prepare time-series features for each asset.
+
+        Args:
+            returns: Historical returns [T, N]
+            universe: List of asset tickers
+            window_length: Length of time-series window
+            features: List of features to compute ("volatility", "returns", "momentum")
+
+        Returns:
+            features: [N, window_length, num_features]
+
+        Raises:
+            ValueError: If window_length > len(returns)
+
+        Examples:
+            >>> # Prepare 60-day volatility series for paper reproduction
+            >>> features = model._prepare_timeseries_features(
+            ...     returns, universe, window_length=60, features=["volatility"]
+            ... )
+            >>> features.shape
+            (500, 60, 1)
+        """
+        if features is None:
+            features = ["volatility"]
+
+        # ENHANCED: Adaptive window length to match available data
+        available_length = len(returns)
+        if window_length > available_length:
+            logger.warning(
+                f"Limited historical data: {available_length} < {window_length}. "
+                f"Using adaptive window_length={available_length}"
+            )
+            window_length = available_length
+
+        num_assets = len(universe)
+        num_features_per_timestep = len(features)
+
+        # Log missing assets in batch BEFORE loop
+        missing_assets = [t for t in universe if t not in returns.columns]
+        if missing_assets:
+            logger.info(
+                f"{len(missing_assets)} assets not in returns (e.g., {missing_assets[:5]}). "
+                f"Using zero-filled features."
+            )
+
+        features_list = []
+
+        for ticker in universe:
+            if ticker not in returns.columns:
+                # No individual warning - already logged in batch above
+                features_list.append(
+                    np.zeros((window_length, num_features_per_timestep))
+                )
+                continue
+
+            # Get last window_length days of returns
+            asset_returns = returns[ticker].values[-window_length:]
+
+            if len(asset_returns) < window_length:
+                # Pad with zeros if insufficient data
+                padding = np.zeros(window_length - len(asset_returns))
+                asset_returns = np.concatenate([padding, asset_returns])
+
+            # Compute requested features
+            feature_vectors = []
+
+            if "volatility" in features:
+                # Rolling 30-day volatility (as per paper)
+                # Use nanstd to handle NaN values in returns
+                asset_series = pd.Series(asset_returns)
+                volatility_series = asset_series.rolling(
+                    window=30, min_periods=10
+                ).std()
+
+                # Fill initial NaNs with overall volatility (using nanstd for membership-aware calculation)
+                overall_vol = np.nanstd(asset_returns)
+                if np.isnan(overall_vol) or overall_vol < 1e-8:
+                    overall_vol = 0.02  # Default 2% volatility if all NaN or zero variance
+                volatility_series = volatility_series.fillna(overall_vol)
+
+                feature_vectors.append(volatility_series.values.reshape(-1, 1))
+
+            if "returns" in features:
+                # Raw returns
+                feature_vectors.append(asset_returns.reshape(-1, 1))
+
+            if "momentum" in features:
+                # Cumulative returns (momentum proxy)
+                cumulative_returns = (1 + pd.Series(asset_returns)).cumprod() - 1
+                feature_vectors.append(cumulative_returns.values.reshape(-1, 1))
+
+            # Concatenate features
+            asset_features = np.concatenate(feature_vectors, axis=1)
+            features_list.append(asset_features)
+
+        # Shape: [N, window_length, num_features]
+        features_array = np.array(features_list, dtype=np.float32)
+
+        # Normalise per feature per asset (z-score)
+        # Use nanmean/nanstd to ignore NaN values (membership-aware approach)
+        for i in range(num_assets):
+            for j in range(num_features_per_timestep):
+                feat = features_array[i, :, j]
+                feat_std = np.nanstd(feat)
+                if feat_std > 1e-8:
+                    features_array[i, :, j] = (feat - np.nanmean(feat)) / feat_std
+                else:
+                    # Zero-variance: centre at zero
+                    features_array[i, :, j] = feat - np.nanmean(feat)
+
+        # Validate shape
+        assert features_array.shape == (num_assets, window_length, num_features_per_timestep), \
+            f"Expected shape ({num_assets}, {window_length}, {num_features_per_timestep}), " \
+            f"got {features_array.shape}"
+
+        # Check for NaN/Inf
+        if np.isnan(features_array).any():
+            nan_count = np.isnan(features_array).sum()
+            total_values = features_array.size
+            logger.warning(
+                f"NaN values in time-series features ({nan_count}/{total_values} = "
+                f"{100*nan_count/total_values:.2f}%), filling with zeros. "
+                f"This preserves membership awareness: NaN → 0 (neutral after z-scoring)"
+            )
+            features_array = np.nan_to_num(features_array, nan=0.0)
+
+        if np.isinf(features_array).any():
+            logger.warning("Inf values in time-series features, clamping")
+            features_array = np.clip(features_array, -10.0, 10.0)
+
+        return features_array
+
+    def _get_node_features(
+        self,
+        returns: pd.DataFrame,
+        universe: list[str],
+    ) -> np.ndarray:
+        """Prepare node features (static or time-series based on config).
+
+        Args:
+            returns: Historical returns data
+            universe: List of asset tickers
+
+        Returns:
+            features: [N, F] (static) or [N, T, F] (time-series)
+        """
+        if self.config.node_feature_type == "timeseries":
+            # Use time-series features
+            return self._prepare_timeseries_features(
+                returns,
+                universe,
+                window_length=self.config.timeseries_length,
+                features=self.config.timeseries_features,
+            )
+        else:
+            # Use static features (backward compatible)
+            return self._prepare_features(returns, universe)
+
     def fit(
         self,
         returns: pd.DataFrame,
@@ -756,8 +1217,15 @@ class GATPortfolioModel(PortfolioModel):
             self.config.graph_config.lookback_days = max(60, len(training_returns) - 30)
 
         # Prepare node features with validation
-        features_matrix = self._prepare_features(training_returns, universe)
-        input_dim = features_matrix.shape[1]
+        features_matrix = self._get_node_features(training_returns, universe)
+
+        # Determine input dimension based on feature type
+        if self.config.node_feature_type == "timeseries":
+            # For time-series: [N, T, F] -> input_dim = F
+            input_dim = features_matrix.shape[2]
+        else:
+            # For static: [N, F] -> input_dim = F
+            input_dim = features_matrix.shape[1]
 
         logger.info(f"GAT model setup: universe_size={len(universe)}, feature_dims={features_matrix.shape}, input_dim={input_dim}")
 
@@ -780,9 +1248,12 @@ class GATPortfolioModel(PortfolioModel):
             freq="MS",  # Month start
         )
 
-        # Fix DatetimeIndex slicing to avoid boolean evaluation issue
-        limited_dates = rebalance_dates.tolist()[:self.config.batch_size] if len(rebalance_dates) > self.config.batch_size else rebalance_dates.tolist()
-        for date in limited_dates:  # Limit for memory
+        # FIX: Use all available dates for training, not just batch_size samples
+        # Previous limitation to batch_size (32) meant only 2-3 training graphs
+        # This was causing severe underfitting and contributing to NaN losses
+        training_dates = rebalance_dates.tolist()
+        logger.info(f"Using {len(training_dates)} training samples (previously limited to {self.config.batch_size})")
+        for date in training_dates:
             try:
                 logger.debug(f"Building graph for date {date} with {len(universe)} assets")
 
@@ -1175,16 +1646,47 @@ class GATPortfolioModel(PortfolioModel):
                 # Load actual historical returns data for prediction universe
                 returns_data = self._get_historical_returns(date, prediction_universe)
 
-                # Prepare node features
-                features_matrix = self._prepare_features(returns_data, prediction_universe)
+                # Filter universe BEFORE feature creation to ensure alignment
+                # Use the same filtering logic as graph_builder
+                if hasattr(self, '_last_valid_mask') and self._last_valid_mask is not None:
+                    valid_mask = self._last_valid_mask
+                    valid_tickers = valid_mask[valid_mask].index.tolist()
+                    filtered_universe = [t for t in valid_tickers if t in returns_data.columns]
+                else:
+                    filtered_universe = [t for t in prediction_universe if t in returns_data.columns]
 
-                # Build graph for current period using prediction universe
+                logger.debug(
+                    f"Filtered universe from {len(prediction_universe)} to {len(filtered_universe)} "
+                    f"before feature creation"
+                )
+
+                # Prepare node features ONLY for filtered universe
+                features_matrix = self._get_node_features(returns_data, filtered_universe)
+
+                # Build graph for current period using filtered universe
                 graph_data = build_period_graph(
                     returns_daily=returns_data,
                     period_end=date,
-                    tickers=prediction_universe,
+                    tickers=filtered_universe,
                     features_matrix=features_matrix,
                     cfg=self.config.graph_config,
+                    valid_mask=None,  # No longer needed, already filtered
+                )
+
+                # Validate graph has assets after filtering
+                if len(graph_data.tickers) == 0:
+                    logger.error(
+                        f"No valid assets after graph filtering. "
+                        f"Original universe: {len(prediction_universe)}, "
+                        f"after filtering: 0"
+                    )
+                    # Return equal-weight portfolio as fallback
+                    equal_weights = np.ones(len(prediction_universe)) / len(prediction_universe)
+                    return pd.Series(equal_weights, index=prediction_universe)
+
+                logger.info(
+                    f"Graph construction: {len(prediction_universe)} → {len(graph_data.tickers)} assets "
+                    f"({len(graph_data.tickers)/len(prediction_universe):.1%} retained)"
                 )
 
                 # Move data to device
@@ -1192,16 +1694,37 @@ class GATPortfolioModel(PortfolioModel):
                 edge_index = graph_data.edge_index.to(self.device)
                 edge_attr = graph_data.edge_attr.to(self.device) if graph_data.edge_attr is not None else None
 
-                # Create mask for valid assets (all valid for inference)
-                mask_valid = torch.ones(len(prediction_universe), dtype=torch.bool, device=self.device)
+                # Create mask for valid assets based on actual graph size
+                # The graph has been filtered to available assets only
+                num_graph_nodes = x.shape[0]  # Use actual graph node count
+                mask_valid = torch.ones(num_graph_nodes, dtype=torch.bool, device=self.device)
+
+                logger.debug(
+                    f"GAT prediction: universe={len(original_universe)}, "
+                    f"graph_nodes={num_graph_nodes}, mask_size={mask_valid.shape[0]}"
+                )
 
                 # Calculate correlation matrix if using DiversificationGAT
                 correlation_matrix = None
                 if self.config.use_diversification_gat:
+                    # Filter returns data to match graph assets BEFORE computing correlation
+                    filtered_returns = returns_data[graph_data.tickers]
                     correlation_matrix = torch.tensor(
-                        returns_data.corr().fillna(0).values,
+                        filtered_returns.corr().fillna(0).values,  # Shape: (N_graph, N_graph)
                         dtype=torch.float32,
                         device=self.device
+                    )
+
+                    logger.debug(
+                        f"Correlation matrix: [{correlation_matrix.shape[0]}, {correlation_matrix.shape[1]}] "
+                        f"matches graph nodes: {x.shape[0]}"
+                    )
+
+                # Validate shapes match
+                if x.shape[0] != mask_valid.shape[0]:
+                    raise ValueError(
+                        f"Shape mismatch: graph has {x.shape[0]} nodes but mask has "
+                        f"{mask_valid.shape[0]} elements. This indicates filtering inconsistency."
                     )
 
                 # Forward pass to get portfolio weights for prediction universe
@@ -1211,10 +1734,15 @@ class GATPortfolioModel(PortfolioModel):
                     # Model returns (weights, memory, regularization_loss)
                     weights, _, _ = self.model(x, edge_index, mask_valid, edge_attr)
 
-                # Convert to pandas Series for prediction universe
+                # Convert to pandas Series using filtered asset list from graph for indexing
                 prediction_weights = pd.Series(
                     weights.cpu().numpy(),
-                    index=prediction_universe
+                    index=graph_data.tickers  # Filtered asset list matches graph size
+                )
+
+                logger.debug(
+                    f"Created weights Series: {len(prediction_weights)} assets "
+                    f"(filtered from {len(original_universe)} universe)"
                 )
 
                 # Ensure non-negative and normalized weights
@@ -1246,107 +1774,12 @@ class GATPortfolioModel(PortfolioModel):
                 self.logger.warning(f"GAT {self.config.graph_config.filter_method} falling back to equal weights due to error")
                 raw_weights = pd.Series(1.0 / len(original_universe), index=original_universe)
 
-            # Apply portfolio constraints
-            # CRITICAL FIX: Force hard constraint enforcement for GAT models
-            # Override the base class method to ensure position limits are respected
-            constrained_weights = self._enforce_hard_constraints(raw_weights)
+            # Apply portfolio constraints using proven base class method with HARD constraints
+            # GAT models need hard constraint enforcement due to graph sparsity issues
+            # Replacing custom _enforce_hard_constraints() which had convergence issues
+            constrained_weights = self.validate_weights(raw_weights, use_soft_constraints=False)
 
             return constrained_weights
-
-    def _enforce_hard_constraints(self, weights: pd.Series) -> pd.Series:
-        """
-        Enforce hard constraints on GAT model outputs.
-
-        This method ensures that position limits are strictly enforced,
-        preventing the extreme concentration issues we've observed.
-
-        Args:
-            weights: Raw model weights
-
-        Returns:
-            Constrained weights that respect all limits
-        """
-        import logging
-        logger = logging.getLogger(__name__)
-
-        # Start with a copy
-        constrained = weights.copy()
-
-        # 1. Ensure long-only first (no negative weights)
-        if self.constraints.long_only:
-            constrained = constrained.clip(lower=0)
-
-        # 2. Remove positions below minimum threshold
-        if self.constraints.min_weight_threshold > 0:
-            constrained[constrained < self.constraints.min_weight_threshold] = 0
-
-        # 3. Iteratively enforce max position weight
-        # This is necessary because renormalization can push weights above limit
-        max_position = self.constraints.max_position_weight
-        if max_position < 1.0:
-            max_iterations = 10  # Prevent infinite loops
-            for iteration in range(max_iterations):
-                violations = (constrained > max_position).sum()
-                if violations == 0:
-                    break
-
-                if iteration == 0:
-                    max_before = constrained.max()
-                    logger.warning(f"GAT hard constraint: {violations} positions exceed {max_position:.1%} limit (max: {max_before:.1%})")
-
-                # Clip weights to max position
-                constrained = constrained.clip(upper=max_position)
-
-                # Renormalize only the non-zero weights to maintain sum=1
-                weight_sum = constrained.sum()
-                if weight_sum > 0:
-                    constrained = constrained / weight_sum
-                else:
-                    # Fallback to equal weights if all are zero
-                    constrained = pd.Series(1.0 / len(constrained), index=constrained.index)
-                    break
-
-            # Final check
-            if constrained.max() > max_position * 1.01:  # Allow 1% tolerance for numerical precision
-                # If still violating, use a more aggressive approach
-                # Distribute excess weight proportionally to all positions below limit
-                excess = constrained[constrained > max_position] - max_position
-                total_excess = excess.sum()
-                constrained[constrained > max_position] = max_position
-
-                below_limit = constrained[constrained < max_position]
-                if len(below_limit) > 0:
-                    # Add excess proportionally to positions below limit
-                    available_space = (max_position - below_limit).sum()
-                    if available_space > 0:
-                        for idx in below_limit.index:
-                            space = max_position - constrained[idx]
-                            constrained[idx] += total_excess * (space / available_space)
-
-                # Final renormalization
-                constrained = constrained / constrained.sum()
-
-        # 4. Final validation
-            weight_sum = constrained.sum()
-            if weight_sum > 0:
-                constrained = constrained / weight_sum
-            else:
-                # Fallback to equal weights if all weights are invalid
-                logger.warning("All weights invalid after constraints, using equal weights")
-                constrained = pd.Series(1.0 / len(constrained), index=constrained.index)
-
-        # 4. Final validation
-        final_sum = constrained.sum()
-        final_max = constrained.max()
-
-        if abs(final_sum - 1.0) > 1e-6:
-            logger.error(f"Weight sum violation: {final_sum:.6f} != 1.0")
-            constrained = constrained / final_sum
-
-        if final_max > max_position + 1e-6:
-            logger.error(f"Max position violation after constraints: {final_max:.1%} > {max_position:.1%}")
-
-        return constrained
 
     def _get_historical_returns(self, date: pd.Timestamp, universe: list[str]) -> pd.DataFrame:
         """
@@ -1377,8 +1810,42 @@ class GATPortfolioModel(PortfolioModel):
 
                 historical_data = all_returns.loc[start_date:end_date, available_assets]
 
-                # Forward fill missing values
-                historical_data = historical_data.ffill().fillna(0.0)
+                # Use unified NA handling pipeline
+                from ...data.na_handling import (
+                    prepare_rolling_window_data,
+                    cross_sectional_mean_impute,
+                    calculate_data_quality_metrics,
+                )
+
+                prepared_returns, masks = prepare_rolling_window_data(
+                    returns_window=historical_data,
+                    universe=available_assets,
+                    coverage_threshold=0.70,  # GAT-specific threshold
+                    variance_threshold=1e-8,
+                    return_masks=True,
+                )
+
+                # Impute with cross-sectional mean (preserves correlation structure)
+                if hasattr(self, 'universe_df') and self.universe_df is not None:
+                    from ...utils.membership_aware_cleaning import create_membership_mask
+                    mask_for_imputation = create_membership_mask(prepared_returns, self.universe_df)
+                    historical_data = cross_sectional_mean_impute(
+                        prepared_returns,
+                        membership_mask=mask_for_imputation,
+                    )
+                else:
+                    historical_data = cross_sectional_mean_impute(prepared_returns)
+
+                # Final fallback to zero for any remaining NAs
+                historical_data = historical_data.fillna(0.0)
+
+                # Store data quality metrics and valid mask for later use
+                self._last_data_quality_metrics = calculate_data_quality_metrics(
+                    prepared_returns,
+                    available_assets,
+                    masks,
+                )
+                self._last_valid_mask = masks['valid']
 
                 # Ensure we have enough data
                 if len(historical_data) < lookback_days:

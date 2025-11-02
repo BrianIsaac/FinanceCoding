@@ -36,6 +36,7 @@ class CorrectedDiversificationLoss(nn.Module):
         concentration_penalty: float = 2.0,
         risk_free_rate: float = 0.0,
         debug_mode: bool = False,
+        formulation: str = "standard",
     ):
         """
         Initialize corrected diversification loss.
@@ -48,6 +49,7 @@ class CorrectedDiversificationLoss(nn.Module):
             concentration_penalty: Penalty for excessive concentration
             risk_free_rate: Risk-free rate for Sharpe calculation
             debug_mode: Enable detailed logging
+            formulation: Loss formulation - "standard" or "logarithmic"
         """
         super().__init__()
         self.sharpe_weight = sharpe_weight
@@ -57,6 +59,7 @@ class CorrectedDiversificationLoss(nn.Module):
         self.concentration_penalty = concentration_penalty
         self.risk_free_rate = risk_free_rate
         self.debug_mode = debug_mode
+        self.formulation = formulation
         self._call_count = 0
 
     def compute_sharpe_ratio(
@@ -65,24 +68,32 @@ class CorrectedDiversificationLoss(nn.Module):
         returns: torch.Tensor
     ) -> torch.Tensor:
         """
-        Compute Sharpe ratio for portfolio.
+        Compute Sharpe ratio for portfolio using configured formulation.
 
         Args:
             weights: Portfolio weights [batch_size, n_assets]
             returns: Asset returns [batch_size, n_assets]
 
         Returns:
-            Sharpe ratio (higher is better)
+            Sharpe ratio (higher is better for standard, lower for logarithmic loss)
         """
         # Portfolio returns
         portfolio_returns = (weights * returns).sum(dim=-1)
 
-        # Calculate Sharpe
+        # Calculate Sharpe based on formulation
         excess_returns = portfolio_returns - self.risk_free_rate
         mean_return = excess_returns.mean()
         std_return = excess_returns.std() + 1e-8
 
-        sharpe = mean_return / std_return
+        if self.formulation == "logarithmic":
+            # Logarithmic formulation: -ln(μ̂) + 2*ln(σ̂)
+            mean_ret_shifted = mean_return + 1.0  # Shift to positive range
+            std_ret_stable = torch.clamp(std_return, min=1e-6)
+            sharpe = -torch.log(mean_ret_shifted + 1e-8) + 2.0 * torch.log(std_ret_stable)
+        else:
+            # Standard formulation: μ/σ
+            sharpe = mean_return / std_return
+
         return sharpe
 
     def compute_diversification_ratio(
@@ -217,9 +228,14 @@ class CorrectedDiversificationLoss(nn.Module):
             # Renormalize
             weights = weights / (weights.sum(dim=-1, keepdim=True) + 1e-8)
 
-        # 1. Sharpe ratio component (maximize -> minimize negative)
+        # 1. Sharpe ratio component
         sharpe = self.compute_sharpe_ratio(weights, returns)
-        sharpe_loss = -self.sharpe_weight * sharpe
+        if self.formulation == "logarithmic":
+            # Logarithmic formulation: minimize the value directly
+            sharpe_loss = self.sharpe_weight * sharpe
+        else:
+            # Standard formulation: maximize Sharpe -> minimize negative
+            sharpe_loss = -self.sharpe_weight * sharpe
 
         # 2. Diversification components (only if correlation matrix provided)
         div_loss = 0.0
@@ -296,6 +312,7 @@ class AdaptiveDiversificationLoss(CorrectedDiversificationLoss):
         final_sharpe_weight: float = 1.5,
         warmup_epochs: int = 5,
         total_epochs: int = 20,
+        formulation: str = "standard",
         **kwargs
     ):
         """
@@ -308,9 +325,11 @@ class AdaptiveDiversificationLoss(CorrectedDiversificationLoss):
             final_sharpe_weight: Ending weight for Sharpe
             warmup_epochs: Epochs for warmup phase
             total_epochs: Total training epochs
+            formulation: Loss formulation - "standard" or "logarithmic"
             **kwargs: Additional arguments for parent class
         """
-        super().__init__(**kwargs)
+        # Pass formulation to parent
+        super().__init__(formulation=formulation, **kwargs)
         self.initial_div_weight = initial_div_weight
         self.final_div_weight = final_div_weight
         self.initial_sharpe_weight = initial_sharpe_weight

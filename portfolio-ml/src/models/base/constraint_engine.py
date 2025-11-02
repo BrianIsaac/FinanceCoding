@@ -133,7 +133,7 @@ class UnifiedConstraintEngine:
 
         adjusted_weights = weights.copy()
 
-        # 1. Hard position limit - enforce strictly
+        # 1. Hard position limit - enforce with iterative redistribution
         max_position = self.constraints.max_position_weight
         if max_position < 1.0:
             # Debug logging
@@ -144,27 +144,83 @@ class UnifiedConstraintEngine:
             violations_before = (adjusted_weights > max_position).sum()
             if violations_before > 0:
                 max_weight_before = adjusted_weights.max()
-                logger.warning(f"Position limit violations: {violations_before} assets exceed {max_position:.1%} limit")
-                logger.warning(f"Max weight before clipping: {max_weight_before:.1%}")
+                logger.info(f"Position limit violations: {violations_before} assets exceed {max_position:.1%} limit")
+                logger.info(f"Max weight before iterative redistribution: {max_weight_before:.1%}")
 
-            # Apply hard clipping for positions exceeding limit
-            for asset in adjusted_weights.index:
-                w = adjusted_weights[asset]
-                if w > max_position:
-                    # Hard clip to maximum position
-                    adjusted_weights[asset] = max_position
-                    # No soft penalty - just hard enforcement
+                # ITERATIVE REDISTRIBUTION ALGORITHM
+                # This maintains both sum=1.0 AND max weight <= max_position
+                # by redistributing excess weight to non-violating assets proportionally
+                max_iterations = 100
+                converged = False
 
-            # Verify clipping worked
-            if violations_before > 0:
+                for iteration in range(max_iterations):
+                    # Identify assets exceeding limit
+                    excess_mask = adjusted_weights > max_position
+
+                    if not excess_mask.any():
+                        converged = True
+                        break  # No violations, algorithm succeeded
+
+                    # Calculate total excess to redistribute
+                    excess_weights = adjusted_weights[excess_mask]
+                    total_excess = (excess_weights - max_position).sum()
+
+                    # Clip violating assets to maximum
+                    adjusted_weights[excess_mask] = max_position
+
+                    # Redistribute excess to non-violating assets proportionally
+                    non_excess_mask = ~excess_mask
+                    if non_excess_mask.sum() > 0:
+                        # Get current weights of non-violating assets
+                        recipient_weights = adjusted_weights[non_excess_mask]
+                        recipient_sum = recipient_weights.sum()
+
+                        if recipient_sum > 1e-10:  # Avoid division by zero
+                            # Distribute proportional to current weights
+                            redistribution = total_excess * (recipient_weights / recipient_sum)
+                            adjusted_weights[non_excess_mask] += redistribution
+                        else:
+                            # Edge case: all non-violating weights are zero
+                            # Distribute equally
+                            n_recipients = non_excess_mask.sum()
+                            adjusted_weights[non_excess_mask] = total_excess / n_recipients
+                    else:
+                        # Edge case: all assets violate the limit
+                        # This means max_position is too restrictive for the universe size
+                        logger.warning(
+                            f"Cannot redistribute excess - all {len(adjusted_weights)} assets at maximum weight. "
+                            f"Consider increasing max_position_weight or reducing universe size."
+                        )
+                        break
+
+                if converged:
+                    logger.info(f"Iterative redistribution converged in {iteration + 1} iterations")
+                else:
+                    logger.warning(f"Iterative redistribution did not converge after {max_iterations} iterations")
+
+                # Verify final state
                 max_weight_after = adjusted_weights.max()
-                logger.info(f"Max weight after clipping: {max_weight_after:.1%}")
+                weight_sum_after = adjusted_weights.sum()
+                logger.info(
+                    f"After redistribution: max_weight={max_weight_after:.4f}, "
+                    f"sum={weight_sum_after:.4f}, target_limit={max_position:.4f}"
+                )
 
-                # CRITICAL: Renormalize after clipping to ensure weights sum to 1
-                weight_sum = adjusted_weights.sum()
-                if weight_sum > 0 and abs(weight_sum - 1.0) > 1e-6:
-                    logger.info(f"Renormalizing weights after clipping (sum was {weight_sum:.4f})")
-                    adjusted_weights = adjusted_weights / weight_sum
+                # Final check: if sum deviates significantly from 1.0, normalise
+                # This should rarely happen with proper iterative redistribution
+                if abs(weight_sum_after - 1.0) > 1e-4:
+                    logger.warning(
+                        f"Weight sum {weight_sum_after:.6f} deviates from 1.0. "
+                        f"Applying final normalisation."
+                    )
+                    adjusted_weights = adjusted_weights / weight_sum_after
+
+                    # Verify we didn't reintroduce violations
+                    if adjusted_weights.max() > max_position + 1e-6:
+                        logger.error(
+                            f"Final normalisation reintroduced violation: "
+                            f"{adjusted_weights.max():.4f} > {max_position:.4f}"
+                        )
 
         # 2. Soft turnover constraint - blend with previous weights
         if previous_weights is not None and self.constraints.max_monthly_turnover > 0:
@@ -208,10 +264,21 @@ class UnifiedConstraintEngine:
                     else:
                         adjusted_weights[asset] = 0.9 * w + 0.1 * min_position
 
-        # 4. Normalize to sum to 1
+        # Iterative redistribution already maintains sum=1.0
+        # No additional normalisation needed here
+        # Only normalise if sum deviates significantly (shouldn't happen)
         weight_sum = adjusted_weights.sum()
-        if weight_sum > 0:
-            adjusted_weights = adjusted_weights / weight_sum
+        if abs(weight_sum - 1.0) > 1e-4:
+            logger.warning(
+                f"Weight sum {weight_sum:.6f} deviates from 1.0 after constraints. "
+                f"This indicates an issue with iterative redistribution."
+            )
+            if weight_sum > 0:
+                adjusted_weights = adjusted_weights / weight_sum
+            else:
+                logger.error("Weight sum is zero or negative - cannot normalise")
+                # Return equal weights as fallback
+                adjusted_weights = pd.Series(1.0 / len(adjusted_weights), index=adjusted_weights.index)
 
         return adjusted_weights
 

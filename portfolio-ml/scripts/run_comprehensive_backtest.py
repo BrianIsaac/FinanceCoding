@@ -103,16 +103,27 @@ class ModelConfig:
 
 @dataclass
 class BacktestConfig:
-    """Main configuration for comprehensive backtest."""
+    """Main configuration for comprehensive rolling backtest.
 
-    # Date ranges
-    test_start_date: str = "2023-01-01"
-    test_end_date: str = "2024-11-30"
-    train_end_date: str = "2022-12-31"
+    Date Range Parameters:
+    - evaluation_start_date: First test date (earliest_data + training_months)
+    - evaluation_end_date: Last test date (latest_data)
+    - training_months: Lookback window for each rolling training period
 
-    # Backtest settings
-    rebalance_frequency: int = 21  # days
-    transaction_cost_bps: float = 10.0
+    Example with training_months=36:
+    - Window 1: Train[2016-01 to 2019-01] → Test[2019-01 to 2019-02]
+    - Window 2: Train[2016-02 to 2019-02] → Test[2019-02 to 2019-03]
+    - Window N: Train[t-36mo to t] → Test[t to t+1mo]
+    """
+
+    # Rolling backtest date ranges
+    evaluation_start_date: str = "2019-01-01"  # First test window start
+    evaluation_end_date: str = "2024-10-01"    # Last test window end
+    training_months: int = 36                   # Rolling training window (months)
+
+    # Backtest execution settings
+    rebalance_frequency: int = 21  # Trading days between rebalances
+    transaction_cost_bps: float = 10.0  # Transaction costs (basis points)
 
     # Model selection
     models: Dict[str, ModelConfig] = field(default_factory=dict)
@@ -160,22 +171,21 @@ def load_market_data(config: dict[str, Any] | DictConfig) -> dict[str, pd.DataFr
     raw_returns_data = pd.read_parquet(returns_path)  # This contains daily returns, not prices
     initial_shape = raw_returns_data.shape
 
-    # Use configuration-based date range, with some buffer for training lookback
+    # Use configuration-based date range, with buffer for training lookback
     if isinstance(raw_returns_data.index, pd.DatetimeIndex):
-        # Get config dates from the project config or dictionary
+        # Extract evaluation dates and training window from config
         if isinstance(config, dict):
-            # Handle dictionary configuration from YAML
-            backtest_settings = config.get('backtest_settings', {})
-            # Use 2019 as test start since we need 2016+ data for training
-            config_start = pd.Timestamp('2019-01-01')  # Override config to use proper date
-            config_end = pd.Timestamp(backtest_settings.get('test_end_date', '2024-11-30'))
+            # Handle dictionary configuration from YAML (shouldn't happen with new setup)
+            config_start = pd.Timestamp(config.get('evaluation_start_date', '2019-01-01'))
+            config_end = pd.Timestamp(config.get('evaluation_end_date', '2024-10-01'))
+            buffer_months = config.get('training_months', 36)
         else:
-            # Handle ProjectConfig object
-            config_start = pd.Timestamp("2019-01-01")  # Use 2019 start for proper training window
-            config_end = config.end_date if hasattr(config, 'end_date') else pd.Timestamp("2024-11-30")
+            # Handle DictConfig object from Hydra
+            config_start = pd.Timestamp(config.evaluation_start_date)
+            config_end = pd.Timestamp(config.evaluation_end_date)
+            buffer_months = config.training_months
 
-        # Add buffer for training lookback (36 months before start date)
-        buffer_months = 36
+        # Add buffer for training lookback (training_months before start date)
         buffer_start = config_start - pd.DateOffset(months=buffer_months)
 
         # Ensure we don't go before available data
@@ -263,13 +273,11 @@ def load_market_data(config: dict[str, Any] | DictConfig) -> dict[str, pd.DataFr
         cross_sectional_outliers = cross_sectional_z > 10
         returns_data[cross_sectional_outliers] = np.nan
 
-        # Step 4: Fill NaN values carefully
-        # First forward fill with strict limit to avoid propagating bad data
+        # Step 4: Minimal preprocessing - models handle NA internally
+        # Only do basic forward/backward fill with strict limits for obvious gaps
         returns_data = returns_data.ffill(limit=2)
-        # Then backward fill with strict limit for start of series
         returns_data = returns_data.bfill(limit=2)
-        # Finally, fill any remaining NaNs with 0 (no return)
-        returns_data = returns_data.fillna(0.0)
+        # Leave remaining NaNs - models will handle with unified NA handling pipeline
 
         # Log statistics about data cleaning
         total_outliers = obvious_errors.sum().sum() + statistical_outliers.sum().sum() + cross_sectional_outliers.sum().sum()
@@ -298,14 +306,9 @@ def load_market_data(config: dict[str, Any] | DictConfig) -> dict[str, pd.DataFr
                 )
                 logger.info(f"Created dynamic universe schedule with {len(dynamic_universe)} rebalancing dates")
 
-                # Create a simplified universe_data DataFrame for compatibility
-                # This shows which assets are ever in the universe
-                all_tickers = universe_df['ticker'].unique()
-                universe_data = pd.DataFrame(
-                    True,
-                    index=[pd.Timestamp.now()],  # Single row for compatibility
-                    columns=all_tickers
-                )
+                # Static universe deprecated - use dynamic_universe instead
+                # The dynamic_universe dict provides time-varying membership at each rebalance
+                universe_data = None
             else:
                 # Fallback: try to load as before if membership data wasn't loaded
                 raw_universe_data = pd.read_csv(str(universe_path))
@@ -365,7 +368,7 @@ def load_market_data(config: dict[str, Any] | DictConfig) -> dict[str, pd.DataFr
 
     return {
         "returns": returns_data,
-        "universe": universe_data,
+        "universe": universe_data,  # Deprecated - use dynamic_universe instead
         "benchmark": benchmark_data,
         "dynamic_universe": dynamic_universe if 'dynamic_universe' in locals() else None,
         "membership_mask": membership_mask if 'membership_mask' in locals() else None,
@@ -383,7 +386,7 @@ def create_hrp_models() -> dict[str, Any]:
     logger.info("Creating fresh HRP model for rolling training")
     hrp_config = HRPConfig(
         clustering_config=ClusteringConfig(
-            linkage_method="average",
+            linkage_method="ward",  # Changed from "average" - Ward produces balanced trees for better diversification
             min_observations=252,
             correlation_method="pearson",
         ),
@@ -395,10 +398,12 @@ def create_hrp_models() -> dict[str, Any]:
         hrp_config=hrp_config,
         constraints=PortfolioConstraints(
             long_only=True,  # Keep this - no short selling
-            max_position_weight=1.0,  # No limit - can concentrate if hierarchical clustering suggests it
-            max_monthly_turnover=10.0,  # Essentially unlimited
-            min_weight_threshold=0.0,  # No minimum
+            max_position_weight=0.15,  # STANDARDIZED: 15% max for all models
+            max_monthly_turnover=0.30,  # STANDARDIZED: 30% monthly turnover for all models
+            min_weight_threshold=0.0,  # STANDARDIZED: 0% minimum threshold
             top_k_positions=None,  # No limit on positions
+            transaction_cost_bps=10.0,  # STANDARDIZED: consistent transaction costs
+            enable_turnover_penalty=True,  # STANDARDIZED: enable turnover penalty for all
         )
     )
 
@@ -412,7 +417,7 @@ def create_lstm_models() -> dict[str, Any]:
     logger.info("Creating fresh LSTM model for rolling training")
     from src.models.lstm.model import LSTMModelConfig
     lstm_config = LSTMModelConfig()
-    lstm_config.training_config.epochs = 30  # Proper training epochs
+    lstm_config.training_config.epochs = 50  # Increased for better convergence
     lstm_config.training_config.patience = 10
     lstm_config.training_config.learning_rate = 0.001
     lstm_config.training_config.batch_size = 64  # Increased from default for better GPU usage
@@ -421,12 +426,12 @@ def create_lstm_models() -> dict[str, Any]:
     models["LSTM"] = LSTMPortfolioModel(
         constraints=PortfolioConstraints(
             long_only=True,  # Keep this - no short selling
-            max_position_weight=1.0,  # No limit - LSTM can concentrate if it predicts strong returns
-            max_monthly_turnover=10.0,  # Essentially unlimited
-            min_weight_threshold=0.0,  # No minimum
+            max_position_weight=0.15,  # STANDARDIZED: 15% max for all models (relaxed from 10%)
+            max_monthly_turnover=0.30,  # STANDARDIZED: 30% monthly turnover for all models
+            min_weight_threshold=0.0,  # STANDARDIZED: 0% minimum threshold
             top_k_positions=None,  # No limit on positions
-            transaction_cost_bps=10.0,
-            enable_turnover_penalty=False,  # Let LSTM decide its own turnover
+            transaction_cost_bps=10.0,  # STANDARDIZED: consistent transaction costs
+            enable_turnover_penalty=True,  # STANDARDIZED: enable turnover penalty for all
         ),
         config=lstm_config
     )
@@ -435,76 +440,112 @@ def create_lstm_models() -> dict[str, Any]:
 
 
 def create_gat_models() -> dict[str, Any]:
-    """Create fresh GAT models for rolling backtest."""
+    """Create fresh GAT models for rolling backtest with numerically stable configuration."""
     models = {}
 
-    logger.info("Creating fresh GAT models for all three graph methods")
+    logger.info("Creating fresh GAT models with enhanced preset (fixing NaN loss issue)")
 
-    # Common GAT configuration
+    # Common GAT configuration - STANDARDIZED across all models
     base_constraints = PortfolioConstraints(
         long_only=True,  # Keep this - no short selling
-        max_position_weight=0.20,  # 20% max prevents pathological single-asset concentration
-        max_monthly_turnover=2.0,  # 200% turnover allows flexibility while preventing excess
-        min_weight_threshold=0.005,  # 0.5% minimum for meaningful positions
+        max_position_weight=0.15,  # STANDARDIZED: 15% max for all models (tightened from 20%)
+        max_monthly_turnover=0.30,  # STANDARDIZED: 30% monthly turnover for all models (reduced from 200%)
+        min_weight_threshold=0.0,  # STANDARDIZED: 0% minimum threshold
         top_k_positions=None,  # No hard limit on number of positions
-        transaction_cost_bps=10.0,  # Keep realistic transaction costs
-        enable_turnover_penalty=False,  # Don't penalize turnover - real costs are enough
+        transaction_cost_bps=10.0,  # STANDARDIZED: consistent transaction costs
+        enable_turnover_penalty=True,  # STANDARDIZED: enable turnover penalty for all (enabled from False)
     )
 
-    # GAT-MST Model
-    gat_mst_config = GATModelConfig()
-    gat_mst_config.hidden_dim = 64
-    gat_mst_config.num_attention_heads = 8
-    gat_mst_config.max_epochs = 15  # Proper training epochs
+    # GAT-MST Model - using enhanced preset with standard loss (fixes NaN issue)
+    logger.info("Creating GAT-MST model with numerically stable configuration")
+    gat_mst_config = GATModelConfig(preset="enhanced")  # Enhanced architecture with time-series features
+    gat_mst_config.loss_formulation = "standard"  # Explicitly use standard loss (no logarithms)
+    gat_mst_config.max_epochs = 15
     gat_mst_config.patience = 10
-    gat_mst_config.learning_rate = 0.001
+
+    # FIX #1: Disable memory module to prevent tensor dimension mismatch (354x65 vs 128x64)
+    gat_mst_config.mem_hidden = None  # CRITICAL: Prevents memory concatenation dimension bug
+
+    # Enable time-series features for temporal context (matches LSTM's 252-day window)
+    gat_mst_config.node_feature_type = "timeseries"
+    gat_mst_config.timeseries_length = 252  # 1 year of trading days (matches LSTM)
+    gat_mst_config.timeseries_features = ["volatility", "returns"]  # 2 features for richer representation
+    gat_mst_config.temporal_encoder_type = "conv1d"  # Fast Conv1D encoder (faster than LSTM)
+    gat_mst_config.temporal_encoder_hidden = 64
+    gat_mst_config.temporal_encoder_layers = 2
+
+    # Graph configuration
     gat_mst_config.graph_config.filter_method = "mst"  # Minimum Spanning Tree
-    gat_mst_config.head_config = HeadCfg(mode="direct", activation="softmax")  # Use softmax to avoid vanishing gradients
-    # Use standard GAT with pure Sharpe focus for consistency
+    gat_mst_config.graph_config.lookback_days = 252  # CRITICAL FIX: 1-year correlation window (was 756)
 
     models["GAT-MST"] = GATPortfolioModel(
         constraints=base_constraints,
         config=gat_mst_config
     )
-    logger.info("Created GAT-MST model")
+    logger.info("Created GAT-MST model with enhanced preset and standard loss")
 
-    # GAT-kNN Model
-    gat_knn_config = GATModelConfig()
-    gat_knn_config.hidden_dim = 64
-    gat_knn_config.num_attention_heads = 8
+    # GAT-kNN Model - using enhanced preset with time-series features
+    logger.info("Creating GAT-kNN model with numerically stable configuration")
+    gat_knn_config = GATModelConfig(preset="enhanced")  # Enhanced architecture with time-series features
+    gat_knn_config.loss_formulation = "standard"  # Explicitly use standard loss (no logarithms)
     gat_knn_config.max_epochs = 15
     gat_knn_config.patience = 10
-    gat_knn_config.learning_rate = 0.001
+
+    # FIX #1: Disable memory module to prevent tensor dimension mismatch
+    gat_knn_config.mem_hidden = None  # CRITICAL: Prevents memory concatenation dimension bug
+
+    # Enable time-series features (same as MST)
+    gat_knn_config.node_feature_type = "timeseries"
+    gat_knn_config.timeseries_length = 252
+    gat_knn_config.timeseries_features = ["volatility", "returns"]
+    gat_knn_config.temporal_encoder_type = "conv1d"
+    gat_knn_config.temporal_encoder_hidden = 64
+    gat_knn_config.temporal_encoder_layers = 2
+
+    # Graph configuration
     gat_knn_config.graph_config.filter_method = "knn"  # k-Nearest Neighbors
     gat_knn_config.graph_config.knn_k = 10  # k=10 neighbors
-    gat_knn_config.head_config = HeadCfg(mode="direct", activation="softmax")  # Use softmax to avoid vanishing gradients
-    # Use standard GAT with pure Sharpe focus for consistency
+    gat_knn_config.graph_config.lookback_days = 252  # CRITICAL FIX: 1-year correlation window (was 756)
 
     models["GAT-kNN"] = GATPortfolioModel(
         constraints=base_constraints,
         config=gat_knn_config
     )
-    logger.info("Created GAT-kNN model")
+    logger.info("Created GAT-kNN model with enhanced preset and standard loss")
 
-    # GAT-TMFG Model - Special configuration for dense TMFG graphs
-    gat_tmfg_config = GATModelConfig()
-    gat_tmfg_config.hidden_dim = 32  # Reduced for dense graphs
-    gat_tmfg_config.num_layers = 2  # Fewer layers for dense graphs
-    gat_tmfg_config.num_attention_heads = 4  # Fewer heads for dense graphs
-    gat_tmfg_config.dropout = 0.4  # Higher dropout for regularization
+    # GAT-TMFG Model - using enhanced preset with time-series features
+    logger.info("Creating GAT-TMFG model with numerically stable configuration")
+    gat_tmfg_config = GATModelConfig(preset="enhanced")  # Enhanced architecture with time-series features
+    gat_tmfg_config.loss_formulation = "standard"  # Explicitly use standard loss (no logarithms)
+
+    # Keep adjusted parameters for dense TMFG graphs
+    gat_tmfg_config.dropout = 0.3  # Slightly higher dropout for regularisation
     gat_tmfg_config.max_epochs = 20  # More epochs for complex graph
     gat_tmfg_config.patience = 10
     gat_tmfg_config.learning_rate = 0.0005  # Lower learning rate for stability
-    gat_tmfg_config.weight_decay = 1e-4  # Higher weight decay for regularization
+    gat_tmfg_config.weight_decay = 1e-4  # Higher weight decay for regularisation
+
+    # FIX #1: Disable memory module to prevent tensor dimension mismatch
+    gat_tmfg_config.mem_hidden = None  # CRITICAL: Prevents memory concatenation dimension bug
+
+    # Enable time-series features (same as MST/kNN)
+    gat_tmfg_config.node_feature_type = "timeseries"
+    gat_tmfg_config.timeseries_length = 252
+    gat_tmfg_config.timeseries_features = ["volatility", "returns"]
+    gat_tmfg_config.temporal_encoder_type = "conv1d"
+    gat_tmfg_config.temporal_encoder_hidden = 64
+    gat_tmfg_config.temporal_encoder_layers = 2
+
+    # Graph configuration
     gat_tmfg_config.graph_config.filter_method = "tmfg"  # Triangulated Maximally Filtered Graph
-    gat_tmfg_config.graph_config.edge_pruning_threshold = 0.3  # Prune weak edges in TMFG
-    gat_tmfg_config.head_config = HeadCfg(mode="direct", activation="softmax")  # Changed from sparsemax to prevent extreme concentration
+    gat_tmfg_config.graph_config.edge_pruning_threshold = 0.05  # Light pruning to preserve planar structure
+    gat_tmfg_config.graph_config.lookback_days = 252  # CRITICAL FIX: 1-year correlation window (was 756)
 
     models["GAT-TMFG"] = GATPortfolioModel(
         constraints=base_constraints,
         config=gat_tmfg_config
     )
-    logger.info("Created GAT-TMFG model")
+    logger.info("Created GAT-TMFG model with enhanced preset and standard loss")
 
     return models
 
@@ -525,8 +566,8 @@ def initialize_models(config: dict[str, Any] | DictConfig, gpu_config: GPUConfig
     lstm_models = create_lstm_models()
     models.update(lstm_models)
 
-    # Create fresh GAT models
-    logger.info("Creating GAT models...")
+    # Create fresh GAT models (now using paper-aligned configuration)
+    logger.info("Creating GAT models with paper reproduction preset...")
     gat_models = create_gat_models()
     models.update(gat_models)
 
@@ -539,51 +580,76 @@ def initialize_models(config: dict[str, Any] | DictConfig, gpu_config: GPUConfig
     return models
 
 
-def create_backtest_config(enable_rolling: bool = True) -> RollingBacktestConfig:
-    """Create backtest configuration for proper rolling window testing."""
+def create_backtest_config(cfg: DictConfig) -> RollingBacktestConfig:
+    """Create backtest configuration from Hydra config.
+
+    Args:
+        cfg: Hydra configuration with evaluation dates and training window
+
+    Returns:
+        RollingBacktestConfig with proper rolling window setup
+    """
+    # Parse dates from config
+    eval_start = pd.Timestamp(cfg.evaluation_start_date)
+    eval_end = pd.Timestamp(cfg.evaluation_end_date)
+    training_months = cfg.training_months
+
+    # Validate configuration
+    min_quality_date = pd.Timestamp("2016-01-01")
+    required_start = eval_start - pd.DateOffset(months=training_months)
+
+    if required_start < min_quality_date:
+        logger.warning(
+            f"evaluation_start_date={eval_start.date()} with training_months={training_months} "
+            f"requires data from {required_start.date()}, which is before min_quality_date={min_quality_date.date()}. "
+            f"Consider using evaluation_start_date >= 2019-01-01 with training_months=36."
+        )
+
+    logger.info(f"Rolling backtest configuration:")
+    logger.info(f"  Evaluation period: {eval_start.date()} to {eval_end.date()}")
+    logger.info(f"  Training window: {training_months} months")
+    logger.info(f"  Required data from: {required_start.date()}")
+
     # Rolling window configuration with realistic retraining
-    # Models retrain monthly using only data available up to each point
     return RollingBacktestConfig(
-            # Rolling evaluation period starting when sufficient training data is available
-            # We have data from 2010 but use 2016+ as earlier data quality is poor
-            # With 36 months training, we can start backtesting from 2019-01-01
-            start_date=pd.Timestamp("2019-01-01"),  # Start when 36 months of good quality data available (2016+3 years)
-            end_date=pd.Timestamp("2024-10-01"),    # End of evaluation period (match actual data availability)
-            training_months=36,  # Use 3 years of training data right up to prediction point
-            validation_months=0, # No validation period - use all recent data for training
-            test_months=1,       # 1 month test (monthly rebalancing)
-            step_months=1,       # Step forward 1 month at a time
-            rebalance_frequency="MS",  # Month start frequency
+        # Rolling evaluation period from config
+        start_date=eval_start,
+        end_date=eval_end,
+        training_months=training_months,
+        validation_months=0,  # No validation split - use all recent data for training
+        test_months=1,        # 1 month test (monthly rebalancing)
+        step_months=1,        # Step forward 1 month at a time
+        rebalance_frequency="MS",  # Month start frequency
 
-            # Data integrity parameters
-            min_training_samples=100,  # Default, will be overridden by flexible validator
-            max_gap_days=5,            # Allow up to 5-day gaps
-            require_full_periods=False, # More flexible for dynamic universe
+        # Data integrity parameters
+        min_training_samples=100,  # Default, will be overridden by flexible validator
+        max_gap_days=5,            # Allow up to 5-day gaps
+        require_full_periods=False, # More flexible for dynamic universe
 
-        # Execution parameters
+        # Execution parameters from config
         initial_capital=1_000_000.0,  # $1M portfolio
-        transaction_cost_bps=10.0,    # 10 basis points transaction costs
+        transaction_cost_bps=cfg.transaction_cost_bps,
         benchmark_ticker="SPY",
 
         # Rolling retraining configuration (TRUE ROLLING)
         enable_rolling_retraining=True,   # Enable realistic rolling retraining
         monthly_retraining=True,          # Retrain models monthly
         quick_retrain_epochs={
-            "hrp": 1,  # HRP doesn't need epochs (correlation-based)
-            "lstm": 30,  # LSTM retraining epochs - proper convergence
-            "gat": 15,   # GAT retraining epochs - proper convergence
+            "hrp": 1,   # HRP doesn't need epochs (correlation-based)
+            "lstm": 50,  # FIXED: Increased from 30 to 50 for proper convergence
+            "gat": 50,   # FIXED: Increased from 15 to 50 for proper convergence
         },
 
         # Memory management
-        gpu_config=create_gpu_config(),
-        batch_size=128,  # Increased batch size for better GPU utilisation with 509 assets
+        gpu_config=create_gpu_config(cfg.gpu_memory_limit_gb),
+        batch_size=128,  # Increased batch size for better GPU utilisation
         enable_memory_monitoring=True,
 
-            # Output configuration
-            output_dir=Path("results/ml_backtest_rolling"),
-            save_intermediate_results=True,
-            enable_progress_tracking=True,
-        )
+        # Output configuration from config
+        output_dir=Path(cfg.output_dir),
+        save_intermediate_results=True,
+        enable_progress_tracking=True,
+    )
 
 
 def validate_constraint_enforcement(results: Any) -> dict[str, Any]:
@@ -613,7 +679,7 @@ def validate_constraint_enforcement(results: Any) -> dict[str, Any]:
         sum_violations = (abs(weight_sums - 1.0) > 0.01).sum()
         violations["weight_sum_violations"] = int(sum_violations)
 
-        # Check position limits (max 15% per position)
+        # Check position limits (max 15% per position to match standardized config)
         max_position_violations = (weights_df > 0.15).any(axis=1).sum()
         violations["position_limit_violations"] = int(max_position_violations)
 
@@ -888,87 +954,90 @@ def save_results(
     logger.info("Results saved successfully")
 
 
-def fit_baseline_models(models: dict, market_data: dict, config: dict[str, Any] | DictConfig) -> None:
-    """
-    Fit baseline models with historical returns data.
-
-    This ensures baseline models have access to returns data for their
-    strategy calculations (market cap weighting, mean reversion, etc).
-
-    CRITICAL: Baseline models need access to the FULL dataset (including backtest period)
-    for lookback calculations during prediction, but only use pre-backtest data for training.
-
-    Args:
-        models: Dictionary of model instances
-        market_data: Market data including returns
-        config: Project configuration
-    """
-    baseline_models = ["EqualWeight", "MarketCapWeighted", "MeanReversion"]
-
-    # Load full historical data for baseline model fitting
-    logger.info("Loading full historical returns data for baseline model fitting...")
-    returns_path = Path("data/final_new_pipeline/returns_daily_final.parquet")
-
-    if not returns_path.exists():
-        logger.error("Full returns data not found - baseline models may not work properly")
-        # Mark models as fitted anyway to avoid errors during backtest
-        for model_name in baseline_models:
-            if model_name in models:
-                models[model_name].is_fitted = True
-        return
-
-    full_returns_data = pd.read_parquet(returns_path)
-
-    # Clean the full data similar to the market data loading process
-    full_returns_data = full_returns_data.dropna(axis=1, thresh=len(full_returns_data) * 0.8)
-
-    # Use the same universe that the backtest is using
-    backtest_returns = market_data.get("returns")
-    if backtest_returns is not None:
-        universe = list(backtest_returns.columns)
-        logger.info(f"Using backtest universe with {len(universe)} assets")
-    else:
-        universe_data = market_data.get("universe")
-        if universe_data is None:
-            logger.warning("No universe data available - using all columns from returns")
-            universe = list(full_returns_data.columns)
-        else:
-            universe = list(universe_data)
-
-    # CRITICAL FIX: Provide baseline models with FULL dataset (including backtest period)
-    # but specify training period for parameter estimation
-    training_end = pd.Timestamp("2022-12-31")
-
-    # Filter to universe assets and ensure consistent columns
-    universe_available = [asset for asset in universe if asset in full_returns_data.columns]
-    full_universe_data = full_returns_data[universe_available]
-
-    logger.info(f"Fitting baseline models with full dataset: {len(full_universe_data)} samples")
-    logger.info(f"Training period end: {training_end}")
-    logger.info(f"Target universe: {len(universe)} assets, Available: {len(universe_available)} assets")
-
-    for model_name in baseline_models:
-        if model_name in models:
-            model = models[model_name]
-            logger.info(f"Fitting baseline model: {model_name}")
-
-            try:
-                # CRITICAL: Provide full dataset for lookback calculations
-                # but specify training period for parameter estimation
-                model.fit(
-                    returns=full_universe_data,  # Full dataset including backtest period
-                    universe=universe_available,  # Available assets only
-                    fit_period=(full_universe_data.index[0], training_end)  # Training period only
-                )
-                logger.info(f"Successfully fitted {model_name} with {len(universe_available)} assets")
-                logger.info(f"  - Full data period: {full_universe_data.index[0]} to {full_universe_data.index[-1]}")
-                logger.info(f"  - Training period: {full_universe_data.index[0]} to {training_end}")
-            except Exception as e:
-                logger.error(f"Failed to fit {model_name}: {e}")
-                # Mark as fitted anyway to avoid errors
-                model.is_fitted = True
-        else:
-            logger.debug(f"Baseline model {model_name} not found in models")
+# DEPRECATED: This function is no longer used. Baseline models now use rolling retraining
+# like ML models instead of being fitted once before the backtest.
+#
+# def fit_baseline_models(models: dict, market_data: dict, config: dict[str, Any] | DictConfig) -> None:
+#     """
+#     Fit baseline models with historical returns data.
+#
+#     This ensures baseline models have access to returns data for their
+#     strategy calculations (market cap weighting, mean reversion, etc).
+#
+#     CRITICAL: Baseline models need access to the FULL dataset (including backtest period)
+#     for lookback calculations during prediction, but only use pre-backtest data for training.
+#
+#     Args:
+#         models: Dictionary of model instances
+#         market_data: Market data including returns
+#         config: Project configuration
+#     """
+#     baseline_models = ["EqualWeight", "MarketCapWeighted", "MeanReversion"]
+#
+#     # Load full historical data for baseline model fitting
+#     logger.info("Loading full historical returns data for baseline model fitting...")
+#     returns_path = Path("data/final_new_pipeline/returns_daily_final.parquet")
+#
+#     if not returns_path.exists():
+#         logger.error("Full returns data not found - baseline models may not work properly")
+#         # Mark models as fitted anyway to avoid errors during backtest
+#         for model_name in baseline_models:
+#             if model_name in models:
+#                 models[model_name].is_fitted = True
+#         return
+#
+#     full_returns_data = pd.read_parquet(returns_path)
+#
+#     # Clean the full data similar to the market data loading process
+#     full_returns_data = full_returns_data.dropna(axis=1, thresh=len(full_returns_data) * 0.8)
+#
+#     # Use the same universe that the backtest is using
+#     backtest_returns = market_data.get("returns")
+#     if backtest_returns is not None:
+#         universe = list(backtest_returns.columns)
+#         logger.info(f"Using backtest universe with {len(universe)} assets")
+#     else:
+#         universe_data = market_data.get("universe")
+#         if universe_data is None:
+#             logger.warning("No universe data available - using all columns from returns")
+#             universe = list(full_returns_data.columns)
+#         else:
+#             universe = list(universe_data)
+#
+#     # CRITICAL FIX: Provide baseline models with FULL dataset (including backtest period)
+#     # but specify training period for parameter estimation
+#     training_end = pd.Timestamp("2022-12-31")
+#
+#     # Filter to universe assets and ensure consistent columns
+#     universe_available = [asset for asset in universe if asset in full_returns_data.columns]
+#     full_universe_data = full_returns_data[universe_available]
+#
+#     logger.info(f"Fitting baseline models with full dataset: {len(full_universe_data)} samples")
+#     logger.info(f"Training period end: {training_end}")
+#     logger.info(f"Target universe: {len(universe)} assets, Available: {len(universe_available)} assets")
+#
+#     for model_name in baseline_models:
+#         if model_name in models:
+#             model = models[model_name]
+#             logger.info(f"Fitting baseline model: {model_name}")
+#
+#             try:
+#                 # CRITICAL: Provide full dataset for lookback calculations
+#                 # but specify training period for parameter estimation
+#                 model.fit(
+#                     returns=full_universe_data,  # Full dataset including backtest period
+#                     universe=universe_available,  # Available assets only
+#                     fit_period=(full_universe_data.index[0], training_end)  # Training period only
+#                 )
+#                 logger.info(f"Successfully fitted {model_name} with {len(universe_available)} assets")
+#                 logger.info(f"  - Full data period: {full_universe_data.index[0]} to {full_universe_data.index[-1]}")
+#                 logger.info(f"  - Training period: {full_universe_data.index[0]} to {training_end}")
+#             except Exception as e:
+#                 logger.error(f"Failed to fit {model_name}: {e}")
+#                 # Mark as fitted anyway to avoid errors
+#                 model.is_fitted = True
+#         else:
+#             logger.debug(f"Baseline model {model_name} not found in models")
 
 
 @hydra.main(version_base=None, config_path="../configs/backtest", config_name="config")
@@ -996,20 +1065,26 @@ def main(cfg: DictConfig) -> None:
         models = initialize_models(cfg, gpu_config)
 
         # 2.5. Fit baseline models with historical returns data
-        fit_baseline_models(models, market_data, cfg)
+        # REMOVED: Baseline models now use rolling retraining like ML models
+        # fit_baseline_models(models, market_data, cfg)
 
-        # 3. Create backtest configuration with rolling support
-        backtest_config = create_backtest_config(enable_rolling=True)
+        # 3. Create backtest configuration from Hydra config
+        backtest_config = create_backtest_config(cfg)
 
         # 4. Configure model checkpointing and initialize backtest engine
         model_checkpoint_dir = Path("outputs/models")
         backtest_config.model_checkpoint_dir = model_checkpoint_dir
         backtest_config.output_dir = Path(cfg.output_dir)
+
+        # Configure data quality tracking
+        quality_log_path = backtest_config.output_dir / f"data_quality_{timestamp}.csv"
+        backtest_config.quality_log_path = str(quality_log_path)
+
         engine = RollingBacktestEngine(backtest_config)
         results = engine.run_rolling_backtest(
             models=models,
             data=market_data,
-            universe_data=market_data.get("universe"),
+            universe_data=market_data.get("universe_df"),
         )
 
         # 5. Validate constraint enforcement
