@@ -1,27 +1,34 @@
-"""
-Graph Attention Network (GAT) module for portfolio optimization.
+"""Clean GAT Portfolio Optimization Model.
 
-This module provides GAT-based portfolio allocation using graph neural networks
-to model complex asset relationships and optimize portfolio weights.
+Research-proven implementation based on:
+- Korangi et al. (2024): Logarithmic Sharpe, reduce-weight allocation, TMFG graphs
+- FinGAT (2021): 8-head attention, proven hyperparameters
+
+Simple, clean, working architecture with NO deprecated code.
 """
 
-from .gat_model import GATPortfolio, HeadCfg
-from .graph_builder import GraphBuildConfig, build_graph_from_returns
-from .model import GATModelConfig, GATPortfolioModel
-from .simplex_projection_head import (
-    SimplexProjectionHead,
-    RelationAwareAllocationHead,
-    DiversificationAwareProjectionHead,
-)
+from .allocation import ReduceWeightAllocator, validate_weights
+from .features import compute_node_features
+from .gat_model import GATPortfolio
+from .graph_constructor import build_graph
+from .loss import NegativeSharpeLoss, PortfolioReturnLoss, get_loss_function
+from .model import GATConfig, GATPortfolioModel
 
 __all__ = [
-    "GATPortfolio",
-    "HeadCfg",
+    # Main interface
     "GATPortfolioModel",
-    "GATModelConfig",
-    "GraphBuildConfig",
-    "build_graph_from_returns",
-    "SimplexProjectionHead",
-    "RelationAwareAllocationHead",
-    "DiversificationAwareProjectionHead",
+    "GATConfig",
+    # Core components
+    "GATPortfolio",
+    "ReduceWeightAllocator",
+    "build_graph",
+    "compute_node_features",
+    # Loss functions
+    "PortfolioReturnLoss",
+    "NegativeSharpeLoss",
+    "get_loss_function",
+    # Utilities
+    "validate_weights",
 ]
+
+__version__ = "2.0.0"  # Clean rebuild

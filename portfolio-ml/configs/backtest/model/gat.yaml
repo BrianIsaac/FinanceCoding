@@ -1,3 +1,38 @@
-# @package _group_
-name: gat
-enabled: true
+# Clean GAT Configuration (v2.0)
+# Research-proven settings from Korangi et al. (2024) and FinGAT (2021)
+
+# Common configuration for all GAT variants
+common:
+  # Architecture (proven in FinGAT)
+  hidden_dim: 16              # Hidden dimension
+  n_heads_layer1: 8          # First layer attention heads
+  n_heads_layer2: 1          # Second layer attention heads
+  dropout: 0.3               # Dropout rate
+
+  # Training (proven in FinGAT)
+  learning_rate: 0.001       # Adam learning rate
+  weight_decay: 0.0001       # L2 regularisation
+  max_epochs: 5              # Quick retrain epochs
+  patience: 3                # Early stopping patience
+  gradient_clip: 1.0         # Gradient clipping max norm
+
+  # Loss function
+  loss_type: return          # "return" or "sharpe"
+  vol_penalty: 0.5           # Volatility penalty for return loss
+  risk_free_rate: 0.03       # Annual risk-free rate (3%)
+
+  # Graph construction
+  lookback_days: 63          # 3 months correlation window
+
+# MST variant (Minimum Spanning Tree)
+mst:
+  lookback_days: 63          # Can override common setting
+
+# kNN variant (k-Nearest Neighbors)
+knn:
+  lookback_days: 63
+  knn_k: 5                   # Number of neighbors
+
+# TMFG variant (Triangulated Maximally Filtered Graph)
+tmfg:
+  lookback_days: 63

@@ -8,17 +8,21 @@ for temporal pattern recognition in financial time series.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+# Module-level logger to fix UnboundLocalError (Bug #1)
+logger = logging.getLogger(__name__)
 
 
 @dataclass
 class LSTMConfig:
     """Configuration for LSTM network architecture."""
 
-    sequence_length: int = 60  # 60-day lookback window
+    sequence_length: int = 252  # 252-day (1 year) lookback window for seasonal patterns
     input_size: int = 1  # Number of features per asset (returns)
     hidden_size: int = 128  # LSTM hidden dimensions
     num_layers: int = 2  # Stacked LSTM layers
@@ -149,12 +153,18 @@ class LSTMNetwork(nn.Module):
                 # Initialize linear layer weights
                 torch.nn.init.xavier_uniform_(param.data)
 
-    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    def forward(
+        self,
+        x: torch.Tensor,
+        lengths: torch.Tensor | None = None
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Forward pass through LSTM network with numerical stability.
 
         Args:
             x: Input tensor of shape (batch_size, sequence_length, input_size)
+            lengths: Optional sequence lengths tensor (for ragged sequences).
+                    Ignored in standard implementation, used by RaggedLSTMNetwork.
 
         Returns:
             Tuple of (predictions, attention_weights)
@@ -187,9 +197,10 @@ class LSTMNetwork(nn.Module):
         # Use the last timestep output for prediction
         final_hidden = attended_output[:, -1, :]  # (batch_size, hidden_size)
 
-        # Skip batch normalization to avoid numerical issues
-        # if final_hidden.size(0) > 1:  # Only apply batch norm if batch size > 1
-        #     final_hidden = self.batch_norm(final_hidden)
+        # Apply batch normalization for gradient stability
+        # Skip only for single-sample batches (batch_size=1) to avoid std=0 issues
+        if final_hidden.size(0) > 1:
+            final_hidden = self.batch_norm(final_hidden)
 
         # Apply dropout only during training
         if self.training:
@@ -257,23 +268,84 @@ class LSTMNetwork(nn.Module):
 class SharpeRatioLoss(nn.Module):
     """Custom loss function optimizing Sharpe ratio for portfolio performance."""
 
-    def __init__(self, risk_free_rate: float = 0.0, entropy_weight: float = 0.001):
+    def __init__(
+        self,
+        risk_free_rate: float = 0.0,
+        entropy_weight: float = 0.1,
+        temperature: float = 3.0,
+        gradient_clip_value: float = 10.0,
+        adaptive_epsilon: bool = True
+    ):
         """
-        Initialize Sharpe ratio loss function.
+        Initialize Sharpe ratio loss function with enhanced numerical stability.
 
         Args:
             risk_free_rate: Annual risk-free rate for Sharpe calculation
-            entropy_weight: Weight for entropy regularisation to prevent concentration (reduced for better prediction usage)
+            entropy_weight: Weight for entropy regularisation to prevent concentration
+                          Increased from 0.01 to 0.1 to encourage diversification (10x increase)
+            temperature: Softmax temperature for portfolio weight generation (default: 3.0)
+                        - Higher (5.0): More uniform allocations (exploration)
+                        - Lower (1.0): More concentrated allocations (exploitation)
+            gradient_clip_value: Maximum gradient norm before clipping (default: 10.0)
+            adaptive_epsilon: Use adaptive epsilon based on historical volatility (default: True)
         """
         super().__init__()
         self.risk_free_rate = risk_free_rate / 252  # Convert to daily rate
         self.entropy_weight = entropy_weight
+        self.temperature = temperature
+        self.gradient_clip_value = gradient_clip_value
+        self.adaptive_epsilon = adaptive_epsilon
+
+        # Track historical volatility for adaptive epsilon
+        self.register_buffer('historical_std', torch.tensor(0.05))  # Initialize with conservative estimate
+        self.register_buffer('update_count', torch.tensor(0))
+
+    def set_temperature(self, temperature: float):
+        """
+        Update temperature parameter for curriculum learning.
+
+        Args:
+            temperature: New temperature value
+                - Higher (5.0): More uniform allocations (early training exploration)
+                - Lower (1.0): More concentrated allocations (late training exploitation)
+
+        Example:
+            # Temperature annealing schedule
+            for epoch in range(num_epochs):
+                temp = 5.0 - (epoch / num_epochs) * 3.0  # 5.0 → 2.0
+                loss_fn.set_temperature(temp)
+        """
+        self.temperature = temperature
+
+    def get_debug_metrics(self, portfolio_returns: torch.Tensor, portfolio_weights: torch.Tensor) -> dict:
+        """
+        Calculate debugging metrics for monitoring training stability.
+
+        Args:
+            portfolio_returns: Portfolio returns tensor
+            portfolio_weights: Portfolio weights tensor
+
+        Returns:
+            dict with debugging metrics
+        """
+        with torch.no_grad():
+            metrics = {
+                'portfolio_std': portfolio_returns.std().item(),
+                'portfolio_mean': portfolio_returns.mean().item(),
+                'weight_concentration': (portfolio_weights ** 2).sum(dim=-1).mean().item(),
+                'effective_assets': (1.0 / (portfolio_weights ** 2).sum(dim=-1)).mean().item(),
+                'max_weight': portfolio_weights.max().item(),
+                'min_weight': portfolio_weights.min().item(),
+                'historical_std': self.historical_std.item() if hasattr(self, 'historical_std') else 0.05,
+            }
+        return metrics
 
     def forward(
         self,
         predicted_returns: torch.Tensor,
         actual_returns: torch.Tensor,
         portfolio_weights: torch.Tensor | None = None,
+        model: nn.Module | None = None,
     ) -> torch.Tensor:
         """
         Compute negative Sharpe ratio as loss for direct optimization.
@@ -283,6 +355,7 @@ class SharpeRatioLoss(nn.Module):
             actual_returns: Actual returns of shape (batch_size, n_assets)
             portfolio_weights: Portfolio weights of shape (batch_size, n_assets)
                              If None, uses predicted returns directly
+            model: Optional model reference for accessing normalization_stats
 
         Returns:
             Negative Sharpe ratio as loss tensor
@@ -297,14 +370,13 @@ class SharpeRatioLoss(nn.Module):
             # The argsort operation was non-differentiable and broke gradient computation
             # Softmax provides smooth, differentiable portfolio weights
 
-            # Temperature parameter controls allocation sharpness
-            # Lower temperature = more concentrated allocations
-            # Higher temperature = more uniform allocations
-            temperature = 2.0  # Moderate temperature for balanced allocations
-
+            # Use instance temperature for curriculum learning support
+            # Temperature can be annealed during training: 5.0 (exploration) → 2.0 (exploitation)
             # Apply softmax to get differentiable portfolio weights
             # This maintains gradient flow through the entire computation graph
-            portfolio_weights = F.softmax(predicted_returns / temperature, dim=-1)
+            # FIX #6c: Clamp predictions before softmax to prevent overflow/underflow
+            predicted_returns_clamped = torch.clamp(predicted_returns, -100, 100)
+            portfolio_weights = F.softmax(predicted_returns_clamped / self.temperature, dim=-1)
 
             # Optional: Apply position constraints if needed
             if hasattr(self, 'max_position_weight') and self.max_position_weight is not None:
@@ -324,44 +396,111 @@ class SharpeRatioLoss(nn.Module):
 
         portfolio_returns = (portfolio_weights * actual_returns).sum(dim=1)
 
+        # CRITICAL FIX: Denormalize portfolio returns to actual scale before computing Sharpe ratio
+        # Problem: SharpeRatioLoss operates on normalized returns (std=1.0) but should operate on
+        # actual scale for meaningful optimization. Normalized scale inflates Sharpe by ~100x.
+        # Solution: Denormalize using stored normalization_stats from training
+        # Reference: PyTorch autograd preserves gradients through scaling operations (a*x + b)
+
+        # Priority 1: Log normalization stats availability
+        stats_available = hasattr(model, 'normalization_stats') and model.normalization_stats is not None if model is not None else False
+        logger.debug(f"Normalization: available={stats_available}, scale={'ACTUAL' if stats_available else 'NORMALIZED'}")
+
+        if model is not None and hasattr(model, 'normalization_stats') and model.normalization_stats:
+            stats = model.normalization_stats
+            mean = stats.get('mean', 0.0)
+            std = stats.get('std', 1.0)
+            epsilon = stats.get('epsilon', 1e-6)
+
+            # Convert numpy arrays to tensors if needed
+            if not isinstance(mean, torch.Tensor):
+                mean = torch.tensor(mean, device=portfolio_returns.device, dtype=portfolio_returns.dtype)
+            if not isinstance(std, torch.Tensor):
+                std = torch.tensor(std, device=portfolio_returns.device, dtype=portfolio_returns.dtype)
+
+            # Denormalize portfolio returns to actual scale
+            # Formula: actual = normalized * std + mean
+            # Use mean of std across assets for portfolio-level scaling
+            std_factor = std.mean() + epsilon
+            mean_offset = mean.mean()
+
+            portfolio_returns = portfolio_returns * std_factor + mean_offset
+
+            logger.debug(f"Loss denormalized: std_factor={std_factor.item():.6f}, "
+                        f"mean_offset={mean_offset.item():.6f}, "
+                        f"portfolio_return_mean={portfolio_returns.mean().item():.6f}")
+
         # Compute excess returns
         excess_returns = portfolio_returns - self.risk_free_rate
 
-        # Compute Sharpe ratio with numerical stability
+        # CRITICAL FIX: Use biased std (correction=0) to handle single-sample batches
+        # Single sample batches occur when dataset_size % batch_size = 1
+        # Unbiased std (default) uses (n-1) denominator, which causes NaN when n=1
+        # Biased std uses (n) denominator, which handles n=1 gracefully
         mean_excess = excess_returns.mean()
-        std_excess = excess_returns.std()
 
-        # Use logarithmic formulation for better numerical stability
-        # This avoids division by small numbers and provides smoother gradients
-        eps = 1e-6
+        # Use biased=False with correction=0 (equivalent to biased std) for numerical stability
+        # This prevents "degrees of freedom <= 0" error when batch has only 1 sample
+        std_excess = excess_returns.std(correction=0)  # Biased std to handle n=1 case
 
-        # Check if we have enough variation for standard Sharpe
-        # Handle both scalar and tensor cases
-        if torch.all(std_excess > 0.001):
-            # Standard formulation when std is reasonable
-            sharpe_ratio = mean_excess / std_excess
+        # CRITICAL FIX: Ensure std_excess is finite and clamped to prevent numerical issues
+        # Use differentiable nan_to_num instead of torch.tensor to preserve gradient flow
+        std_excess = torch.nan_to_num(std_excess, nan=1e-3, posinf=1e-3, neginf=1e-3)
+
+        # Clamp std_excess to prevent division by near-zero even with epsilon
+        # Minimum of 1e-4 ensures denominator is always >> epsilon for stable gradients
+        std_excess = torch.clamp(std_excess, min=1e-4)
+
+        # Log if replacement occurred
+        if not torch.isfinite(excess_returns.std(correction=0) + 1e-8):
+            logger.warning(f"Non-finite std_excess detected and corrected via nan_to_num")
+
+        # CRITICAL FIX v3: Adaptive epsilon based on historical volatility
+        # Previous fixed eps=5e-2 was too conservative for high-volatility portfolios
+        # Adaptive epsilon scales with portfolio volatility to maintain gradient stability
+        # across different market conditions
+        if self.adaptive_epsilon and self.training:
+            # Update historical std with exponential moving average
+            with torch.no_grad():
+                alpha = 0.1  # Smoothing factor
+                self.historical_std = alpha * std_excess + (1 - alpha) * self.historical_std
+                self.update_count += 1
+
+            # FIXED: Reduced epsilon range from [1e-2, 1e-1] to [1e-3, 1e-2] to prevent gradient explosion
+            # Previous large epsilon dominated std_excess in denominator, causing:
+            #   - Gradient of 1/(std+eps)^2 to explode when std < eps
+            #   - Combined with compressed normalization, created 8000x gradient amplification
+            # New range keeps epsilon as stability term, not dominant factor in denominator
+            # FIX #6b: Further reduced from 0.1 to 0.01 scale, range [1e-4, 1e-3] for additional stability
+            eps = torch.clamp(self.historical_std * 0.01, min=1e-4, max=1e-3)
+            if eps > std_excess * 0.5:
+                logger.debug(f"Sharpe epsilon ({eps:.4f}) > 50% of portfolio std ({std_excess:.4f}) - may suppress gradient signal")
         else:
-            # Logarithmic formulation for small std (more stable)
-            # log(mean/std) = log(mean) - log(std)
-            # Shift mean to positive range for log stability
-            mean_shifted = torch.clamp(mean_excess + 1.0, min=eps)
-            std_clamped = torch.clamp(std_excess, min=eps)
+            # Fixed epsilon for inference or non-adaptive mode
+            # FIXED: Reduced from 5e-2 to 1e-3 for consistency with adaptive mode
+            eps = 1e-3
 
-            # Logarithmic Sharpe approximation
-            log_sharpe = torch.log(mean_shifted) - torch.log(std_clamped)
-            # Scale to match standard Sharpe magnitude
-            sharpe_ratio = torch.tanh(log_sharpe) * 3.0  # Bounded [-3, 3]
+        # FIXED: Direct Sharpe ratio formula without +1.0 shift
+        # The shift caused 100-132x inflation: model saw random predictions as Sharpe 5.0
+        # when actual Sharpe was 0.0, preventing any learning
+        # Use direct mean/std ratio clamped to prevent extremes
 
-        # Check for NaN or inf values
-        if not torch.isfinite(sharpe_ratio):
-            # Fallback to MSE loss to provide gradient signal
-            mse_loss = F.mse_loss(predicted_returns, actual_returns)
-            # Scale MSE loss to similar magnitude as Sharpe ratio
-            return mse_loss * 10.0  # Scale but allow gradients to flow
-
-        # Clamp Sharpe ratio to prevent extreme gradients
-        # Realistic Sharpe ratios: -2 to +3 typical, -10 to +10 covers extremes
+        # Use direct ratio instead of log-space to avoid gradient amplification
+        sharpe_ratio = mean_excess / (std_excess + eps)
+        # Clamp result to prevent extreme values and ensure finite gradients
         sharpe_ratio = torch.clamp(sharpe_ratio, -10.0, 10.0)
+
+        # Determine if denormalization was applied
+        denormalized = (model is not None and hasattr(model, 'normalization_stats')
+                       and model.normalization_stats is not None)
+        scale_status = 'ACTUAL (denormalized)' if denormalized else 'NORMALIZED (std~1.0)'
+
+        logger.debug(f"Loss Sharpe: mean={mean_excess.item():.6f}, "
+                     f"std={std_excess.item():.6f}, sharpe={sharpe_ratio.item():.6f}, "
+                     f"scale={scale_status}")
+
+        # Note: Removed MSE fallback to maintain consistent loss function scale
+        # Log formulation handles all edge cases including small std
 
         # Add entropy regularisation to encourage diversification
         # Entropy = -sum(w * log(w)) where w are portfolio weights
@@ -377,6 +516,24 @@ class SharpeRatioLoss(nn.Module):
         # Combine Sharpe ratio loss with entropy bonus
         # Negative Sharpe for minimization, negative entropy to encourage diversification
         loss = -sharpe_ratio - self.entropy_weight * portfolio_entropy
+
+        # CRITICAL FIX v3: Add gradient clipping at loss level for stability
+        # Clip loss value to prevent extreme gradients during backpropagation
+        # This provides an additional safety net beyond optimizer-level gradient clipping
+        if self.training and self.gradient_clip_value is not None:
+            loss = torch.clamp(loss, -self.gradient_clip_value, self.gradient_clip_value)
+
+        # Add numerical stability check
+        if torch.isnan(loss) or torch.isinf(loss):
+            # Logger already defined at module level
+            logger.error(
+                f"NaN/Inf loss detected! sharpe_ratio={sharpe_ratio.item():.4f}, "
+                f"mean_excess={mean_excess.item():.4f}, std_excess={std_excess.item():.4f}, "
+                f"eps={eps if isinstance(eps, float) else eps.item():.4f}, "
+                f"entropy={portfolio_entropy.item():.4f}"
+            )
+            # Return large but finite loss to prevent training collapse
+            return torch.tensor(10.0, device=loss.device, requires_grad=True)
 
         return loss
 

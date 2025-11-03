@@ -38,6 +38,11 @@ def validate_sequence_batch(
         >>> assert is_valid
     """
     batch_size, max_seq_len, n_features = sequences.shape
+    logger.debug(
+        f"Sequence batch validation: batch_size={batch_size}, "
+        f"max_seq_len={max_seq_len}, n_features={n_features}, "
+        f"lengths_min={lengths.min().item()}, lengths_max={lengths.max().item()}"
+    )
 
     # Check 1: Lengths tensor shape
     if lengths.dim() != 1:
@@ -204,7 +209,8 @@ def compute_sequence_statistics(
     batch_size, max_seq_len, n_features = sequences.shape
 
     mean_len = float(lengths.float().mean())
-    std_len = float(lengths.float().std())
+    # Avoid std() warning when batch_size < 2 (degrees of freedom would be <= 0)
+    std_len = float(lengths.float().std()) if batch_size > 1 else 0.0
     min_len = int(lengths.min())
     max_len = int(lengths.max())
 

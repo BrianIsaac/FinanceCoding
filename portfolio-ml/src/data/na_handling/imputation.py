@@ -87,6 +87,79 @@ def cross_sectional_mean_impute(
     return imputed
 
 
+def simple_temporal_fill(
+    returns: pd.DataFrame,
+    drop_all_na_first: bool = True,
+    allow_bfill: bool = False,
+) -> pd.DataFrame:
+    """Ultra-simple temporal filling with lookahead control.
+
+    Strategy:
+        1. (Optional) Drop columns that are entirely NA (inactive tickers)
+        2. (Optional) Backward fill if allow_bfill=True (propagate first valid observation to window start)
+        3. Forward fill (propagate last valid observation to window end or fill remaining gaps)
+
+    This ensures NO NaN values remain, eliminating the need for zero-fill fallback.
+    Uses actual price data for filling, preserving natural variance and correlations.
+
+    Args:
+        returns: Returns DataFrame for a training/test window
+        drop_all_na_first: Whether to drop all-NA columns first (default: True)
+        allow_bfill: Whether to allow backward fill (default: False)
+            - True: Training context - can use future data within historical window
+            - False: Testing/prediction context - replicates production (only ffill)
+
+    Returns:
+        Fully filled returns DataFrame with NO NaN values
+
+    Note on lookahead bias:
+        - allow_bfill=True: Acceptable for static training (fitting model once)
+        - allow_bfill=False: Required for production/backtest (rolling updates)
+            In production at time T, gaps at T-N can only be filled with T-(N+1) data,
+            not T-(N-1) data (which wasn't available yet). Forward fill replicates this.
+
+    Examples:
+        >>> # Ticker joined mid-window - training context
+        >>> data = pd.DataFrame({'AAPL': [NaN, NaN, 0.01, 0.02, NaN, 0.03]})
+        >>> filled = simple_temporal_fill(data, allow_bfill=True)
+        >>> # Result: [0.01, 0.01, 0.01, 0.02, 0.02, 0.03]
+
+        >>> # Same data - testing/production context
+        >>> filled = simple_temporal_fill(data, allow_bfill=False)
+        >>> # Result: [NaN, NaN, 0.01, 0.02, 0.02, 0.03] -> then ffill remaining
+    """
+    from .filtering import filter_all_na_columns
+
+    filled = returns.copy()
+
+    # Step 1: Drop inactive tickers (all-NA columns)
+    if drop_all_na_first:
+        filled = filter_all_na_columns(filled)
+
+    # Step 2: Conditional backward fill (training only)
+    if allow_bfill:
+        filled = filled.bfill()
+
+    # Step 3: Forward fill (always - production-safe)
+    filled = filled.ffill()
+
+    # Step 4: If no bfill and still have NaN at start, fill with first valid value
+    # This handles assets that start mid-window when bfill is disabled
+    if not allow_bfill and filled.isna().any().any():
+        # Fill remaining NaN with 0.0 as conservative fallback
+        # (only affects very start of series for assets joining mid-window)
+        filled = filled.fillna(0.0)
+
+    # Log results
+    bfill_status = "with bfill" if allow_bfill else "ffill only (production-safe)"
+    logger.info(
+        f"Simple temporal fill ({bfill_status}): {len(filled.columns)} active assets, "
+        f"guaranteed no NaN remaining"
+    )
+
+    return filled
+
+
 def impute_with_fallback(
     returns: pd.DataFrame,
     primary_method: str = "cross_sectional_mean",

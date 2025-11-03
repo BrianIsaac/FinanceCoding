@@ -13,8 +13,14 @@ from typing import Any
 import pandas as pd
 
 from ...evaluation.backtest.transaction_costs import TransactionCostCalculator
-from .constraints import ConstraintEngine as BaseConstraintEngine
-from .constraints import ConstraintViolation, PortfolioConstraints
+from .constraints import (
+    ConstraintEngine as BaseConstraintEngine,
+)
+from .constraints import (
+    ConstraintViolation,
+    ConstraintViolationError,
+    PortfolioConstraints,
+)
 
 
 class UnifiedConstraintEngine:
@@ -68,22 +74,149 @@ class UnifiedConstraintEngine:
         import logging
         logger = logging.getLogger(__name__)
 
+        # CRITICAL: Validate constraint feasibility before enforcement
+        # This prevents attempting mathematically impossible optimization
+        if self.constraints.max_position_weight is not None:
+            min_required = 1.0 / len(weights)
+            if self.constraints.max_position_weight < min_required:
+                raise ValueError(
+                    f"Infeasible constraints: max_position_weight={self.constraints.max_position_weight:.4f} "
+                    f"is less than minimum required={min_required:.4f} for {len(weights)} assets. "
+                    f"With {len(weights)} assets, each needs at least {min_required:.2%} on average to sum to 100%. "
+                    f"Increase max_position_weight to at least {min_required:.4f} or reduce universe size."
+                )
+
         max_weight_before = weights.max()
         if max_weight_before > self.constraints.max_position_weight:
             logger.warning(f"enforce_all_constraints: Input has max weight {max_weight_before:.1%}, limit is {self.constraints.max_position_weight:.1%}")
 
         # Step 1: Apply base constraints (soft or hard)
         if use_soft_constraints:
-            # Use soft penalties instead of hard constraints
-            constrained_weights = self._apply_soft_constraints(
-                weights, previous_weights, model_scores
-            )
-            # Check violations but don't enforce
+            # Try convex optimization first, fall back to iterative if needed
+            try:
+                constrained_weights = self._apply_convex_constraints(
+                    weights, previous_weights
+                )
+                logger.debug("Applied convex constraint projection successfully")
+            except Exception as e:
+                logger.warning(f"Convex optimization failed: {e}, falling back to soft constraints")
+                # Use soft penalties instead of hard constraints
+                constrained_weights = self._apply_soft_constraints(
+                    weights, previous_weights, model_scores
+                )
+
+            # Check violations and re-enforce if needed
             violations = self.base_engine.check_violations(constrained_weights, previous_weights)
 
+            # Re-enforce if violations detected
+            if violations:
+                logger.warning(f"Detected {len(violations)} violations, re-enforcing constraints")
+                max_iterations = 3
+                for iteration in range(max_iterations):
+                    # Tighten constraints by 5% and re-solve
+                    # CRITICAL FIX: Check feasibility before tightening to avoid mathematical infeasibility
+                    num_assets = len(constrained_weights)
+                    if self.constraints.max_position_weight:
+                        proposed_tightened = self.constraints.max_position_weight * 0.95
+                        # Check if tightened constraint is feasible for universe size
+                        if num_assets * proposed_tightened >= 1.0:
+                            tightened_max_weight = proposed_tightened
+                        else:
+                            logger.warning(
+                                f"Cannot tighten max_position constraint for {num_assets} assets "
+                                f"(would require {1.0/num_assets:.4f} avg but max would be {proposed_tightened:.4f}). "
+                                f"Using original constraint."
+                            )
+                            tightened_max_weight = self.constraints.max_position_weight
+                    else:
+                        tightened_max_weight = None
+
+                    tightened_min_weight = self.constraints.min_weight_threshold * 1.05 if self.constraints.min_weight_threshold else None
+
+                    # Create tightened constraint copy
+                    # Use direct attribute assignment instead of constructor since we don't know the exact init signature
+                    import copy
+                    tighter_constraints = copy.deepcopy(self.constraints)
+                    if tightened_max_weight is not None:
+                        tighter_constraints.max_position_weight = tightened_max_weight
+                    if tightened_min_weight is not None:
+                        tighter_constraints.min_weight_threshold = tightened_min_weight
+
+                    # Re-solve with tighter constraints
+                    try:
+                        # Temporarily swap constraints to use tighter ones
+                        original_constraints = self.constraints
+                        original_base_engine_constraints = self.base_engine.constraints
+
+                        # Create temporary engine with tighter constraints
+                        from .constraints import ConstraintEngine as BaseConstraintEngine
+                        temp_engine = BaseConstraintEngine(tighter_constraints)
+
+                        # Swap in tighter constraints temporarily
+                        self.constraints = tighter_constraints
+                        self.base_engine = temp_engine
+
+                        # Re-apply constraints using the same method
+                        if use_soft_constraints:
+                            try:
+                                temp_weights = self._apply_convex_constraints(
+                                    weights, previous_weights
+                                )
+                            except Exception:
+                                temp_weights = self._apply_soft_constraints(
+                                    weights, previous_weights, model_scores
+                                )
+                        else:
+                            temp_weights, _ = temp_engine.enforce_constraints(
+                                weights, previous_weights, model_scores, date
+                            )
+
+                        # Restore original constraints
+                        self.constraints = original_constraints
+                        self.base_engine.constraints = original_base_engine_constraints
+
+                        # Check if violations are resolved
+                        new_violations = temp_engine.check_violations(temp_weights, previous_weights)
+
+                        if not new_violations:
+                            logger.info(f"Re-enforcement succeeded at iteration {iteration + 1}")
+                            constrained_weights = temp_weights
+                            violations = new_violations
+                            break
+                        else:
+                            # Still have violations but fewer - use this as best attempt
+                            if len(new_violations) < len(violations):
+                                constrained_weights = temp_weights
+                                violations = new_violations
+                    except Exception as e:
+                        logger.warning(f"Re-enforcement iteration {iteration + 1} failed: {e}")
+                        # Ensure constraints are restored even on error
+                        try:
+                            self.constraints = original_constraints
+                            self.base_engine.constraints = original_base_engine_constraints
+                        except:
+                            pass
+                        continue
+                else:
+                    # CRITICAL FIX: Raise error instead of silently returning violated weights
+                    # This ensures constraint failures are caught and debugged rather than hidden
+                    from .constraints import ConstraintViolationError
+                    violation_details = []
+                    max_weight = constrained_weights.max()
+                    weight_sum = constrained_weights.sum()
+                    if max_weight > self.constraints.max_position_weight:
+                        violation_details.append(f"max_weight={max_weight:.4f} > limit={self.constraints.max_position_weight:.4f}")
+                    if abs(weight_sum - 1.0) > 1e-6:
+                        violation_details.append(f"sum={weight_sum:.6f} != 1.0")
+
+                    raise ConstraintViolationError(
+                        f"Failed to enforce constraints after {max_iterations} iterations. "
+                        f"Violations: {', '.join(violation_details)}"
+                    )
+
             max_weight_after = constrained_weights.max()
-            if max_weight_after > self.constraints.max_position_weight:
-                logger.error(f"CONSTRAINT VIOLATION: After soft constraints, max weight is {max_weight_after:.1%}, exceeds {self.constraints.max_position_weight:.1%} limit!")
+            if max_weight_after > self.constraints.max_position_weight + 1e-6:
+                logger.warning(f"Minor constraint violation: max weight is {max_weight_after:.1%}, limit is {self.constraints.max_position_weight:.1%}")
         else:
             # Traditional hard constraint enforcement
             constrained_weights, violations = self.base_engine.enforce_constraints(
@@ -196,7 +329,18 @@ class UnifiedConstraintEngine:
                 if converged:
                     logger.info(f"Iterative redistribution converged in {iteration + 1} iterations")
                 else:
-                    logger.warning(f"Iterative redistribution did not converge after {max_iterations} iterations")
+                    # Raise exception with diagnostic information
+                    # Note: We already clipped violating assets to max_position in the loop,
+                    # so remaining_violations = 0 means redistribution became impossible
+                    raise ConstraintViolationError(
+                        message=f"Iterative redistribution failed to converge after {max_iterations} iterations: "
+                        f"all assets forced to maximum weight of {max_position:.1%} but sum exceeds 1.0. "
+                        f"Cannot redistribute further.",
+                        iterations_attempted=max_iterations,
+                        remaining_violations=0,
+                        max_weight=adjusted_weights.max(),
+                        max_position_weight=max_position,
+                    )
 
                 # Verify final state
                 max_weight_after = adjusted_weights.max()
@@ -206,20 +350,79 @@ class UnifiedConstraintEngine:
                     f"sum={weight_sum_after:.4f}, target_limit={max_position:.4f}"
                 )
 
-                # Final check: if sum deviates significantly from 1.0, normalise
+                # Final check: if sum deviates significantly from 1.0, apply constrained normalisation
                 # This should rarely happen with proper iterative redistribution
                 if abs(weight_sum_after - 1.0) > 1e-4:
                     logger.warning(
                         f"Weight sum {weight_sum_after:.6f} deviates from 1.0. "
-                        f"Applying final normalisation."
+                        f"Applying constrained normalisation to preserve max_weight ≤ {max_position:.1%}."
                     )
-                    adjusted_weights = adjusted_weights / weight_sum_after
+
+                    # Use constrained projection instead of simple division
+                    # Simple division can reintroduce violations when sum < 1.0
+                    try:
+                        import cvxpy as cp
+
+                        n_assets = len(adjusted_weights)
+                        w_target = adjusted_weights.values
+
+                        # Define optimization variable
+                        w = cp.Variable(n_assets)
+
+                        # Objective: minimize squared deviation from current weights
+                        objective = cp.Minimize(cp.sum_squares(w - w_target))
+
+                        # Constraints: sum=1.0 AND respect box constraints
+                        constraints = [
+                            cp.sum(w) == 1.0,
+                            w >= 0.0,
+                            w <= max_position,
+                        ]
+
+                        # Solve constrained projection
+                        problem = cp.Problem(objective, constraints)
+
+                        # Try CLARABEL first (already used in codebase), fallback to OSQP
+                        try:
+                            problem.solve(solver=cp.CLARABEL, verbose=False, max_iter=200)
+                        except Exception:
+                            problem.solve(solver=cp.OSQP, verbose=False, max_iter=200)
+
+                        if problem.status in [cp.OPTIMAL, cp.OPTIMAL_INACCURATE]:
+                            adjusted_weights = pd.Series(w.value, index=adjusted_weights.index)
+                            logger.info(
+                                f"Constrained normalisation successful: "
+                                f"max_weight={adjusted_weights.max():.4f}, sum={adjusted_weights.sum():.6f}"
+                            )
+                        else:
+                            logger.error(
+                                f"Constrained normalisation failed with status: {problem.status}. "
+                                f"Falling back to simple division (may violate constraints)."
+                            )
+                            adjusted_weights = adjusted_weights / weight_sum_after
+                    except ImportError:
+                        logger.error(
+                            "cvxpy not available for constrained normalisation. "
+                            "Falling back to simple division (may violate constraints)."
+                        )
+                        adjusted_weights = adjusted_weights / weight_sum_after
+                    except Exception as e:
+                        logger.error(
+                            f"Error during constrained normalisation: {e}. "
+                            f"Falling back to simple division (may violate constraints)."
+                        )
+                        adjusted_weights = adjusted_weights / weight_sum_after
 
                     # Verify we didn't reintroduce violations
-                    if adjusted_weights.max() > max_position + 1e-6:
+                    final_max_weight = adjusted_weights.max()
+                    if final_max_weight > max_position + 1e-6:
                         logger.error(
-                            f"Final normalisation reintroduced violation: "
-                            f"{adjusted_weights.max():.4f} > {max_position:.4f}"
+                            f"Normalisation reintroduced violation: "
+                            f"{final_max_weight:.4f} > {max_position:.4f}"
+                        )
+                    else:
+                        logger.info(
+                            f"Constraint validation passed: max_weight={final_max_weight:.4f} ≤ {max_position:.4f}"
                         )
 
         # 2. Soft turnover constraint - blend with previous weights
@@ -281,6 +484,150 @@ class UnifiedConstraintEngine:
                 adjusted_weights = pd.Series(1.0 / len(adjusted_weights), index=adjusted_weights.index)
 
         return adjusted_weights
+
+    def _apply_convex_constraints(
+        self,
+        weights: pd.Series,
+        previous_weights: pd.Series | None = None,
+    ) -> pd.Series:
+        """
+        Apply constraints using convex optimization to properly project onto feasible space.
+        This method mathematically guarantees both sum=1.0 AND max_weight constraints.
+
+        Args:
+            weights: Raw portfolio weights from model
+            previous_weights: Previous period weights (for turnover constraint)
+
+        Returns:
+            Constrained weights satisfying all constraints simultaneously
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+
+        try:
+            import cvxpy as cp
+            import numpy as np
+        except ImportError:
+            logger.warning("cvxpy not available for convex constraint projection")
+            raise ImportError("cvxpy required for convex constraint enforcement")
+
+        n_assets = len(weights)
+        assets = weights.index
+        weights_np = weights.values
+
+        # ERROR HANDLING: Validate input weights
+        if np.isnan(weights_np).any():
+            logger.error(f"Input weights contain {np.isnan(weights_np).sum()} NaN values")
+            raise ValueError("Cannot apply convex constraints to weights containing NaN")
+
+        if np.isinf(weights_np).any():
+            logger.error(f"Input weights contain {np.isinf(weights_np).sum()} infinite values")
+            raise ValueError("Cannot apply convex constraints to weights containing infinite values")
+
+        if n_assets == 0:
+            logger.error("Cannot apply constraints to empty weight vector")
+            raise ValueError("Empty weight vector provided to constraint engine")
+
+        # ERROR HANDLING: Check constraint feasibility before solving
+        if self.constraints.min_weight_threshold * n_assets > 1.0:
+            logger.error(
+                f"Infeasible constraints: min_weight={self.constraints.min_weight_threshold} × {n_assets} assets "
+                f"= {self.constraints.min_weight_threshold * n_assets:.3f} > 1.0"
+            )
+            raise ValueError(f"Mathematically infeasible: minimum weight threshold too high for {n_assets} assets")
+
+        # Define optimization variable
+        w = cp.Variable(n_assets)
+
+        # Objective: minimize squared deviation from target weights
+        # This finds the closest feasible point to the original weights
+        objective = cp.Minimize(cp.sum_squares(w - weights_np))
+
+        # Constraints
+        constraints = [
+            cp.sum(w) == 1.0,  # Weights sum to 1
+            w >= self.constraints.min_weight_threshold,  # Minimum position
+            w <= self.constraints.max_position_weight,  # Maximum position
+        ]
+
+        # Add turnover constraint if previous weights provided
+        if previous_weights is not None and self.constraints.max_monthly_turnover is not None:
+            prev_weights_aligned = previous_weights.reindex(assets, fill_value=0).values
+            turnover = cp.sum(cp.abs(w - prev_weights_aligned))
+            # Turnover already two-way, no multiplication needed
+            constraints.append(turnover <= self.constraints.max_monthly_turnover)
+
+        # Add long-only constraint if needed
+        if self.constraints.long_only:
+            constraints.append(w >= 0)
+
+        # Create and solve problem
+        problem = cp.Problem(objective, constraints)
+
+        # Try multiple solvers in order of preference
+        solvers_to_try = [
+            (cp.CLARABEL, {"verbose": False, "max_iter": 200}),
+            (cp.OSQP, {"verbose": False, "max_iter": 200}),
+            (cp.SCS, {"verbose": False, "max_iters": 200}),
+        ]
+
+        solution_found = False
+        solver_errors = []
+        for solver, kwargs in solvers_to_try:
+            try:
+                problem.solve(solver=solver, **kwargs)
+                if problem.status in [cp.OPTIMAL, cp.OPTIMAL_INACCURATE]:
+                    solution_found = True
+                    logger.debug(f"Convex constraint projection solved with {solver}: status={problem.status}")
+                    break
+                else:
+                    # ERROR HANDLING: Log non-optimal status
+                    error_msg = f"{solver}: status={problem.status}"
+                    solver_errors.append(error_msg)
+                    logger.debug(f"Solver {solver} failed with status {problem.status}")
+            except Exception as e:
+                # ERROR HANDLING: Capture solver exceptions
+                error_msg = f"{solver}: {type(e).__name__}: {str(e)[:100]}"
+                solver_errors.append(error_msg)
+                logger.debug(f"Solver {solver} raised exception: {e}")
+                continue
+
+        if not solution_found:
+            # ERROR HANDLING: Provide detailed failure report
+            error_details = "\n  ".join(solver_errors)
+            logger.error(
+                f"Failed to solve constraint projection problem.\n"
+                f"  Problem: {n_assets} assets, max_weight={self.constraints.max_position_weight}, "
+                f"min_weight={self.constraints.min_weight_threshold}\n"
+                f"  Solver attempts:\n  {error_details}"
+            )
+            raise ValueError(
+                f"Failed to solve constraint projection problem after trying {len(solvers_to_try)} solvers. "
+                f"Last status: {problem.status}. This may indicate infeasible constraints."
+            )
+
+        # Extract solution
+        constrained_weights = pd.Series(w.value, index=assets)
+
+        # Final defensive clipping (handles numerical precision)
+        constrained_weights = constrained_weights.clip(
+            lower=self.constraints.min_weight_threshold,
+            upper=self.constraints.max_position_weight
+        )
+
+        # Ensure exact sum to 1.0
+        weight_sum = constrained_weights.sum()
+        if abs(weight_sum - 1.0) > 1e-8:
+            constrained_weights = constrained_weights / weight_sum
+
+        # Log the result
+        max_weight = constrained_weights.max()
+        logger.debug(
+            f"Convex projection: max weight before={weights.max():.1%}, "
+            f"after={max_weight:.1%}, deviation={np.linalg.norm(constrained_weights - weights):.4f}"
+        )
+
+        return constrained_weights
 
     def _apply_cost_aware_adjustment(
         self,

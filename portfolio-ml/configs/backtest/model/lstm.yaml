@@ -1,3 +1,49 @@
 # @package _group_
-name: lstm
-enabled: true
+# Model metadata (not loaded by LSTMModelConfig)
+# name: lstm
+# enabled: true
+
+# LSTM Architecture Configuration
+lstm_config:
+  sequence_length: 252         # Trading days lookback (1 year)
+  hidden_size: 256             # LSTM hidden state size (increased for ~2700 inputs)
+  num_layers: 3                # Number of LSTM layers (deeper for complex patterns)
+  dropout: 0.5                 # Dropout rate for regularisation (strong to prevent overfitting)
+  num_attention_heads: 8       # Number of attention heads if using attention
+  # input_size and output_size are set dynamically based on universe size
+
+# Training Configuration
+training_config:
+  max_memory_gb: 10.0          # Maximum GPU memory to use (GB)
+  gradient_accumulation_steps: 1  # Gradient accumulation for large batches
+  use_mixed_precision: false   # Enable mixed precision training
+  learning_rate: 0.001         # Learning rate for Adam optimiser
+  weight_decay: 0.0001         # L2 regularisation weight
+  batch_size: 32               # Training batch size
+  patience: 5                  # Early stopping patience
+  # Note: Backtest epochs controlled by configs/backtest/config.yaml (quick_retrain_epochs.lstm)
+
+# Model-specific Parameters
+lookback_days: 756             # 3 years of trading days for correlation estimation
+rebalancing_frequency: monthly # Rebalancing frequency
+prediction_horizon: 21         # Days ahead to predict (monthly)
+
+# Risk Management
+risk_aversion: 1.0             # Risk aversion parameter for mean-variance optimisation
+
+# Portfolio Optimisation
+use_markowitz_layer: false    # Use direct softmax (not MV optimizer - trust LSTM predictions!)
+shrinkage_target: 0.1          # Shrinkage target for covariance estimation (unused when use_markowitz_layer=false)
+portfolio_temperature: 1.0     # Temperature for softmax (higher=smoother, prevents extreme concentration)
+top_k_assets: 50               # Select top K assets by prediction, then softmax (0 = no filtering)
+enforce_constraints: false     # Skip constraint enforcement - softmax naturally sums to 1, control via temperature
+
+# Feature Engineering
+use_technical_features: true  # Use technical features instead of just returns
+feature_set: standard          # Options: "minimal" (7), "standard" (9), "full" (12)
+
+# NOTE: The following parameters are handled separately by the backtest engine
+# and are not part of LSTMModelConfig:
+# - Data Quality Parameters (coverage_threshold, variance_threshold)
+# - Portfolio Constraints (configured in PortfolioConstraints)
+# These should be set in the main backtest configuration or passed separately

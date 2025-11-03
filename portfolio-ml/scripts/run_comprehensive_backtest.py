@@ -16,7 +16,6 @@ Key features:
 
 from __future__ import annotations
 
-import argparse
 import logging
 import sys
 from pathlib import Path
@@ -24,6 +23,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+import torch
 
 # Hydra imports
 import hydra
@@ -60,8 +60,6 @@ from src.models.base.baselines import (
     MeanReversionModel,
 )
 from src.models.base.portfolio_model import PortfolioConstraints
-from src.models.gat.model import GATPortfolioModel, GATModelConfig
-from src.models.gat.gat_model import HeadCfg
 from src.models.hrp.clustering import ClusteringConfig
 from src.models.hrp.model import HRPConfig, HRPModel
 from src.models.lstm.model import LSTMPortfolioModel
@@ -72,6 +70,7 @@ from src.utils.membership_aware_cleaning import (
     get_rolling_universe,
     get_universe_at_date
 )
+from src.data.preprocessing import create_quality_filter
 
 # Configure logging
 # Create logs directory
@@ -228,6 +227,30 @@ def load_market_data(config: dict[str, Any] | DictConfig) -> dict[str, pd.DataFr
         masked_returns = returns_data.where(membership_mask)
         valid_returns = masked_returns.stack().dropna()
         logger.info(f"Return statistics (during membership): mean={valid_returns.mean():.6f}, std={valid_returns.std():.6f}")
+
+        # Apply comprehensive data quality filtering (addresses data_exploration_findings.md issues)
+        logger.info("Applying comprehensive data quality filters...")
+        quality_filter = create_quality_filter(preset="standard")
+
+        # Note: prices not loaded, so we'll skip price-based preprocessing
+        # Focus on returns-based quality control
+        filtered_returns, kept_tickers, removed_tickers = quality_filter.filter_by_coverage(
+            returns_data, membership_mask
+        )
+
+        # Update membership mask to match filtered tickers
+        membership_mask = membership_mask[kept_tickers]
+
+        # Forward-fill short gaps (<30 days)
+        filtered_returns = quality_filter.forward_fill_gaps(filtered_returns)
+
+        # Winsorize returns to handle fat tails (skewness=10.99, kurtosis=200.46 from findings)
+        filtered_returns = quality_filter.winsorize_outliers(filtered_returns)
+
+        # Update returns_data to use filtered version
+        returns_data = filtered_returns
+
+        logger.info(f"Quality filtering complete: {len(kept_tickers)} tickers kept, {len(removed_tickers)} removed")
     else:
         logger.warning(f"Universe membership data not found at {universe_path}")
         logger.warning("Falling back to non-membership-aware cleaning...")
@@ -380,20 +403,50 @@ def load_market_data(config: dict[str, Any] | DictConfig) -> dict[str, pd.DataFr
 
 
 def create_hrp_models() -> dict[str, Any]:
-    """Create fresh HRP models for rolling backtest."""
+    """Create fresh HRP models for rolling backtest - loads configuration from YAML."""
     models = {}
 
-    logger.info("Creating fresh HRP model for rolling training")
-    hrp_config = HRPConfig(
-        clustering_config=ClusteringConfig(
-            linkage_method="ward",  # Changed from "average" - Ward produces balanced trees for better diversification
+    # Load configuration from YAML file if available
+    config_path = Path("configs/backtest/model/hrp.yaml")
+
+    if config_path.exists():
+        logger.info(f"Loading HRP configuration from {config_path}")
+        import yaml
+        with open(config_path) as f:
+            config_dict = yaml.safe_load(f)
+
+        # Create clustering config if provided
+        clustering_config = None
+        if "clustering_config" in config_dict:
+            clustering_config = ClusteringConfig(**config_dict["clustering_config"])
+            del config_dict["clustering_config"]
+
+        # Create HRP config with loaded values
+        hrp_config = HRPConfig(
+            clustering_config=clustering_config,
+            **{k: v for k, v in config_dict.items()
+               if k in ["lookback_days", "min_observations", "correlation_method", "rebalance_frequency"]}
+        )
+        logger.info("HRP configuration loaded from YAML")
+    else:
+        logger.info("Creating HRP model with default configuration (YAML not found)")
+        hrp_config = HRPConfig(
+            clustering_config=ClusteringConfig(
+                linkage_method="ward",
+                min_observations=252,
+                correlation_method="pearson",
+            ),
+            lookback_days=756,
             min_observations=252,
             correlation_method="pearson",
-        ),
-        lookback_days=756,  # 36 months * 21 trading days
-        min_observations=252,
-        correlation_method="pearson",
-    )
+        )
+
+    logger.info("HRP configuration:")
+    logger.info(f"  - Lookback days: {hrp_config.lookback_days}")
+    logger.info(f"  - Min observations: {hrp_config.min_observations}")
+    logger.info(f"  - Correlation method: {hrp_config.correlation_method}")
+    logger.info(f"  - Clustering linkage: {hrp_config.clustering_config.linkage_method}")
+
     models["HRP"] = HRPModel(
         hrp_config=hrp_config,
         constraints=PortfolioConstraints(
@@ -411,22 +464,49 @@ def create_hrp_models() -> dict[str, Any]:
 
 
 def create_lstm_models() -> dict[str, Any]:
-    """Create fresh LSTM models for rolling backtest."""
+    """Create fresh LSTM models for rolling backtest - loads configuration from YAML."""
     models = {}
 
-    logger.info("Creating fresh LSTM model for rolling training")
-    from src.models.lstm.model import LSTMModelConfig
-    lstm_config = LSTMModelConfig()
-    lstm_config.training_config.epochs = 50  # Increased for better convergence
-    lstm_config.training_config.patience = 10
-    lstm_config.training_config.learning_rate = 0.001
-    lstm_config.training_config.batch_size = 64  # Increased from default for better GPU usage
-    lstm_config.prediction_horizon = 21  # Monthly prediction
+    # Load configuration from YAML file
+    config_path = Path("configs/backtest/model/lstm.yaml")
 
+    if config_path.exists():
+        logger.info(f"Loading LSTM configuration from {config_path}")
+        from src.models.lstm.model import LSTMModelConfig
+        lstm_config = LSTMModelConfig.from_yaml(config_path)
+        logger.info("LSTM configuration loaded from YAML")
+    else:
+        logger.info("Creating LSTM model with default configuration (YAML not found)")
+        from src.models.lstm.model import LSTMModelConfig
+        lstm_config = LSTMModelConfig()
+
+        # Fallback to hardcoded configuration
+        lstm_config.training_config.epochs = 20
+        lstm_config.training_config.patience = 5
+        lstm_config.training_config.learning_rate = 0.001
+        lstm_config.training_config.batch_size = 32
+        lstm_config.prediction_horizon = 21
+        lstm_config.lstm_config.hidden_size = 256
+        lstm_config.lstm_config.num_layers = 3
+        lstm_config.lstm_config.dropout = 0.5
+        lstm_config.use_technical_features = True
+        lstm_config.feature_set = "standard"
+
+    logger.info("LSTM configuration:")
+    logger.info(f"  - Normalization: RobustScaler (feature-wise, handles outliers)")
+    logger.info(f"  - Architecture: {lstm_config.lstm_config.hidden_size} units, {lstm_config.lstm_config.num_layers} layers")
+    logger.info(f"  - Regularization: dropout={lstm_config.lstm_config.dropout}")
+    logger.info(f"  - Training: {lstm_config.training_config.epochs} epochs, patience={lstm_config.training_config.patience}")
+    logger.info(f"  - Features: {'ENABLED' if lstm_config.use_technical_features else 'DISABLED'}")
+    logger.info(f"  - Feature set: {lstm_config.feature_set}")
+    logger.info(f"  - Learning rate: {lstm_config.training_config.learning_rate}")
+    logger.info(f"  - Batch size: {lstm_config.training_config.batch_size}")
+
+    # Use constraints from YAML if available, otherwise use standardised values
     models["LSTM"] = LSTMPortfolioModel(
         constraints=PortfolioConstraints(
             long_only=True,  # Keep this - no short selling
-            max_position_weight=0.15,  # STANDARDIZED: 15% max for all models (relaxed from 10%)
+            max_position_weight=0.15,  # STANDARDIZED: 15% max for all models
             max_monthly_turnover=0.30,  # STANDARDIZED: 30% monthly turnover for all models
             min_weight_threshold=0.0,  # STANDARDIZED: 0% minimum threshold
             top_k_positions=None,  # No limit on positions
@@ -440,112 +520,114 @@ def create_lstm_models() -> dict[str, Any]:
 
 
 def create_gat_models() -> dict[str, Any]:
-    """Create fresh GAT models for rolling backtest with numerically stable configuration."""
+    """Create fresh GAT models for rolling backtest - NEW CLEAN IMPLEMENTATION."""
     models = {}
 
-    logger.info("Creating fresh GAT models with enhanced preset (fixing NaN loss issue)")
+    # Load configuration from YAML file
+    config_path = Path("configs/backtest/model/gat.yaml")
+
+    if config_path.exists():
+        logger.info(f"Loading GAT configuration from {config_path}")
+        import yaml
+        with open(config_path) as f:
+            config_dict = yaml.safe_load(f)
+    else:
+        logger.warning(f"GAT YAML config not found at {config_path}, using defaults")
+        config_dict = {}
 
     # Common GAT configuration - STANDARDIZED across all models
     base_constraints = PortfolioConstraints(
-        long_only=True,  # Keep this - no short selling
-        max_position_weight=0.15,  # STANDARDIZED: 15% max for all models (tightened from 20%)
-        max_monthly_turnover=0.30,  # STANDARDIZED: 30% monthly turnover for all models (reduced from 200%)
-        min_weight_threshold=0.0,  # STANDARDIZED: 0% minimum threshold
-        top_k_positions=None,  # No hard limit on number of positions
-        transaction_cost_bps=10.0,  # STANDARDIZED: consistent transaction costs
-        enable_turnover_penalty=True,  # STANDARDIZED: enable turnover penalty for all (enabled from False)
+        long_only=True,
+        max_position_weight=0.15,
+        max_monthly_turnover=0.30,
+        min_weight_threshold=0.0,
+        top_k_positions=None,
+        transaction_cost_bps=10.0,
+        enable_turnover_penalty=True,
     )
 
-    # GAT-MST Model - using enhanced preset with standard loss (fixes NaN issue)
-    logger.info("Creating GAT-MST model with numerically stable configuration")
-    gat_mst_config = GATModelConfig(preset="enhanced")  # Enhanced architecture with time-series features
-    gat_mst_config.loss_formulation = "standard"  # Explicitly use standard loss (no logarithms)
-    gat_mst_config.max_epochs = 15
-    gat_mst_config.patience = 10
+    # Import new clean GAT
+    from src.models.gat import GATConfig, GATPortfolioModel
 
-    # FIX #1: Disable memory module to prevent tensor dimension mismatch (354x65 vs 128x64)
-    gat_mst_config.mem_hidden = None  # CRITICAL: Prevents memory concatenation dimension bug
+    # Extract config values from YAML (with clean defaults)
+    common_config = config_dict.get("common", {})
 
-    # Enable time-series features for temporal context (matches LSTM's 252-day window)
-    gat_mst_config.node_feature_type = "timeseries"
-    gat_mst_config.timeseries_length = 252  # 1 year of trading days (matches LSTM)
-    gat_mst_config.timeseries_features = ["volatility", "returns"]  # 2 features for richer representation
-    gat_mst_config.temporal_encoder_type = "conv1d"  # Fast Conv1D encoder (faster than LSTM)
-    gat_mst_config.temporal_encoder_hidden = 64
-    gat_mst_config.temporal_encoder_layers = 2
+    logger.info("Creating clean GAT models (v2.0)...")
 
-    # Graph configuration
-    gat_mst_config.graph_config.filter_method = "mst"  # Minimum Spanning Tree
-    gat_mst_config.graph_config.lookback_days = 252  # CRITICAL FIX: 1-year correlation window (was 756)
-
-    models["GAT-MST"] = GATPortfolioModel(
-        constraints=base_constraints,
-        config=gat_mst_config
+    # GAT-MST Model
+    logger.info("Creating GAT-MST model...")
+    mst_params = config_dict.get("mst", {})
+    gat_mst_config = GATConfig(
+        graph_method="mst",
+        lookback_days=mst_params.get("lookback_days", common_config.get("lookback_days", 63)),
+        hidden_dim=common_config.get("hidden_dim", 16),
+        n_heads_layer1=common_config.get("n_heads_layer1", 8),
+        n_heads_layer2=common_config.get("n_heads_layer2", 1),
+        dropout=common_config.get("dropout", 0.3),
+        learning_rate=mst_params.get("learning_rate", common_config.get("learning_rate", 0.001)),
+        weight_decay=common_config.get("weight_decay", 1e-4),
+        max_epochs=common_config.get("max_epochs", 5),
+        patience=common_config.get("patience", 3),
+        gradient_clip=common_config.get("gradient_clip", 1.0),
+        loss_type=common_config.get("loss_type", "return"),
+        vol_penalty=common_config.get("vol_penalty", 0.5),
+        risk_free_rate=common_config.get("risk_free_rate", 0.03),
+        max_weight=0.15,
+        device="cpu"
     )
-    logger.info("Created GAT-MST model with enhanced preset and standard loss")
+    models["GAT-MST"] = GATPortfolioModel(constraints=base_constraints, config=gat_mst_config)
+    logger.info(f"  ✓ GAT-MST created: {models['GAT-MST'].model.count_parameters()['total']:,} parameters")
 
-    # GAT-kNN Model - using enhanced preset with time-series features
-    logger.info("Creating GAT-kNN model with numerically stable configuration")
-    gat_knn_config = GATModelConfig(preset="enhanced")  # Enhanced architecture with time-series features
-    gat_knn_config.loss_formulation = "standard"  # Explicitly use standard loss (no logarithms)
-    gat_knn_config.max_epochs = 15
-    gat_knn_config.patience = 10
-
-    # FIX #1: Disable memory module to prevent tensor dimension mismatch
-    gat_knn_config.mem_hidden = None  # CRITICAL: Prevents memory concatenation dimension bug
-
-    # Enable time-series features (same as MST)
-    gat_knn_config.node_feature_type = "timeseries"
-    gat_knn_config.timeseries_length = 252
-    gat_knn_config.timeseries_features = ["volatility", "returns"]
-    gat_knn_config.temporal_encoder_type = "conv1d"
-    gat_knn_config.temporal_encoder_hidden = 64
-    gat_knn_config.temporal_encoder_layers = 2
-
-    # Graph configuration
-    gat_knn_config.graph_config.filter_method = "knn"  # k-Nearest Neighbors
-    gat_knn_config.graph_config.knn_k = 10  # k=10 neighbors
-    gat_knn_config.graph_config.lookback_days = 252  # CRITICAL FIX: 1-year correlation window (was 756)
-
-    models["GAT-kNN"] = GATPortfolioModel(
-        constraints=base_constraints,
-        config=gat_knn_config
+    # GAT-kNN Model
+    logger.info("Creating GAT-kNN model...")
+    knn_params = config_dict.get("knn", {})
+    gat_knn_config = GATConfig(
+        graph_method="knn",
+        lookback_days=knn_params.get("lookback_days", common_config.get("lookback_days", 63)),
+        knn_k=knn_params.get("knn_k", 5),
+        hidden_dim=common_config.get("hidden_dim", 16),
+        n_heads_layer1=common_config.get("n_heads_layer1", 8),
+        n_heads_layer2=common_config.get("n_heads_layer2", 1),
+        dropout=common_config.get("dropout", 0.3),
+        learning_rate=knn_params.get("learning_rate", common_config.get("learning_rate", 0.001)),
+        weight_decay=common_config.get("weight_decay", 1e-4),
+        max_epochs=common_config.get("max_epochs", 5),
+        patience=common_config.get("patience", 3),
+        gradient_clip=common_config.get("gradient_clip", 1.0),
+        loss_type=common_config.get("loss_type", "return"),
+        vol_penalty=common_config.get("vol_penalty", 0.5),
+        risk_free_rate=common_config.get("risk_free_rate", 0.03),
+        max_weight=0.15,
+        device="cpu"
     )
-    logger.info("Created GAT-kNN model with enhanced preset and standard loss")
+    models["GAT-kNN"] = GATPortfolioModel(constraints=base_constraints, config=gat_knn_config)
+    logger.info(f"  ✓ GAT-kNN created: {models['GAT-kNN'].model.count_parameters()['total']:,} parameters")
 
-    # GAT-TMFG Model - using enhanced preset with time-series features
-    logger.info("Creating GAT-TMFG model with numerically stable configuration")
-    gat_tmfg_config = GATModelConfig(preset="enhanced")  # Enhanced architecture with time-series features
-    gat_tmfg_config.loss_formulation = "standard"  # Explicitly use standard loss (no logarithms)
-
-    # Keep adjusted parameters for dense TMFG graphs
-    gat_tmfg_config.dropout = 0.3  # Slightly higher dropout for regularisation
-    gat_tmfg_config.max_epochs = 20  # More epochs for complex graph
-    gat_tmfg_config.patience = 10
-    gat_tmfg_config.learning_rate = 0.0005  # Lower learning rate for stability
-    gat_tmfg_config.weight_decay = 1e-4  # Higher weight decay for regularisation
-
-    # FIX #1: Disable memory module to prevent tensor dimension mismatch
-    gat_tmfg_config.mem_hidden = None  # CRITICAL: Prevents memory concatenation dimension bug
-
-    # Enable time-series features (same as MST/kNN)
-    gat_tmfg_config.node_feature_type = "timeseries"
-    gat_tmfg_config.timeseries_length = 252
-    gat_tmfg_config.timeseries_features = ["volatility", "returns"]
-    gat_tmfg_config.temporal_encoder_type = "conv1d"
-    gat_tmfg_config.temporal_encoder_hidden = 64
-    gat_tmfg_config.temporal_encoder_layers = 2
-
-    # Graph configuration
-    gat_tmfg_config.graph_config.filter_method = "tmfg"  # Triangulated Maximally Filtered Graph
-    gat_tmfg_config.graph_config.edge_pruning_threshold = 0.05  # Light pruning to preserve planar structure
-    gat_tmfg_config.graph_config.lookback_days = 252  # CRITICAL FIX: 1-year correlation window (was 756)
-
-    models["GAT-TMFG"] = GATPortfolioModel(
-        constraints=base_constraints,
-        config=gat_tmfg_config
+    # GAT-TMFG Model
+    logger.info("Creating GAT-TMFG model...")
+    tmfg_params = config_dict.get("tmfg", {})
+    gat_tmfg_config = GATConfig(
+        graph_method="tmfg",
+        lookback_days=tmfg_params.get("lookback_days", common_config.get("lookback_days", 63)),
+        hidden_dim=common_config.get("hidden_dim", 16),
+        n_heads_layer1=common_config.get("n_heads_layer1", 8),
+        n_heads_layer2=common_config.get("n_heads_layer2", 1),
+        dropout=common_config.get("dropout", 0.3),
+        learning_rate=tmfg_params.get("learning_rate", common_config.get("learning_rate", 0.001)),
+        weight_decay=common_config.get("weight_decay", 1e-4),
+        max_epochs=common_config.get("max_epochs", 5),
+        patience=common_config.get("patience", 3),
+        gradient_clip=common_config.get("gradient_clip", 1.0),
+        loss_type=common_config.get("loss_type", "return"),
+        vol_penalty=common_config.get("vol_penalty", 0.5),
+        risk_free_rate=common_config.get("risk_free_rate", 0.03),
+        max_weight=0.15,
+        device="cpu"
     )
-    logger.info("Created GAT-TMFG model with enhanced preset and standard loss")
+    models["GAT-TMFG"] = GATPortfolioModel(constraints=base_constraints, config=gat_tmfg_config)
+    logger.info(f"  ✓ GAT-TMFG created: {models['GAT-TMFG'].model.count_parameters()['total']:,} parameters")
+
+    logger.info("All clean GAT models created successfully (NO deprecated code)")
 
     return models
 
@@ -571,10 +653,27 @@ def initialize_models(config: dict[str, Any] | DictConfig, gpu_config: GPUConfig
     gat_models = create_gat_models()
     models.update(gat_models)
 
-    # Baseline models for comparison
-    models["EqualWeight"] = EqualWeightModel()
-    models["MarketCapWeighted"] = MarketCapWeightedModel()
-    models["MeanReversion"] = MeanReversionModel(lookback_days=21)
+    # Baseline models for comparison - STANDARDIZED CONSTRAINTS (Bug #4 fix)
+    # CRITICAL: Use min_weight_threshold=0.0 to avoid infeasible constraints
+    # With 621 assets, min_weight_threshold=0.01 would require 621% allocation (impossible)
+    baseline_constraints = PortfolioConstraints(
+        long_only=True,
+        max_position_weight=0.15,      # STANDARDIZED: 15% max for all models
+        max_monthly_turnover=0.30,     # STANDARDIZED: 30% monthly turnover
+        min_weight_threshold=0.0,      # CRITICAL FIX: 0% not 1% (was causing infeasibility)
+        top_k_positions=None,
+        transaction_cost_bps=10.0,
+        enable_turnover_penalty=True,
+    )
+
+    logger.info(
+        f"Baseline model constraints (FIXED): max_position={baseline_constraints.max_position_weight:.1%}, "
+        f"min_weight={baseline_constraints.min_weight_threshold:.1%} (was 1%, now 0% for feasibility)"
+    )
+
+    models["EqualWeight"] = EqualWeightModel(constraints=baseline_constraints)
+    models["MarketCapWeighted"] = MarketCapWeightedModel(constraints=baseline_constraints)
+    models["MeanReversion"] = MeanReversionModel(lookback_days=21, constraints=baseline_constraints)
 
     logger.info(f"Initialized {len(models)} models: {list(models.keys())}")
     return models
@@ -634,11 +733,11 @@ def create_backtest_config(cfg: DictConfig) -> RollingBacktestConfig:
         # Rolling retraining configuration (TRUE ROLLING)
         enable_rolling_retraining=True,   # Enable realistic rolling retraining
         monthly_retraining=True,          # Retrain models monthly
-        quick_retrain_epochs={
-            "hrp": 1,   # HRP doesn't need epochs (correlation-based)
-            "lstm": 50,  # FIXED: Increased from 30 to 50 for proper convergence
-            "gat": 50,   # FIXED: Increased from 15 to 50 for proper convergence
-        },
+        quick_retrain_epochs=cfg.get("quick_retrain_epochs", {
+            "hrp": 1,   # Default: HRP doesn't need epochs (correlation-based)
+            "lstm": 5,   # Default: LSTM epochs during backtest
+            "gat": 15,   # Default: GAT epochs during backtest
+        }),
 
         # Memory management
         gpu_config=create_gpu_config(cfg.gpu_memory_limit_gb),

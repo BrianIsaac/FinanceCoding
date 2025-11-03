@@ -31,6 +31,17 @@ from .training import MemoryEfficientTrainer, TrainingConfig, create_trainer
 
 logger = logging.getLogger(__name__)
 
+# Import NA handling for robust data filtering
+try:
+    from ...data.na_handling import (
+        prepare_rolling_window_data,
+        filter_zero_variance_assets,
+    )
+    NA_HANDLING_AVAILABLE = True
+except ImportError:
+    logger.warning("NA handling utilities not available, using basic filtering")
+    NA_HANDLING_AVAILABLE = False
+
 # Import adaptive padding for memory optimization
 try:
     from ...utils.adaptive_padding import AdaptivePaddingConfig, AdaptivePaddingStrategy
@@ -72,6 +83,26 @@ class LSTMModelConfig:
     # Portfolio optimization
     use_markowitz_layer: bool = True  # Apply Markowitz optimization to LSTM predictions
     shrinkage_target: float = 0.1  # Shrinkage target for covariance estimation
+    portfolio_temperature: float = 3.0  # Temperature for softmax conversion of returns to weights
+    top_k_assets: int = 0  # Select top K assets by prediction, then softmax (0 = no filtering)
+    enforce_constraints: bool = True  # Enforce portfolio constraints (False = softmax naturally sums to 1)
+
+    # Feature engineering
+    use_technical_features: bool = True  # Use technical features instead of just returns
+    feature_set: str = "standard"  # Options: "minimal" (7 features), "standard" (9), "full" (12)
+
+    @property
+    def actual_input_size(self) -> int:
+        """Calculate input size based on feature configuration."""
+        if not self.use_technical_features:
+            return 1  # Just returns
+
+        feature_counts = {
+            "minimal": 7,
+            "standard": 9,
+            "full": 12,
+        }
+        return feature_counts.get(self.feature_set, 1)
 
     @classmethod
     def from_yaml(cls, filepath: Path) -> LSTMModelConfig:
@@ -117,6 +148,11 @@ class LSTMModelConfig:
             "risk_aversion": self.risk_aversion,
             "use_markowitz_layer": self.use_markowitz_layer,
             "shrinkage_target": self.shrinkage_target,
+            "portfolio_temperature": self.portfolio_temperature,
+            "top_k_assets": self.top_k_assets,
+            "enforce_constraints": self.enforce_constraints,
+            "use_technical_features": self.use_technical_features,
+            "feature_set": self.feature_set,
         }
 
         with open(filepath, "w") as f:
@@ -146,6 +182,10 @@ class LSTMPortfolioModel(PortfolioModel):
         self.trainer: MemoryEfficientTrainer | None = None
         self.universe: list[str] | None = None
         self.training_history: dict | None = None
+
+        # CRITICAL: Expose enforce_constraints as direct attribute for rolling_engine
+        # rolling_engine checks model.enforce_constraints not model.config.enforce_constraints
+        self.enforce_constraints = self.config.enforce_constraints
 
         # CRITICAL FIX: Track device for network recreation
         # Auto-detect device (will be updated when trainer is created)
@@ -190,8 +230,9 @@ class LSTMPortfolioModel(PortfolioModel):
         returns: pd.DataFrame,
         universe: list[str],
         rebalance_date: pd.Timestamp,
-        lookback_months: int = 36,
+        lookback_months: int = 30,  # FIXED: Reduced from 36 to 30 months
         min_observations: int = 100,  # Reduced default for flexible academic framework
+        max_epochs: int = 20,  # Maximum epochs for quick retraining
     ) -> None:
         """
         Perform rolling fit for LSTM model with warm start.
@@ -215,6 +256,12 @@ class LSTMPortfolioModel(PortfolioModel):
             returns, start_date, end_date, universe
         )
 
+        logger.debug(
+            f"Loaded sequence_lengths distribution: min={sequence_lengths.min()}, "
+            f"max={sequence_lengths.max()}, mean={sequence_lengths.mean():.1f}, "
+            f"n_assets={len(sequence_lengths)}"
+        )
+
         if len(training_data) < min_observations:
             raise ValueError(
                 f"Insufficient data for rolling fit: {len(training_data)} < {min_observations}"
@@ -225,7 +272,7 @@ class LSTMPortfolioModel(PortfolioModel):
         self._sequence_lengths = sequence_lengths
 
         # Quick retrain with limited epochs
-        self._quick_retrain(training_data, universe, max_epochs=20)
+        self._quick_retrain(training_data, universe, max_epochs=max_epochs)
 
         # Update model state
         self.universe = universe.copy()
@@ -284,40 +331,44 @@ class LSTMPortfolioModel(PortfolioModel):
         # Use unified NA handling pipeline
         from ...data.na_handling import (
             prepare_rolling_window_data,
-            cross_sectional_mean_impute,
+            simple_temporal_fill,
             calculate_data_quality_metrics,
+        )
+
+        logger.info(
+            f"LSTM model NA handling: coverage_threshold=0.80, "
+            f"variance_threshold=1e-8, n_assets_before_filter={len(available_assets)}, "
+            f"fit_period={start_date.date()} to {end_date.date()}"
         )
 
         prepared_returns, masks = prepare_rolling_window_data(
             returns_window=filtered_returns,
             universe=available_assets,
-            coverage_threshold=0.75,  # LSTM-specific threshold
+            coverage_threshold=0.80,  # Standardised: 80% coverage threshold (industry standard, ensures fair model comparison)
             variance_threshold=1e-8,
             return_masks=True,
         )
 
         # Compute sequence lengths (count non-NA values per asset)
-        sequence_lengths = (~prepared_returns.isna()).sum(axis=0)
+        # CRITICAL FIX: Clamp to max_seq_len to prevent metadata mismatch after windowing
+        max_seq_len = self.config.lstm_config.sequence_length
+        sequence_lengths = (~prepared_returns.isna()).sum(axis=0).clip(upper=max_seq_len)
 
-        # Use cross-sectional mean imputation
-        if hasattr(self, 'universe_df') and self.universe_df is not None:
-            from ...utils.membership_aware_cleaning import create_membership_mask
-            mask_for_imputation = create_membership_mask(prepared_returns, self.universe_df)
-            cleaned_returns = cross_sectional_mean_impute(
-                prepared_returns,
-                membership_mask=mask_for_imputation,
-            )
-        else:
-            cleaned_returns = cross_sectional_mean_impute(prepared_returns)
+        logger.debug(
+            f"Sequence lengths after clamping: min={sequence_lengths.min()}, "
+            f"max={sequence_lengths.max()}, mean={sequence_lengths.mean():.1f}, "
+            f"max_seq_len={max_seq_len}"
+        )
 
-        # Final fallback
-        cleaned_returns = cleaned_returns.fillna(0.0)
+        # Use simple temporal fill (training: allow bfill for complete historical window)
+        cleaned_returns = simple_temporal_fill(prepared_returns, allow_bfill=True)
 
         # Store quality metrics for backtest tracking
         self._last_data_quality_metrics = calculate_data_quality_metrics(
             prepared_returns,
             available_assets,
             masks,
+            date=end_date,  # Pass date for membership-aware verification
         )
 
         return cleaned_returns, masks['valid'], sequence_lengths
@@ -396,25 +447,12 @@ class LSTMPortfolioModel(PortfolioModel):
                 logger.info(f"Added minimal padding of {padding_needed} features ({padding_needed/target_size:.1%})")
                 return pd.concat([data, padding_df], axis=1)
             else:
-                # Too much padding would be needed - use current size instead
-                logger.warning(f"Refusing to pad {current_size} -> {target_size} (would be {padding_needed/target_size:.1%} padding)")
-                # Update target size to current size
-                self.config.lstm_config.input_size = current_size
-                self.config.lstm_config.output_size = current_size
-                self.network = create_ragged_lstm_network(self.config.lstm_config)
-
-                # CRITICAL FIX: Apply device placement to recreated network
-                # This ensures buffers are on the correct device (CUDA/CPU)
-                if hasattr(self, '_device'):
-                    self.network = self.network.to(self._device)
-                    for name, buffer in self.network.named_buffers():
-                        if buffer.device != self._device:
-                            buffer.data = buffer.data.to(self._device)
-                            logger.debug(f"Moved recreated network buffer '{name}' to {self._device}")
-                    logger.debug(f"Applied device placement to recreated network: {self._device}")
-
-                logger.info(f"Recreated network with input_size={current_size}")
-                return data
+                # Too much padding would be needed - signal that network recreation is needed
+                # This prevents shape mismatch errors from undersized data
+                raise ValueError(
+                    f"Padding would exceed 10% threshold (would need {padding_needed/target_size:.1%} padding "
+                    f"to go from {current_size} to {target_size}). Network recreation required for input_size={current_size}."
+                )
 
     def _pad_or_truncate_data(self, data: pd.DataFrame, universe: list[str]) -> pd.DataFrame:
         """
@@ -439,21 +477,56 @@ class LSTMPortfolioModel(PortfolioModel):
             max_epochs: Maximum epochs for quick retraining
             confidence_score: Optional academic confidence score for weighted training
         """
+        # CRITICAL FIX: Filter zero-variance assets BEFORE sizing network
+        # This prevents shape mismatch: network sized for N, receives N-M after variance filtering
+        # Variance filtering happens in training.py:271-293, must also happen here before sizing
+        std_threshold = 1e-5
+        asset_stds = training_data.std()
+        valid_mask = asset_stds >= std_threshold
+        num_filtered = (~valid_mask).sum()
+
+        if num_filtered > 0:
+            logger.info(f"Pre-sizing variance filter: Removing {num_filtered} assets with std < {std_threshold:.2e}")
+            training_data = training_data.loc[:, valid_mask]
+            universe = [u for u, valid in zip(universe, valid_mask) if valid]
+            logger.info(f"After pre-sizing filter: {len(training_data.columns)} assets remain")
+
         # Use dynamic input sizing for better efficiency and training stability
-        current_universe_size = len(universe)
+        # CRITICAL FIX: Use actual available assets in training_data, not desired universe
+        # This prevents shape mismatch errors when available assets < desired universe
+        # NOW sizing on CLEANED data (after variance filtering)
+        n_assets = len(training_data.columns)
+
+        # CRITICAL FIX: Calculate input_size and output_size correctly for multi-feature case
+        # When technical features are enabled:
+        #   - Features are flattened: [T, N, F] → [T, N*F]
+        #   - input_size = N*F (LSTM learns from all flattened features)
+        #   - output_size = N (predict one return per asset for portfolio weights)
+        # When features disabled (returns only):
+        #   - input_size = N
+        #   - output_size = N
+        if self.config.use_technical_features and hasattr(self, '_feature_names'):
+            n_features_per_asset = len(self._feature_names)
+            current_universe_size = n_assets * n_features_per_asset
+            logger.info(f"Multi-feature mode: {n_assets} assets × {n_features_per_asset} features = {current_universe_size} input dimensions")
+        else:
+            current_universe_size = n_assets
+            logger.info(f"Returns-only mode: {n_assets} assets = {current_universe_size} input dimensions")
 
         # Apply min/max constraints for stability
         min_size = getattr(self.config.lstm_config, 'min_input_size', 50)
         max_size = getattr(self.config.lstm_config, 'max_input_size', 700)
-        optimal_size = max(min_size, min(current_universe_size, max_size))
+        optimal_input_size = max(min_size, min(current_universe_size, max_size))
+        optimal_output_size = n_assets  # Always predict one return per asset
 
-        # CRITICAL FIX: Track if network is being recreated
+        # CRITICAL FIX: Network persistence - avoid recreation for small size changes
+        # Only recreate if network doesn't exist OR size change is >10%
         network_recreated = False
 
-        if self.network is None or self.config.lstm_config.input_size != optimal_size:
-            # Create network with optimal size for current universe
-            self.config.lstm_config.input_size = optimal_size
-            self.config.lstm_config.output_size = optimal_size
+        if self.network is None:
+            # First time: create network
+            self.config.lstm_config.input_size = optimal_input_size
+            self.config.lstm_config.output_size = optimal_output_size
             self.network = create_ragged_lstm_network(self.config.lstm_config)
 
             # CRITICAL FIX: Immediately move network to correct device
@@ -466,7 +539,41 @@ class LSTMPortfolioModel(PortfolioModel):
                 logger.debug(f"Moved recreated network and all buffers to {self._device}")
 
             network_recreated = True
-            logger.info(f"Created LSTM network with input_size={optimal_size} for universe_size={current_universe_size}")
+            logger.info(f"Created LSTM network with input_size={optimal_input_size}, output_size={optimal_output_size} for {n_assets} assets")
+
+        elif abs(self.config.lstm_config.input_size - optimal_input_size) / self.config.lstm_config.input_size > 0.10:
+            # Significant size change (>10%): recreate network
+            old_input_size = self.config.lstm_config.input_size
+            old_output_size = self.config.lstm_config.output_size
+            self.config.lstm_config.input_size = optimal_input_size
+            self.config.lstm_config.output_size = optimal_output_size
+            self.network = create_ragged_lstm_network(self.config.lstm_config)
+
+            # Move to device
+            if hasattr(self, '_device'):
+                self.network = self.network.to(self._device)
+                for name, buffer in self.network.named_buffers():
+                    if buffer.device != self._device:
+                        buffer.data = buffer.data.to(self._device)
+
+            network_recreated = True
+            logger.warning(
+                f"Recreated LSTM network due to large size change: "
+                f"input {old_input_size} → {optimal_input_size} ({abs(optimal_input_size - old_input_size) / old_input_size:.1%}), "
+                f"output {old_output_size} → {optimal_output_size}"
+            )
+        else:
+            # Small size change (<10%): keep network, pad data instead
+            # This enables transfer learning between windows
+            current_network_size = self.config.lstm_config.input_size
+            if current_network_size != optimal_input_size:
+                logger.info(
+                    f"Network persistence: keeping network size={current_network_size}, "
+                    f"padding data from {optimal_input_size} (size change: "
+                    f"{abs(optimal_input_size - current_network_size) / current_network_size:.1%})"
+                )
+            # Adjust optimal_input_size to match network (data will be padded)
+            optimal_input_size = current_network_size
 
         # Check if we have sufficient data for training
         min_required_samples = self.config.lstm_config.sequence_length + 21  # sequence_length + prediction_horizon
@@ -480,7 +587,34 @@ class LSTMPortfolioModel(PortfolioModel):
             return
 
         # Adjust training data to match optimal dimensions (minimal padding)
-        training_data = self._adjust_data_to_optimal_size(training_data, universe, optimal_size)
+        # SKIP padding adjustment when using technical features - data will be flattened later
+        if not (self.config.use_technical_features and hasattr(self, '_feature_names')):
+            # Only adjust data size when NOT using technical features
+            try:
+                training_data = self._adjust_data_to_optimal_size(training_data, universe, optimal_input_size)
+            except ValueError as e:
+                if "Padding would exceed" in str(e):
+                    # Padding exceeded threshold - recreate network with correct size
+                    logger.info(f"Recreating network due to padding limit: {e}")
+                    optimal_input_size = len(training_data.columns)
+                    self.config.lstm_config.input_size = optimal_input_size
+                    self.config.lstm_config.output_size = n_assets  # Still output one per asset
+                    self.network = create_ragged_lstm_network(self.config.lstm_config)
+
+                    # Move to device
+                    if hasattr(self, '_device'):
+                        self.network = self.network.to(self._device)
+                        for name, buffer in self.network.named_buffers():
+                            if buffer.device != self._device:
+                                buffer.data = buffer.data.to(self._device)
+
+                    network_recreated = True
+                    logger.info(f"Network recreated with input_size={optimal_input_size}, output_size={n_assets}")
+                    # No padding needed now since network matches data
+                else:
+                    raise
+        else:
+            logger.info(f"Skipping data padding for technical features - data will be flattened to {optimal_input_size} dimensions after feature extraction")
 
         # Validate data with flexible validator if available and get confidence score
         if self.flexible_validator and confidence_score is None:
@@ -572,7 +706,8 @@ class LSTMPortfolioModel(PortfolioModel):
                 checkpoint_dir=None,  # Don't save checkpoints for quick retraining
             )
         except Exception as e:
-            logger.warning(f"Quick retrain failed: {e}, keeping existing weights")
+            logger.error(f"Quick retrain failed with {type(e).__name__}: {e}", exc_info=True)
+            logger.warning("Keeping existing weights due to training failure")
 
     def fit(
         self,
@@ -601,23 +736,153 @@ class LSTMPortfolioModel(PortfolioModel):
         # Filter data for training period and universe
         training_data = self._prepare_training_data(returns, universe, fit_period)
 
+        # Apply feature engineering if enabled
+        if self.config.use_technical_features:
+            logger.info(f"Extracting technical features using '{self.config.feature_set}' feature set")
+            from src.features.technical_features import create_feature_extractor
+
+            # Convert returns to prices for feature extraction
+            prices = self._returns_to_prices(training_data)
+
+            logger.debug(
+                f"Shape tracking: training_data (returns)={training_data.shape}, "
+                f"prices={prices.shape}"
+            )
+
+            # Extract features
+            feature_extractor = create_feature_extractor(self.config.feature_set)
+            logger.debug(
+                f"Calling extract_features: prices_shape={prices.shape}, "
+                f"returns_shape={training_data.shape}"
+            )
+            features_array, feature_names = feature_extractor.extract_features(
+                prices=prices,
+                returns=training_data,
+                benchmark_prices=None  # TODO: Add SPY prices if available
+            )
+
+            # Log feature extraction results
+            logger.info(
+                f"Extracted {len(feature_names)} features: {feature_names} "
+                f"with shape {features_array.shape}"
+            )
+            logger.debug(
+                f"Feature array validation: shape={features_array.shape}, "
+                f"dtype={features_array.dtype}, "
+                f"has_nan={np.isnan(features_array).any()}, "
+                f"n_features={len(feature_names)}, "
+                f"expected_n_features={self.config.actual_input_size}"
+            )
+
+            # Store feature extractor for inference
+            self._feature_extractor = feature_extractor
+            self._feature_names = feature_names
+            logger.info(
+                f"Stored feature extractor (ID: {id(feature_extractor)}) "
+                f"with {len(feature_names)} features: {feature_names}"
+            )
+
+            # CRITICAL FIX (Bug #5): Don't set input_size here yet
+            # Features are reshaped to [T, N*F] at line 825, so input_size = N*F, not F
+            # The network sizing logic below (lines 768-774) will set input_size correctly
+            # based on the actual flattened dimension (optimal_size)
+            logger.info(f"Feature extraction complete: {len(feature_names)} features per asset, will be flattened to N*{len(feature_names)}")
+        else:
+            # Single feature (returns only)
+            self.config.lstm_config.input_size = 1
+            self._feature_extractor = None
+            self._feature_names = ["returns"]
+
+        # CRITICAL FIX: Filter zero-variance assets BEFORE sizing network
+        # This prevents shape mismatch: network sized for N, receives N-M after variance filtering
+        # Variance filtering happens in training.py:271-293, must also happen here before sizing
+        std_threshold = 1e-5
+        asset_stds = training_data.std()
+        valid_mask = asset_stds >= std_threshold
+        num_filtered = (~valid_mask).sum()
+
+        if num_filtered > 0:
+            logger.info(f"Pre-sizing variance filter: Removing {num_filtered} assets with std < {std_threshold:.2e}")
+            training_data = training_data.loc[:, valid_mask]
+            universe = [u for u, valid in zip(universe, valid_mask) if valid]
+            logger.info(f"After pre-sizing filter: {len(training_data.columns)} assets remain")
+
         # Use dynamic input sizing for better efficiency and training stability
-        current_universe_size = len(universe)
+        # CRITICAL FIX: Use actual available assets in training_data, not desired universe
+        # This prevents shape mismatch errors when available assets < desired universe
+        # NOW sizing on CLEANED data (after variance filtering)
+        n_assets = len(training_data.columns)
+
+        # CRITICAL FIX: Calculate input_size and output_size correctly for multi-feature case
+        # When technical features are enabled:
+        #   - Features are flattened: [T, N, F] → [T, N*F]
+        #   - input_size = N*F (LSTM learns from all flattened features)
+        #   - output_size = N (predict one return per asset for portfolio weights)
+        # When features disabled (returns only):
+        #   - input_size = N
+        #   - output_size = N
+        if self.config.use_technical_features and hasattr(self, '_feature_names'):
+            n_features_per_asset = len(self._feature_names)
+            current_universe_size = n_assets * n_features_per_asset
+            logger.info(f"Multi-feature mode: {n_assets} assets × {n_features_per_asset} features = {current_universe_size} input dimensions")
+        else:
+            current_universe_size = n_assets
+            logger.info(f"Returns-only mode: {n_assets} assets = {current_universe_size} input dimensions")
 
         # Apply min/max constraints for stability
         min_size = getattr(self.config.lstm_config, 'min_input_size', 50)
         max_size = getattr(self.config.lstm_config, 'max_input_size', 700)
-        optimal_size = max(min_size, min(current_universe_size, max_size))
+        optimal_input_size = max(min_size, min(current_universe_size, max_size))
+        optimal_output_size = n_assets  # Always predict one return per asset
 
-        self.config.lstm_config.input_size = optimal_size
-        self.config.lstm_config.output_size = optimal_size
-        logger.info(f"Using LSTM input_size={optimal_size} for universe_size={current_universe_size}")
-
-        # Create LSTM network with optimal dimensions
-        self.network = create_ragged_lstm_network(self.config.lstm_config)
+        # CRITICAL FIX: Network persistence - reuse network if size is similar
+        # Only recreate if network doesn't exist OR size change is >10%
+        if self.network is None:
+            # First time: create network
+            self.config.lstm_config.input_size = optimal_input_size
+            self.config.lstm_config.output_size = optimal_output_size
+            logger.info(f"Creating LSTM network with input_size={optimal_input_size}, output_size={optimal_output_size} for {n_assets} assets")
+            self.network = create_ragged_lstm_network(self.config.lstm_config)
+        elif abs(self.config.lstm_config.input_size - optimal_input_size) / self.config.lstm_config.input_size > 0.10:
+            # Significant size change (>10%): recreate network
+            old_input_size = self.config.lstm_config.input_size
+            old_output_size = self.config.lstm_config.output_size
+            self.config.lstm_config.input_size = optimal_input_size
+            self.config.lstm_config.output_size = optimal_output_size
+            logger.warning(
+                f"Recreating LSTM network due to large size change: "
+                f"input {old_input_size} → {optimal_input_size} ({abs(optimal_input_size - old_input_size) / old_input_size:.1%}), "
+                f"output {old_output_size} → {optimal_output_size}"
+            )
+            self.network = create_ragged_lstm_network(self.config.lstm_config)
+        else:
+            # Small size change (<10%): keep network for transfer learning
+            logger.info(
+                f"Network persistence: reusing existing network with input_size={self.config.lstm_config.input_size} "
+                f"(requested size: {optimal_input_size}, change: {abs(optimal_input_size - self.config.lstm_config.input_size) / self.config.lstm_config.input_size:.1%})"
+            )
+            optimal_input_size = self.config.lstm_config.input_size  # Use existing network size
 
         # Adjust training data to match optimal dimensions (minimal padding)
-        training_data = self._adjust_data_to_optimal_size(training_data, universe, optimal_size)
+        # SKIP padding adjustment when using technical features - data will be flattened later
+        if not (self.config.use_technical_features and hasattr(self, '_feature_names')):
+            # Only adjust data size when NOT using technical features
+            try:
+                training_data = self._adjust_data_to_optimal_size(training_data, universe, optimal_input_size)
+            except ValueError as e:
+                if "Padding would exceed" in str(e):
+                    # Padding exceeded threshold - recreate network with correct size
+                    logger.info(f"Recreating network due to padding limit: {e}")
+                    optimal_input_size = len(training_data.columns)
+                    self.config.lstm_config.input_size = optimal_input_size
+                    self.config.lstm_config.output_size = n_assets  # Still output one per asset
+                    self.network = create_ragged_lstm_network(self.config.lstm_config)
+                    logger.info(f"Network recreated with input_size={optimal_input_size}, output_size={n_assets}")
+                    # No padding needed now since network matches data
+                else:
+                    raise
+        else:
+            logger.info(f"Skipping data padding for technical features - data will be flattened to {optimal_input_size} dimensions after feature extraction")
 
         # Create trainer
         self.trainer = create_trainer(self.network, self.config.training_config)
@@ -625,12 +890,78 @@ class LSTMPortfolioModel(PortfolioModel):
         # CRITICAL FIX: Update device reference from trainer for network recreation
         self._device = self.trainer.device
 
-        # Train model
-        self.training_history = self.trainer.fit(
-            training_data,
-            sequence_length=self.config.lstm_config.sequence_length,
-            checkpoint_dir=checkpoint_dir,
-        )
+        # Train model with appropriate data format
+        if self.config.use_technical_features and hasattr(self, '_feature_extractor'):
+            # Use extracted features for training
+            # Note: features_array was already extracted above but we need to handle
+            # the variance-filtered data properly
+            if 'features_array' in locals():
+                # FIX: Wrap numpy array back into DataFrame for trainer compatibility
+                # Reshape from [T, N, F] to [T, N*F] and create proper column names
+                T, N, F = features_array.shape
+                logger.info(f"Wrapping features_array for trainer: shape={features_array.shape} (T={T}, N={N}, F={F})")
+
+                # Reshape to [T, N*F]
+                features_reshaped = features_array.reshape(T, N * F)
+
+                # Create column names: asset_name + feature_name
+                asset_names = training_data.columns.tolist()
+                feature_names = self._feature_names
+                column_names = [f"{asset}_{feature}" for asset in asset_names for feature in feature_names]
+
+                # Wrap into DataFrame with proper index and columns
+                features_df = pd.DataFrame(
+                    features_reshaped,
+                    index=training_data.index,
+                    columns=column_names
+                )
+                logger.info(f"Wrapped features shape: {features_df.shape}, index range: {features_df.index[0]} to {features_df.index[-1]}")
+
+                self.training_history = self.trainer.fit(
+                    features_df,
+                    sequence_length=self.config.lstm_config.sequence_length,
+                    checkpoint_dir=checkpoint_dir,
+                )
+            else:
+                # Re-extract for filtered data if needed
+                prices = self._returns_to_prices(training_data)
+                features_array, feature_names = self._feature_extractor.extract_features(
+                    prices=prices,
+                    returns=training_data,
+                    benchmark_prices=None
+                )
+
+                # FIX: Wrap numpy array back into DataFrame for trainer compatibility
+                T, N, F = features_array.shape
+                logger.info(f"Wrapping re-extracted features: shape={features_array.shape} (T={T}, N={N}, F={F})")
+
+                # Reshape to [T, N*F]
+                features_reshaped = features_array.reshape(T, N * F)
+
+                # Create column names: asset_name + feature_name
+                asset_names = training_data.columns.tolist()
+                column_names = [f"{asset}_{feature}" for asset in asset_names for feature in feature_names]
+
+                # Wrap into DataFrame with proper index and columns
+                features_df = pd.DataFrame(
+                    features_reshaped,
+                    index=training_data.index,
+                    columns=column_names
+                )
+                logger.info(f"Wrapped features shape: {features_df.shape}, index range: {features_df.index[0]} to {features_df.index[-1]}")
+
+                self.training_history = self.trainer.fit(
+                    features_df,
+                    sequence_length=self.config.lstm_config.sequence_length,
+                    checkpoint_dir=checkpoint_dir,
+                )
+        else:
+            # Use raw returns for training (single feature)
+            self.training_history = self.trainer.fit(
+                training_data,
+                sequence_length=self.config.lstm_config.sequence_length,
+                checkpoint_dir=checkpoint_dir,
+            )
 
         # Update model state
         self.universe = universe.copy()
@@ -686,20 +1017,48 @@ class LSTMPortfolioModel(PortfolioModel):
         logger.info(f"Generating LSTM portfolio weights for {date.strftime('%Y-%m-%d')}")
 
         # Get LSTM return predictions for available assets
-        predicted_returns = self._predict_returns(date, prediction_universe)
+        predicted_returns_array = self._predict_returns(date, prediction_universe)
 
         # Apply Markowitz optimization if enabled
         if self.config.use_markowitz_layer:
-            available_weights = self._optimize_portfolio(predicted_returns, prediction_universe, date)
+            available_weights = self._optimize_portfolio(predicted_returns_array, prediction_universe, date)
         else:
-            # Use predicted returns directly as weights (after normalization)
-            available_weights = pd.Series(predicted_returns, index=prediction_universe)
-            available_weights = available_weights.clip(lower=0.0)  # Ensure non-negative
-            available_weights = (
-                available_weights / available_weights.sum()
-                if available_weights.sum() > 0
-                else pd.Series(1.0 / len(prediction_universe), index=prediction_universe)
-            )
+            # Convert predicted returns to weights using softmax (preserves ranking)
+            # CRITICAL FIX: Softmax handles both positive and negative returns correctly
+            # Previous bug: clipping negative predictions to 0 destroyed 50% of signal
+            temperature = self.config.portfolio_temperature
+
+            # Top-K asset selection (if configured)
+            if self.config.top_k_assets > 0 and len(prediction_universe) > self.config.top_k_assets:
+                # Convert to pandas Series for easier manipulation
+                predicted_returns_series = pd.Series(predicted_returns_array, index=prediction_universe)
+
+                # Select top K assets by predicted returns
+                top_k = min(self.config.top_k_assets, len(prediction_universe))
+                top_k_series = predicted_returns_series.nlargest(top_k)
+
+                logger.info(
+                    f"Top-K selection: Selected {top_k} assets from {len(prediction_universe)} "
+                    f"(top prediction: {top_k_series.max():.4f}, "
+                    f"bottom of top-K: {top_k_series.min():.4f})"
+                )
+
+                # Use filtered predictions and universe
+                predicted_returns_array = top_k_series.values
+                prediction_universe = top_k_series.index.tolist()
+
+            # Normalize for numerical stability
+            pred_mean = predicted_returns_array.mean()
+            pred_std = predicted_returns_array.std()
+            if pred_std < 1e-8:
+                # If all predictions are identical, use equal weights
+                available_weights = pd.Series(1.0 / len(prediction_universe), index=prediction_universe)
+            else:
+                pred_normalized = (predicted_returns_array - pred_mean) / (pred_std + 1e-8)
+
+                # Apply softmax to convert returns to weights
+                exp_returns = np.exp(pred_normalized / temperature)
+                available_weights = pd.Series(exp_returns / exp_returns.sum(), index=prediction_universe)
 
         # Expand to full universe (assign equal weight to unavailable assets)
         if len(prediction_universe) < len(universe):
@@ -719,8 +1078,12 @@ class LSTMPortfolioModel(PortfolioModel):
         else:
             weights = available_weights
 
-        # Apply portfolio constraints
-        weights = self.validate_weights(weights)
+        # Apply portfolio constraints (optional for softmax path)
+        if self.config.enforce_constraints:
+            weights = self.validate_weights(weights)
+            logger.info(f"Applied portfolio constraints (enforce_constraints=True)")
+        else:
+            logger.info(f"Skipped constraint enforcement (enforce_constraints=False) - softmax weights sum to 1 naturally")
 
         self.last_prediction_date = date
 
@@ -769,12 +1132,28 @@ class LSTMPortfolioModel(PortfolioModel):
             # Prepare lengths for batch (single sequence during inference)
             # Shape must be (batch_size,) = (1,) for inference
             if hasattr(self, '_sequence_lengths'):
+                # Validate selected_assets before min() call
+                if not selected_assets:
+                    logger.error(
+                        f"PREDICTION FAILED: selected_assets is empty. "
+                        f"Input sequence creation returned no valid assets. "
+                        f"Universe size: {len(universe)}, "
+                        f"Network input_size: {self.network.config.input_size}"
+                    )
+                    raise ValueError("Cannot generate predictions with empty selected_assets list")
+
                 # Use the minimum sequence length across selected assets
                 # This ensures all assets have valid data for this many timesteps
                 min_length = min(
                     self._sequence_lengths.loc[asset] if asset in self._sequence_lengths.index
                     else self.config.lstm_config.sequence_length
                     for asset in selected_assets
+                )
+
+                logger.debug(
+                    f"Min_length calculation: min_length={min_length}, "
+                    f"max_seq_len={self.config.lstm_config.sequence_length}, "
+                    f"n_selected_assets={len(selected_assets)}"
                 )
                 pred_lengths = torch.tensor(
                     [min_length],  # Single value for batch_size=1
@@ -793,8 +1172,66 @@ class LSTMPortfolioModel(PortfolioModel):
             self.network.eval()
             with torch.no_grad():
                 predictions, _ = self.network(input_sequences, pred_lengths)
-                # Extract predictions for the selected assets
-                predicted_returns_raw = predictions.cpu().numpy().flatten()
+                # Extract predictions for the selected assets (on normalized scale)
+                predicted_returns_normalized = predictions.cpu().numpy().flatten()
+
+                # CRITICAL FIX: Denormalize predictions back to actual return scale
+                # Network outputs normalized predictions, but portfolio optimization needs actual return scale
+                if hasattr(self.network, 'normalization_stats'):
+                    stats = self.network.normalization_stats
+                    scaler = stats.get('scaler', None)
+
+                    if scaler is not None:
+                        # Use MinMaxScaler inverse_transform
+                        try:
+                            # Reshape for scaler: (n_assets,) -> (1, n_assets)
+                            predicted_returns_raw = scaler.inverse_transform(
+                                predicted_returns_normalized.reshape(1, -1)
+                            ).flatten()
+
+                            logger.debug(
+                                f"Denormalized predictions with MinMaxScaler: "
+                                f"normalized_range=[{predicted_returns_normalized.min():.6f}, {predicted_returns_normalized.max():.6f}], "
+                                f"denormalized_range=[{predicted_returns_raw.min():.6f}, {predicted_returns_raw.max():.6f}]"
+                            )
+                        except Exception as e:
+                            logger.warning(f"MinMaxScaler inverse_transform failed: {e}, using normalized predictions")
+                            predicted_returns_raw = predicted_returns_normalized
+                    elif 'mean' in stats and 'std' in stats:
+                        # Legacy RobustScaler approach
+                        mean = stats['mean'].flatten()  # [n_assets]
+                        std = stats['std'].flatten()    # [n_assets]
+                        epsilon = stats.get('epsilon', 1e-6)
+
+                        # Denormalize: reverse the z-score normalization
+                        n_predictions = len(predicted_returns_normalized)
+                        if n_predictions <= len(mean):
+                            # Use first n_predictions stats
+                            predicted_returns_raw = (predicted_returns_normalized * (std[:n_predictions] + epsilon) +
+                                                     mean[:n_predictions])
+                        else:
+                            # More predictions than stats - pad with mean/std
+                            predicted_returns_raw = predicted_returns_normalized.copy()
+                            predicted_returns_raw[:len(mean)] = (predicted_returns_normalized[:len(mean)] *
+                                                                 (std + epsilon) + mean)
+
+                        logger.debug(
+                            f"Legacy denormalized predictions: "
+                            f"normalized mean={predicted_returns_normalized.mean():.6f}, "
+                        f"std={predicted_returns_normalized.std():.6f} -> "
+                        f"actual mean={predicted_returns_raw.mean():.6f}, "
+                        f"std={predicted_returns_raw.std():.6f}"
+                    )
+                else:
+                    # CRITICAL FIX: Fail fast instead of silently continuing with wrong scale
+                    raise RuntimeError(
+                        "PREDICTION FAILED: No normalization stats available for denormalization. "
+                        f"Network was trained with normalization but stats are missing. "
+                        f"Predictions are on normalized scale (std≈1.0) instead of actual scale (std≈0.01-0.02). "
+                        f"Portfolio optimization requires actual scale returns. "
+                        f"This indicates a training or model loading error. "
+                        f"Check that normalization_stats are properly stored during training."
+                    )
 
                 # Create full prediction array for all universe assets
                 predicted_returns = np.full(len(universe), 0.001)  # Default conservative return
@@ -840,70 +1277,141 @@ class LSTMPortfolioModel(PortfolioModel):
             historical_returns = self._get_historical_returns_for_optimization(date, universe)
 
             if historical_returns is not None and len(historical_returns) >= 30:
+                # CRITICAL FIX: Track available assets to align covariance with expected returns
+                # Historical returns may be filtered to available assets in _get_historical_returns_for_optimization
+                # This creates shape mismatch: cov_matrix is (M, M) but expected_returns is (N,) where M < N
+                available_assets = list(historical_returns.columns)
+                n_available = len(available_assets)
+
+                # Create mapping from universe to available assets
+                asset_to_idx = {asset: idx for idx, asset in enumerate(universe)}
+                available_indices = [asset_to_idx[asset] for asset in available_assets if asset in asset_to_idx]
+
+                # Filter expected returns to match available assets
+                filtered_expected_returns = expected_returns[available_indices]
+
+                logger.debug(
+                    f"Covariance alignment: {n_assets} universe assets -> {n_available} available assets "
+                    f"({n_available/n_assets*100:.1f}% coverage)"
+                )
+
                 # Calculate empirical covariance with proper handling
                 returns_matrix = historical_returns.values
 
                 # Center the returns
                 centered_returns = returns_matrix - np.mean(returns_matrix, axis=0)
 
-                # Calculate covariance with regularization
-                cov_matrix = np.cov(centered_returns.T)
+                # CRITICAL FIX: Use robust covariance estimation (same as HRP/GAT)
+                # This provides optimal Ledoit-Wolf shrinkage, minimum variance floor, and PSD enforcement
+                from ...data.processors.covariance import robust_covariance
+
+                cov_matrix = robust_covariance(
+                    data=centered_returns,
+                    method="lw",  # Ledoit-Wolf with optimal shrinkage
+                    shrink_to="diag",  # Shrink to diagonal matrix
+                    min_var=1e-6,  # Minimum variance floor (prevents zero variance)
+                )
 
                 # Check for numerical issues
                 if np.any(np.isnan(cov_matrix)) or np.any(np.isinf(cov_matrix)):
-                    logger.warning("Invalid covariance matrix, using identity matrix")
-                    cov_matrix = np.eye(n_assets) * 0.04  # 20% annual volatility squared
+                    logger.warning("Invalid covariance matrix after robust estimation, using identity matrix")
+                    cov_matrix = np.eye(n_available) * 0.04  # 20% annual volatility squared
                 else:
-                    # Apply Ledoit-Wolf shrinkage for stability
-                    cov_matrix = self._ledoit_wolf_shrinkage(cov_matrix)
+                    # Log covariance quality metrics
+                    eigenvalues = np.linalg.eigvalsh(cov_matrix)
+                    condition_number = eigenvalues.max() / (eigenvalues.min() + 1e-16)
+                    logger.debug(
+                        f"Covariance matrix: shape={cov_matrix.shape}, "
+                        f"condition_number={condition_number:.2e}, "
+                        f"min_eig={eigenvalues.min():.2e}, max_eig={eigenvalues.max():.2e}"
+                    )
             else:
                 # Fallback: Use diagonal covariance based on individual volatilities
                 logger.warning("Insufficient data for covariance estimation, using diagonal matrix")
-                individual_vols = np.full(n_assets, 0.20)  # 20% annual volatility
+                available_assets = universe
+                filtered_expected_returns = expected_returns
+                n_available = n_assets
+                individual_vols = np.full(n_available, 0.20)  # 20% annual volatility
                 cov_matrix = np.diag(individual_vols ** 2)
 
         except Exception as e:
             logger.warning(f"Failed to estimate covariance: {e}, using diagonal fallback")
-            cov_matrix = np.eye(n_assets) * 0.04
+            available_assets = universe
+            filtered_expected_returns = expected_returns
+            n_available = n_assets
+            cov_matrix = np.eye(n_available) * 0.04
 
         # Multiple optimization attempts with different methods
+        # Use filtered universe and expected returns to match covariance matrix shape
         weights = None
 
         # Attempt 1: Standard Mean-Variance Optimization
         try:
+            logger.debug("Attempting mean-variance optimization")
             weights = self._mean_variance_optimization(
-                expected_returns, cov_matrix, universe
+                filtered_expected_returns, cov_matrix, available_assets
             )
             if weights is not None and self._validate_optimization_result(weights):
-                return weights
+                # Log success metrics
+                self._log_weight_diagnostics(weights, "Mean-Variance")
+                # Expand weights to full universe
+                final_weights = self._expand_weights_to_universe(weights, universe, available_assets)
+                logger.info(f"LSTM optimization: Mean-variance succeeded with {(final_weights > 1e-6).sum()} non-zero positions")
+                return final_weights
+            else:
+                logger.debug(f"Mean-variance optimization produced invalid weights")
         except Exception as e:
-            logger.debug(f"Mean-variance optimization failed: {e}")
+            logger.warning(f"Mean-variance optimization failed: {type(e).__name__}: {str(e)[:200]}")
 
         # Attempt 2: Risk Parity Optimization
         try:
-            weights = self._risk_parity_optimization(cov_matrix, universe)
+            logger.debug("Attempting risk parity optimization")
+            weights = self._risk_parity_optimization(cov_matrix, available_assets)
             if weights is not None and self._validate_optimization_result(weights):
+                # Log success metrics
+                self._log_weight_diagnostics(weights, "Risk Parity")
                 logger.info("Using risk parity optimization as fallback")
-                return weights
+                # Expand weights to full universe
+                final_weights = self._expand_weights_to_universe(weights, universe, available_assets)
+                logger.info(f"LSTM optimization: Risk parity succeeded with {(final_weights > 1e-6).sum()} non-zero positions")
+                return final_weights
+            else:
+                logger.debug(f"Risk parity optimization produced invalid weights")
         except Exception as e:
-            logger.debug(f"Risk parity optimization failed: {e}")
+            logger.warning(f"Risk parity optimization failed: {type(e).__name__}: {str(e)[:200]}")
 
         # Attempt 3: Maximum Diversification
         try:
+            logger.debug("Attempting maximum diversification optimization")
             weights = self._max_diversification_optimization(
-                cov_matrix, universe
+                cov_matrix, available_assets
             )
             if weights is not None and self._validate_optimization_result(weights):
+                # Log success metrics
+                self._log_weight_diagnostics(weights, "Max Diversification")
                 logger.info("Using maximum diversification as fallback")
-                return weights
+                # Expand weights to full universe
+                final_weights = self._expand_weights_to_universe(weights, universe, available_assets)
+                logger.info(f"LSTM optimization: Max diversification succeeded with {(final_weights > 1e-6).sum()} non-zero positions")
+                return final_weights
+            else:
+                logger.debug(f"Maximum diversification optimization produced invalid weights")
         except Exception as e:
-            logger.debug(f"Maximum diversification failed: {e}")
+            logger.warning(f"Maximum diversification failed: {type(e).__name__}: {str(e)[:200]}")
 
         # Final fallback: Constrained equal weights with top-K selection
-        logger.warning("All optimization methods failed, using constrained equal weights")
+        logger.warning(
+            "LSTM OPTIMIZATION FAILURE: All three methods failed. "
+            "Falling back to constrained equal weights. "
+            "This indicates optimization configuration or data quality issues."
+        )
 
         # Select top K assets based on expected returns
-        k = min(self.constraints.top_k_positions, n_assets)
+        # Handle None case: if no top_k limit, use all assets
+        if self.constraints.top_k_positions is not None:
+            k = min(self.constraints.top_k_positions, n_assets)
+        else:
+            k = n_assets
         top_k_indices = np.argsort(expected_returns)[-k:]
 
         weights = pd.Series(0.0, index=universe)
@@ -913,6 +1421,11 @@ class LSTMPortfolioModel(PortfolioModel):
         # Apply position size constraints
         weights = weights.clip(upper=self.constraints.max_position_weight)
         weights = weights / weights.sum() if weights.sum() > 0 else pd.Series(1.0 / n_assets, index=universe)
+
+        # Detect and warn about equal weight fallback
+        self._detect_equal_weight_fallback(weights, "Equal Weight Fallback")
+
+        logger.info(f"LSTM fallback: Using {k} assets with equal weights")
 
         return weights
 
@@ -932,6 +1445,107 @@ class LSTMPortfolioModel(PortfolioModel):
         shrunk_cov = (1 - shrinkage_intensity) * sample_cov + shrinkage_intensity * target
 
         return shrunk_cov
+
+    def _expand_weights_to_universe(
+        self, weights: pd.Series, full_universe: list[str], available_assets: list[str]
+    ) -> pd.Series:
+        """
+        Expand portfolio weights from available assets to full universe.
+
+        This handles the case where covariance was computed for a filtered subset of assets
+        but we need weights for the complete universe.
+
+        Args:
+            weights: Portfolio weights for available assets
+            full_universe: Complete asset universe
+            available_assets: Subset of assets with available data
+
+        Returns:
+            Expanded portfolio weights with zeros for unavailable assets
+        """
+        if len(available_assets) == len(full_universe):
+            # No expansion needed
+            return weights
+
+        # Create zero weights for full universe
+        expanded_weights = pd.Series(0.0, index=full_universe)
+
+        # Fill in weights for available assets
+        for asset in available_assets:
+            if asset in weights.index and asset in expanded_weights.index:
+                expanded_weights[asset] = weights[asset]
+
+        # Renormalise to ensure weights sum to 1
+        weights_sum = expanded_weights.sum()
+        if weights_sum > 0:
+            expanded_weights = expanded_weights / weights_sum
+        else:
+            # Fallback to equal weights if all weights are zero
+            logger.warning(
+                f"All weights zero after expansion. Using equal weights for {len(full_universe)} assets."
+            )
+            expanded_weights = pd.Series(1.0 / len(full_universe), index=full_universe)
+
+        logger.debug(
+            f"Expanded weights: {len(available_assets)} available -> {len(full_universe)} universe, "
+            f"non-zero weights: {(expanded_weights > 1e-6).sum()}"
+        )
+
+        return expanded_weights
+
+    def _log_weight_diagnostics(self, weights: pd.Series, method_name: str) -> None:
+        """
+        Log comprehensive weight diagnostics for optimization methods.
+
+        Args:
+            weights: Portfolio weights to analyze
+            method_name: Name of optimization method for logging context
+        """
+        weight_values = weights.values
+        weight_std = weight_values.std()
+        weight_min = weight_values.min()
+        weight_max = weight_values.max()
+        num_nonzero = (weight_values > 1e-6).sum()
+        num_total = len(weight_values)
+
+        # Calculate effective number of assets (inverse HHI)
+        hhi = (weight_values ** 2).sum()
+        effective_assets = 1.0 / hhi if hhi > 0 else 0.0
+
+        logger.info(
+            f"LSTM {method_name} weights: "
+            f"min={weight_min:.4f}, max={weight_max:.4f}, std={weight_std:.4f}, "
+            f"non-zero={num_nonzero}/{num_total}, effective_assets={effective_assets:.1f}"
+        )
+
+    def _detect_equal_weight_fallback(self, weights: pd.Series, method_name: str) -> None:
+        """
+        Detect if portfolio weights are suspiciously uniform (equal weight fallback).
+
+        This helps identify when optimization has silently failed and fallen back to equal weights.
+
+        Args:
+            weights: Portfolio weights to check
+            method_name: Name of method for logging context
+        """
+        weight_values = weights[weights > 1e-6].values  # Only check non-zero weights
+        if len(weight_values) == 0:
+            logger.warning(f"LSTM {method_name}: All weights are zero")
+            return
+
+        weight_std = weight_values.std()
+        expected_equal_weight = 1.0 / len(weight_values)
+        mean_weight = weight_values.mean()
+
+        # Check if weights are nearly uniform
+        is_equal_weight = (weight_std < 1e-8) and (abs(mean_weight - expected_equal_weight) < 1e-8)
+
+        if is_equal_weight:
+            logger.warning(
+                f"LSTM {method_name} EQUAL WEIGHT DETECTED: "
+                f"std={weight_std:.2e}, mean={mean_weight:.6f}, expected={expected_equal_weight:.6f}. "
+                f"Portfolio may be using naive equal weighting instead of optimized weights."
+            )
 
     def _mean_variance_optimization(
         self, expected_returns: np.ndarray, cov_matrix: np.ndarray, universe: list[str]
@@ -958,9 +1572,11 @@ class LSTMPortfolioModel(PortfolioModel):
                 entropy = 0.0
             # Reduced entropy penalty to allow predictions to influence weights
             # Scale by 1000 to match daily return scale (0.001 typical)
-            entropy_penalty = 0.0001 * entropy  # Much smaller penalty to allow return-based allocation
+            entropy_penalty = 0.01 * entropy  # Increased from 0.0001 to 0.01 (100x) to encourage diversification
 
-            return -portfolio_return + self.config.risk_aversion * portfolio_variance + regularization - entropy_penalty
+            # CRITICAL FIX: Changed sign from - to + to penalise uniformity, not reward it
+            # Entropy is maximised when weights are equal, so we ADD penalty to discourage uniformity
+            return -portfolio_return + self.config.risk_aversion * portfolio_variance + regularization + entropy_penalty
 
         # Constraints
         constraints = [
@@ -1112,18 +1728,10 @@ class LSTMPortfolioModel(PortfolioModel):
 
                 historical_data = historical_data[available_assets]
 
-                # Use cross-sectional mean imputation (consistent with training)
-                from ...data.na_handling import cross_sectional_mean_impute
+                # Use simple temporal fill (production-safe: ffill only, no lookahead)
+                from ...data.na_handling import simple_temporal_fill
 
-                if hasattr(self, 'universe_df') and self.universe_df is not None:
-                    from ...utils.membership_aware_cleaning import create_membership_mask
-                    mask_for_imputation = create_membership_mask(historical_data, self.universe_df)
-                    historical_data = cross_sectional_mean_impute(
-                        historical_data,
-                        membership_mask=mask_for_imputation,
-                    )
-                else:
-                    historical_data = cross_sectional_mean_impute(historical_data)
+                historical_data = simple_temporal_fill(historical_data, allow_bfill=False)
 
                 if len(historical_data) >= 30:  # Reduced minimum observations
                     return historical_data
@@ -1173,18 +1781,29 @@ class LSTMPortfolioModel(PortfolioModel):
         mask = (returns.index >= fit_period[0]) & (returns.index <= fit_period[1])
         training_data = returns.loc[mask, universe].copy()
 
-        # Use cross-sectional mean imputation (consistent with training)
-        from ...data.na_handling import cross_sectional_mean_impute
+        # Use simple temporal fill (training: allow bfill for complete historical window)
+        from ...data.na_handling import simple_temporal_fill
 
-        if hasattr(self, 'universe_df') and self.universe_df is not None:
-            from ...utils.membership_aware_cleaning import create_membership_mask
-            mask_for_imputation = create_membership_mask(training_data, self.universe_df)
-            training_data = cross_sectional_mean_impute(
+        training_data = simple_temporal_fill(training_data, allow_bfill=True)
+
+        # CRITICAL FIX: Filter zero-variance assets to prevent gradient explosions
+        # Zero-variance assets cause numerical instability in LSTM training
+        if NA_HANDLING_AVAILABLE:
+            training_data, variance_mask = filter_zero_variance_assets(
                 training_data,
-                membership_mask=mask_for_imputation,
+                variance_threshold=1e-8,
             )
+            dropped_count = (~variance_mask).sum()
+            if dropped_count > 0:
+                logger.info(f"Dropped {dropped_count} zero-variance assets from training data")
         else:
-            training_data = cross_sectional_mean_impute(training_data)
+            # Fallback: basic variance filtering
+            asset_std = training_data.std()
+            valid_assets = asset_std[asset_std > 1e-8].index.tolist()
+            if len(valid_assets) < len(training_data.columns):
+                dropped_count = len(training_data.columns) - len(valid_assets)
+                logger.info(f"Dropped {dropped_count} zero-variance assets (fallback method)")
+                training_data = training_data[valid_assets]
 
         # Validate data quality
         if training_data.isna().sum().sum() > 0:
@@ -1195,6 +1814,33 @@ class LSTMPortfolioModel(PortfolioModel):
         )
 
         return training_data
+
+    def _returns_to_prices(self, returns: pd.DataFrame, initial_price: float = 100.0) -> pd.DataFrame:
+        """
+        Convert returns to prices for feature extraction.
+
+        Args:
+            returns: DataFrame of returns with datetime index and asset columns
+            initial_price: Initial price for all assets (default 100)
+
+        Returns:
+            DataFrame of prices with same shape as returns
+        """
+        # Convert returns to cumulative returns then to prices
+        # Price_t = initial_price * (1 + r_1) * (1 + r_2) * ... * (1 + r_t)
+        cumulative_returns = (1 + returns).cumprod()
+        prices = cumulative_returns * initial_price
+
+        # Prepend initial prices as first row
+        initial_row = pd.DataFrame(
+            initial_price,
+            index=[returns.index[0] - pd.Timedelta(days=1)],
+            columns=returns.columns
+        )
+        prices = pd.concat([initial_row, prices])
+
+        logger.debug(f"Converted returns to prices: shape {prices.shape}")
+        return prices
 
     def get_model_info(self) -> dict[str, Any]:
         """
@@ -1271,7 +1917,21 @@ class LSTMPortfolioModel(PortfolioModel):
             "fitted_period": self.fitted_period,
             "training_history": self.training_history,
             "model_info": self.get_model_info(),
+            "normalization_stats": getattr(self.network, 'normalization_stats', None),
         }
+
+        # Save feature extractor configuration for restoration
+        if hasattr(self, '_feature_extractor') and self._feature_extractor is not None:
+            model_state['feature_extractor_config'] = {
+                'feature_set': self.config.feature_set,
+                'use_technical_features': self.config.use_technical_features,
+                'feature_names': self._feature_names if hasattr(self, '_feature_names') else None,
+            }
+            logger.info(
+                f"Saved feature extractor config: feature_set={self.config.feature_set}, "
+                f"use_technical_features={self.config.use_technical_features}, "
+                f"feature_names={self._feature_names if hasattr(self, '_feature_names') else None}"
+            )
 
         torch.save(model_state, filepath)
         logger.info(f"Model saved to {filepath}")
@@ -1410,6 +2070,37 @@ class LSTMPortfolioModel(PortfolioModel):
             self._is_pretrained = True  # Mark as pre-trained to skip retraining in backtest
             logger.info(f"Loaded complete model from {filepath}")
 
+        # Restore normalization stats if available
+        if "normalization_stats" in model_state and model_state["normalization_stats"] is not None:
+            self.network.normalization_stats = model_state["normalization_stats"]
+            logger.info("Restored normalization stats from checkpoint")
+
+        # Restore feature extractor from saved configuration
+        if 'feature_extractor_config' in model_state:
+            config = model_state['feature_extractor_config']
+            if config['use_technical_features']:
+                from src.features.technical_features import create_feature_extractor
+                self._feature_extractor = create_feature_extractor(config['feature_set'])
+                self._feature_names = config.get('feature_names')
+                logger.info(
+                    f"Restored feature extractor: feature_set={config['feature_set']}, "
+                    f"features={self._feature_names}"
+                )
+            else:
+                self._feature_extractor = None
+                self._feature_names = ["returns"]
+        elif self.config.use_technical_features:
+            # Fallback: recreate from config if no saved state available
+            from src.features.technical_features import create_feature_extractor
+            self._feature_extractor = create_feature_extractor(self.config.feature_set)
+            logger.warning(
+                f"Feature extractor config not found in checkpoint, "
+                f"recreating from model config: {self.config.feature_set}"
+            )
+        else:
+            self._feature_extractor = None
+            self._feature_names = ["returns"]
+
     def _load_historical_returns(self, date: pd.Timestamp, universe: list[str]) -> pd.DataFrame:
         """
         Load historical returns data up to prediction date.
@@ -1437,21 +2128,19 @@ class LSTMPortfolioModel(PortfolioModel):
 
                 historical_data = all_returns.loc[start_date:end_date, available_assets]
 
-                # Use cross-sectional mean imputation (consistent with training)
-                from ...data.na_handling import cross_sectional_mean_impute
+                # Use simple temporal fill (production-safe: ffill only, no lookahead)
+                from ...data.na_handling import simple_temporal_fill
 
-                if hasattr(self, 'universe_df') and self.universe_df is not None:
-                    from ...utils.membership_aware_cleaning import create_membership_mask
-                    mask_for_imputation = create_membership_mask(historical_data, self.universe_df)
-                    historical_data = cross_sectional_mean_impute(
-                        historical_data,
-                        membership_mask=mask_for_imputation,
+                historical_data = simple_temporal_fill(historical_data, allow_bfill=False)
+
+                # Allow sequences slightly shorter than configured length (99% threshold)
+                # This handles edge cases like 251 days vs 252 days requirement
+                min_required_length = int(self.config.lstm_config.sequence_length * 0.99)
+                if len(historical_data) < min_required_length:
+                    raise ValueError(
+                        f"Insufficient historical data: {len(historical_data)} < {min_required_length} "
+                        f"(99% of configured {self.config.lstm_config.sequence_length})"
                     )
-                else:
-                    historical_data = cross_sectional_mean_impute(historical_data)
-
-                if len(historical_data) < self.config.lstm_config.sequence_length:
-                    raise ValueError(f"Insufficient historical data: {len(historical_data)} < {self.config.lstm_config.sequence_length}")
 
                 return historical_data
             else:
@@ -1518,12 +2207,50 @@ class LSTMPortfolioModel(PortfolioModel):
             # Take only the last sequence_length rows
             sequence_data = sequence_data.tail(sequence_length)
 
-            # Ensure sequence data matches network dimensions via padding/truncation
+            # CRITICAL FIX: Use training assets to prevent normalization mismatch
+            # Instead of selecting top assets by activity (which creates misalignment),
+            # use the same assets that were used during training with stored normalization stats
             expected_input_size = self.config.lstm_config.input_size
             selected_assets = list(sequence_data.columns)
 
+            if hasattr(self.network, 'normalization_stats') and 'asset_names' in self.network.normalization_stats:
+                training_assets = self.network.normalization_stats['asset_names']
+                available_assets = list(sequence_data.columns)
+                common_assets = [a for a in training_assets if a in available_assets]
+
+                overlap_ratio = len(common_assets) / len(training_assets) if training_assets else 0
+                logger.info(f"Asset selection for inference: training_assets={len(training_assets)}, "
+                           f"available_assets={len(available_assets)}, "
+                           f"common_assets={len(common_assets)}, "
+                           f"overlap={overlap_ratio:.1%}")
+
+                if len(common_assets) >= len(training_assets) * 0.8:
+                    # Sufficient overlap - use training assets
+                    sequence_data = sequence_data[common_assets]
+                    selected_assets = common_assets
+                    logger.info(f"Using {len(common_assets)} training assets for inference "
+                               f"(overlap {overlap_ratio:.1%} >= 80% threshold)")
+                else:
+                    logger.warning(f"Only {len(common_assets)} of {len(training_assets)} training assets available "
+                                  f"({overlap_ratio:.1%} < 80%), falling back to activity-based selection. "
+                                  f"This may cause normalization mismatch.")
+                    # Fall back to activity-based selection
+                    if sequence_data.shape[1] > expected_input_size:
+                        asset_activity = sequence_data.abs().mean().sort_values(ascending=False)
+                        top_assets = asset_activity.head(expected_input_size).index
+                        sequence_data = sequence_data[top_assets]
+                        selected_assets = list(top_assets)
+            else:
+                logger.warning("No training asset names stored in normalization_stats, using activity-based selection")
+                # Original logic: truncate by activity if needed
+                if sequence_data.shape[1] > expected_input_size:
+                    asset_activity = sequence_data.abs().mean().sort_values(ascending=False)
+                    top_assets = asset_activity.head(expected_input_size).index
+                    sequence_data = sequence_data[top_assets]
+                    selected_assets = list(top_assets)
+
+            # Pad if needed after asset selection
             if sequence_data.shape[1] < expected_input_size:
-                # Pad with zeros
                 padding_needed = expected_input_size - sequence_data.shape[1]
                 padding = np.zeros((len(sequence_data), padding_needed))
                 padding_df = pd.DataFrame(
@@ -1532,16 +2259,102 @@ class LSTMPortfolioModel(PortfolioModel):
                     columns=[f'PAD_{i}' for i in range(padding_needed)]
                 )
                 sequence_data = pd.concat([sequence_data, padding_df], axis=1)
-            elif sequence_data.shape[1] > expected_input_size:
-                # Truncate to most liquid assets
-                asset_activity = sequence_data.abs().mean().sort_values(ascending=False)
-                top_assets = asset_activity.head(expected_input_size).index
-                sequence_data = sequence_data[top_assets]
-                selected_assets = list(top_assets)
 
-            # Use simple returns data to match training configuration
-            # Shape: (sequence_length, num_assets)
-            feature_matrix = sequence_data.values
+            # CRITICAL FIX: Extract technical features to match training
+            # Training uses 9 features (returns + 8 technical), inference must use same
+            if self.config.use_technical_features and hasattr(self, '_feature_extractor'):
+                logger.info(
+                    f"Feature extractor availability check: "
+                    f"use_technical_features={self.config.use_technical_features}, "
+                    f"has_extractor={hasattr(self, '_feature_extractor')}, "
+                    f"extractor_is_not_none={self._feature_extractor is not None if hasattr(self, '_feature_extractor') else False}"
+                )
+                # Convert returns to prices for feature extraction
+                initial_price = 100.0
+                prices = pd.DataFrame(
+                    initial_price * (1 + sequence_data).cumprod(),
+                    index=sequence_data.index,
+                    columns=sequence_data.columns
+                )
+
+                # Extract same features as training
+                features_array, _ = self._feature_extractor.extract_features(
+                    prices=prices,
+                    returns=sequence_data,
+                    benchmark_prices=None
+                )
+                # Shape: (sequence_length, num_assets, num_features=9 for "standard")
+                feature_matrix = features_array
+                logger.debug(f"Extracted {features_array.shape[2]} technical features for inference")
+                logger.info(f"Inference features: extractor=YES, dim={features_array.shape[-1]}")
+
+                if hasattr(features_array, 'shape') and features_array.shape[-1] != self.network.config.input_size:
+                    logger.error(f"FEATURE MISMATCH: got {features_array.shape[-1]}, expected {self.network.config.input_size}")
+            else:
+                # Fallback: Use simple returns data
+                # Shape: (sequence_length, num_assets)
+                feature_matrix = sequence_data.values
+                logger.warning(f"Inference features: extractor=NO, dim={feature_matrix.shape[-1]}, "
+                               f"expected={self.network.config.input_size}")
+
+            # CRITICAL FIX: Apply normalization using stored statistics (matching training)
+            # Without this, inference uses raw data but network expects normalized data
+            if hasattr(self.network, 'normalization_stats'):
+                stats = self.network.normalization_stats
+                scaler = stats.get('scaler', None)
+                training_asset_names = stats.get('asset_names', None)
+
+                # Check if we have MinMaxScaler (new approach) or legacy mean/std
+                if scaler is not None:
+                    # Use MinMaxScaler for normalization
+                    n_features = feature_matrix.shape[1]
+                    pre_norm_min = feature_matrix.min()
+                    pre_norm_max = feature_matrix.max()
+
+                    # Reshape for scaler: (sequence_length, n_assets) -> (sequence_length, n_assets)
+                    # MinMaxScaler expects 2D array where each column is a feature
+                    try:
+                        normalized_features = scaler.transform(feature_matrix)
+                        feature_matrix = normalized_features
+
+                        post_norm_min = normalized_features.min()
+                        post_norm_max = normalized_features.max()
+
+                        logger.info(
+                            f"MinMaxScaler normalization applied: "
+                            f"pre=(min={pre_norm_min:.6f}, max={pre_norm_max:.6f}), "
+                            f"post=(min={post_norm_min:.6f}, max={post_norm_max:.6f}), "
+                            f"expected=(range≈[-1, 1])"
+                        )
+                    except Exception as e:
+                        logger.error(f"MinMaxScaler transform failed: {e}, using raw features")
+                elif 'mean' in stats and 'std' in stats:
+                    # Legacy RobustScaler approach (fallback)
+                    mean = stats['mean']
+                    std = stats['std']
+                    epsilon = stats.get('epsilon', 1e-6)
+                    n_features = feature_matrix.shape[1]
+
+                    # Handle 1D vs 2D stats
+                    if mean.ndim == 1:
+                        asset_alignment_ok = mean.shape[0] == n_features
+                        mean = mean.reshape(1, -1)
+                        std = std.reshape(1, -1)
+                    else:
+                        asset_alignment_ok = mean.shape[1] == n_features
+
+                    if asset_alignment_ok:
+                        normalized_features = (feature_matrix - mean) / (std + epsilon)
+                        feature_matrix = normalized_features
+                        logger.info(f"Legacy normalization applied (mean/std)")
+                    else:
+                        logger.warning(f"Feature dimension mismatch: {n_features} vs {mean.shape}, skipping normalization")
+            else:
+                logger.warning(
+                    "No normalization stats found on network - using raw returns at inference! "
+                    "This will cause 50x scale mismatch with training data. "
+                    "Predictions will be meaningless."
+                )
 
             # Flatten to (sequence_length, num_features) where num_features = num_assets
             input_tensor = torch.FloatTensor(feature_matrix)

@@ -1,11 +1,27 @@
-# Date ranges
-test_start_date: "2023-01-01"
-test_end_date: "2024-11-30"
-train_end_date: "2022-12-31"
+# Rolling Backtest Configuration
+# ==============================
+# evaluation_start_date: First date to start testing (earliest_data + training_months)
+# evaluation_end_date: Last date for testing (latest_data)
+# training_months: Lookback window for each rolling training period
 
-# Backtest settings
-rebalance_frequency: 21
-transaction_cost_bps: 10.0
+# Date ranges for rolling backtest evaluation
+# OPTIMIZED: Maximum data usage - start from 2019-01-01 with 36-month lookback
+# This provides 12 additional months of test data (69 windows vs 60)
+# Trade-off: 6 months less training data per window, but more evaluation windows
+evaluation_start_date: "2019-01-01"  # First test window - EXTENDED to 252 days for reliable Sharpe estimation
+evaluation_end_date: "2025-10-01"    # Last test window - 1 year for statistical reliability (was 2019-02-01, only 20 days)
+training_months: 36                   # 36-month rolling training window (3 years = ~756 trading days, matches HRP requirement)
+
+# Backtest execution settings
+rebalance_frequency: 21  # Trading days between rebalances (monthly ≈ 21 days)
+transaction_cost_bps: 10.0  # Transaction costs in basis points
+
+# Rolling retraining epochs (epochs per retraining window during backtest)
+# This is the authoritative source for backtest training duration
+quick_retrain_epochs:
+  hrp: 1    # HRP doesn't need epochs (correlation-based)
+  lstm: 5   # LSTM epochs during backtest (fast convergence with good initialisation)
+  gat: 5   # GAT epochs during backtest (allocation head needs time to learn)
 
 # Models to run
 models:

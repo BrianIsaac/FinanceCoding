@@ -1,3 +1,24 @@
 # @package _group_
-name: hrp
-enabled: true
+# Model metadata (not loaded by HRPConfig)
+# name: hrp
+# enabled: true
+
+# HRP Model Configuration (matching HRPConfig dataclass)
+lookback_days: 756             # Days of history for correlation calculation (3 years)
+min_observations: 252          # Minimum observations required (1 year)
+correlation_method: pearson    # Correlation method: "pearson", "spearman", "kendall"
+rebalance_frequency: monthly   # Rebalancing frequency
+
+# Clustering Configuration (matching ClusteringConfig dataclass)
+clustering_config:
+  linkage_method: ward         # Linkage method: "ward", "average", "single", "complete"
+  min_observations: 252        # Minimum observations for clustering
+  correlation_method: pearson  # Correlation method for clustering
+  enable_quasi_diagonalization: false  # Enable quasi-diagonalization
+  memory_efficient: true       # Enable memory-efficient mode
+  chunk_size: 100             # Chunk size for memory-efficient processing
+
+# NOTE: The following parameters are handled separately:
+# - AllocationConfig is created with defaults in HRPConfig.__post_init__
+# - Portfolio Constraints are configured in PortfolioConstraints
+# - Advanced options would require extending the HRPConfig class

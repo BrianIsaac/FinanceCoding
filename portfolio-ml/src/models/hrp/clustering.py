@@ -20,7 +20,7 @@ from scipy.spatial.distance import squareform
 class ClusteringConfig:
     """Configuration for HRP clustering algorithm."""
 
-    linkage_method: str = "single"
+    linkage_method: str = "ward"  # Changed from "single" - Ward produces balanced trees for better diversification
     min_observations: int = 252
     correlation_method: str = "pearson"
     min_correlation_threshold: float | None = None

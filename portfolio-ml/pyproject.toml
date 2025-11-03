@@ -20,6 +20,7 @@ data = [
     "scikit-learn>=1.6.1",
     "scipy>=1.13.1",
     "scs>=3.2.8",
+    "statsmodels>=0.14.5",
     "tiingo>=0.16.1",
     "yfinance>=0.2.65",
 ]

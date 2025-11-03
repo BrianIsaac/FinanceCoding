@@ -29,6 +29,8 @@ def filter_all_na_columns(returns: pd.DataFrame) -> pd.DataFrame:
     """
     filtered = returns.dropna(axis=1, how='all')
 
+    logger.debug(f"filter_all_na_columns: shape change {returns.shape} -> {filtered.shape}")
+
     dropped_count = len(returns.columns) - len(filtered.columns)
     if dropped_count > 0:
         logger.info(f"Dropped {dropped_count} all-NA columns")
@@ -64,6 +66,16 @@ def filter_by_coverage_threshold(
 
     coverage_mask = asset_coverage >= coverage_threshold
 
+    threshold_value = coverage_threshold
+    passing_count = coverage_mask.sum()
+    failing_count = (~coverage_mask).sum()
+    logger.debug(
+        f"Coverage threshold filter: threshold={threshold_value:.1%}, "
+        f"passing_assets={passing_count}, failing_assets={failing_count}, "
+        f"coverage_stats: min={asset_coverage.min():.1%}, "
+        f"max={asset_coverage.max():.1%}, median={asset_coverage.median():.1%}"
+    )
+
     sufficient_assets = coverage_mask[coverage_mask].index.tolist()
 
     if len(sufficient_assets) == 0:
@@ -81,22 +93,31 @@ def filter_by_coverage_threshold(
 
     filtered = returns[sufficient_assets]
 
+    logger.info(
+        f"Coverage filter: shape {returns.shape} -> {filtered.shape}, "
+        f"mean_coverage={asset_coverage.mean():.1%}, "
+        f"min_coverage={asset_coverage[coverage_mask].min():.1%}, "
+        f"max_coverage={asset_coverage.max():.1%}"
+    )
+
     return filtered, coverage_mask
 
 
 def filter_zero_variance_assets(
     returns: pd.DataFrame,
-    variance_threshold: float = 1e-8,
+    variance_threshold: float = 1e-5,
 ) -> Tuple[pd.DataFrame, pd.Series]:
     """
     Remove assets with zero or near-zero variance.
 
     Zero-variance assets cause singularity issues in covariance matrices
-    and provide no useful information for portfolio optimisation.
+    and provide no useful information for portfolio optimisation. The threshold
+    of 1e-5 matches LSTM training expectations to ensure consistency across
+    data filtering and model training stages.
 
     Args:
         returns: Returns DataFrame
-        variance_threshold: Minimum standard deviation threshold
+        variance_threshold: Minimum standard deviation threshold (default: 1e-5)
 
     Returns:
         Tuple of (filtered_returns, variance_mask) where variance_mask
@@ -127,6 +148,13 @@ def filter_zero_variance_assets(
 
     filtered = returns[valid_assets]
 
+    logger.info(
+        f"Variance filter: shape {returns.shape} -> {filtered.shape}, "
+        f"mean_std={asset_std[variance_mask].mean():.4e}, "
+        f"min_std={asset_std[variance_mask].min():.4e}, "
+        f"max_std={asset_std.max():.4e}"
+    )
+
     return filtered, variance_mask
 
 
@@ -134,7 +162,7 @@ def prepare_rolling_window_data(
     returns_window: pd.DataFrame,
     universe: list[str],
     coverage_threshold: float = 0.75,
-    variance_threshold: float = 1e-8,
+    variance_threshold: float = 1e-5,
     return_masks: bool = True,
 ) -> Tuple[pd.DataFrame, dict[str, pd.Series]]:
     """
@@ -150,7 +178,7 @@ def prepare_rolling_window_data(
         returns_window: Returns data for rolling window (already gap-filled at collection)
         universe: Target universe of assets
         coverage_threshold: Minimum non-null ratio (model-specific)
-        variance_threshold: Minimum standard deviation
+        variance_threshold: Minimum standard deviation (default: 1e-5, matches LSTM training)
         return_masks: Whether to return validity masks
 
     Returns:

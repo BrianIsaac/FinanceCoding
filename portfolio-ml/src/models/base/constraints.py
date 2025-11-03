@@ -11,9 +11,64 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any
+import logging
 
 import numpy as np
 import pandas as pd
+
+logger = logging.getLogger(__name__)
+
+
+class ConstraintViolationError(Exception):
+    """
+    Exception raised when constraint enforcement fails to achieve compliance.
+
+    This is raised when iterative redistribution or other constraint
+    enforcement algorithms fail to converge or produce valid portfolios.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        iterations_attempted: int = 0,
+        remaining_violations: int = 0,
+        max_weight: float | None = None,
+        max_position_weight: float | None = None,
+    ):
+        """
+        Initialize ConstraintViolationError.
+
+        Args:
+            message: Description of the constraint violation
+            iterations_attempted: Number of iterations attempted before failure
+            remaining_violations: Number of constraints still violated
+            max_weight: Current maximum portfolio weight
+            max_position_weight: Maximum allowed portfolio weight
+        """
+        self.iterations_attempted = iterations_attempted
+        self.remaining_violations = remaining_violations
+        self.max_weight = max_weight
+        self.max_position_weight = max_position_weight
+
+        # Build detailed error message
+        full_message = message
+        if iterations_attempted > 0:
+            full_message += f"\n  - Iterations attempted: {iterations_attempted}"
+        if remaining_violations > 0:
+            full_message += f"\n  - Remaining violations: {remaining_violations}"
+        if max_weight is not None and max_position_weight is not None:
+            full_message += f"\n  - Current max weight: {max_weight:.4f}"
+            full_message += f"\n  - Maximum allowed: {max_position_weight:.4f}"
+
+        full_message += (
+            "\n\nSuggested actions:\n"
+            "  1. Increase max_iterations in constraint engine configuration\n"
+            "  2. Relax position weight constraints (increase max_position_weight)\n"
+            "  3. Reduce universe size to avoid infeasible constraint combinations\n"
+            "  4. Enable cost-aware enforcement to balance constraints more intelligently"
+        )
+
+        super().__init__(full_message)
 
 
 class ConstraintViolationType(Enum):
@@ -123,6 +178,13 @@ class ConstraintEngine:
         violations = []
         constrained_weights = weights.copy()
 
+        logger.debug(
+            f"Pre-constraint state: sum={weights.sum():.6f}, "
+            f"max={weights.max():.6f}, min={weights.min():.6f}, "
+            f"num_positions={(weights > 1e-6).sum()}, "
+            f"hhi={(weights**2).sum():.6f}"
+        )
+
         # Step 1: Check all violations before applying constraints
         violations.extend(self.check_violations(constrained_weights, previous_weights))
 
@@ -153,11 +215,21 @@ class ConstraintEngine:
 
             # Check convergence: if weights sum to 1.0 and no max weight violations, we're done
             weight_sum = constrained_weights.sum()
-            max_weight_violated = (constrained_weights > self.constraints.max_position_weight + 1e-10).any()
-            weights_normalized = abs(weight_sum - 1.0) < 1e-10
+            # Tightened tolerance from 1e-10 to 1e-8 to prevent 0.3% violations
+            max_weight_violated = (constrained_weights > self.constraints.max_position_weight + 1e-8).any()
+            weights_normalized = abs(weight_sum - 1.0) < 1e-8
 
             if weights_normalized and not max_weight_violated:
                 break
+
+        logger.info(
+            f"Post-constraint state: sum={constrained_weights.sum():.6f}, "
+            f"max={constrained_weights.max():.6f}, "
+            f"num_positions={(constrained_weights > 1e-6).sum()}, "
+            f"iterations_used={_iteration+1}, "
+            f"violations_detected={len(violations)}, "
+            f"converged={weights_normalized and not max_weight_violated}"
+        )
 
         # Step 4: Log violations if date provided
         if date is not None and violations:
@@ -297,6 +369,16 @@ class ConstraintEngine:
         """Apply maximum position weight constraint with redistribution."""
         max_weight = self.constraints.max_position_weight
 
+        # Log constraint enforcement entry state
+        violating_weights = weights[weights > max_weight]
+        if len(violating_weights) > 0:
+            logger.debug(
+                f"Max weight constraint enforcement starting: "
+                f"max_weight_limit={max_weight:.1%}, current_max={weights.max():.1%}, "
+                f"n_violations={len(violating_weights)}, "
+                f"total_excess_weight={(violating_weights - max_weight).sum():.6f}"
+            )
+
         # Only apply constraint if there are actual violations
         if not (weights > max_weight).any():
             return weights
@@ -305,6 +387,14 @@ class ConstraintEngine:
         max_iters = 10
         for _iteration in range(max_iters):
             violating_mask = weights > max_weight
+
+            logger.debug(
+                f"Constraint iteration {_iteration}: "
+                f"violating_count={violating_mask.sum()}, "
+                f"current_max_weight={weights.max():.6f}, target_max={max_weight:.6f}, "
+                f"gap={weights.max() - max_weight:.6f}"
+            )
+
             if not violating_mask.any():
                 break
 
@@ -329,6 +419,16 @@ class ConstraintEngine:
             else:
                 # All assets are at max weight - stop iteration
                 break
+
+        # Check if constraint fully achieved
+        final_max_weight = weights.max()
+        if final_max_weight > max_weight + 1e-6:
+            logger.warning(
+                f"Max weight constraint NOT fully achieved after {max_iters} iterations: "
+                f"final_max={final_max_weight:.6f} ({final_max_weight:.1%}), "
+                f"target_max={max_weight:.6f} ({max_weight:.1%}), "
+                f"violation_gap={final_max_weight - max_weight:.6f}"
+            )
 
         return weights
 

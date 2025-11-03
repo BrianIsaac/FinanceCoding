@@ -9,6 +9,7 @@ from .filtering import (
 from .imputation import (
     cross_sectional_mean_impute,
     impute_with_fallback,
+    simple_temporal_fill,
 )
 from .validation import (
     calculate_data_quality_metrics,
@@ -22,6 +23,7 @@ __all__ = [
     'prepare_rolling_window_data',
     'cross_sectional_mean_impute',
     'impute_with_fallback',
+    'simple_temporal_fill',
     'calculate_data_quality_metrics',
     'validate_prepared_data',
 ]

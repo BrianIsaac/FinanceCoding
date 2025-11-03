@@ -9,6 +9,7 @@ from .constraint_engine import UnifiedConstraintEngine
 from .constraints import (
     ConstraintEngine,
     ConstraintViolation,
+    ConstraintViolationError,
     ConstraintViolationType,
     PortfolioConstraints,
     ViolationSeverity,
@@ -20,6 +21,7 @@ __all__ = [
     "PortfolioModel",
     "PortfolioConstraints",
     "ConstraintEngine",
+    "ConstraintViolationError",
     "UnifiedConstraintEngine",
     "ViolationHandler",
     "ConstraintViolation",

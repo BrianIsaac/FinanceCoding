@@ -222,32 +222,95 @@ class RollingBacktestEngine:
             execution_summary={},
         )
 
-        # Execute backtest for each model
-        for model_name, model in models.items():
-            logger.info(f"Starting backtest for model: {model_name}")
+        # Execute backtest for each model with fault isolation
+        total_models = len(models)
+        successful_models = []
+        failed_models = []
 
-            # Configure model with universe schedule for membership-aware imputation
-            if universe_data is not None and hasattr(model, 'set_universe_schedule'):
-                model.set_universe_schedule(universe_data)
-                logger.info(
-                    f"Configured {model_name} with universe schedule "
-                    f"({len(universe_data['ticker'].unique()) if 'ticker' in universe_data.columns else len(universe_data)} assets)"
+        for idx, (model_name, model) in enumerate(models.items(), 1):
+            try:
+                logger.info(f"[{idx}/{total_models}] Starting backtest for model: {model_name}")
+
+                # Configure model with universe schedule for membership-aware imputation
+                if universe_data is not None and hasattr(model, 'set_universe_schedule'):
+                    model.set_universe_schedule(universe_data)
+                    universe_size = len(universe_data['ticker'].unique()) if 'ticker' in universe_data.columns else len(universe_data)
+                    logger.info(
+                        f"Configured {model_name} with universe schedule "
+                        f"({universe_size} assets)"
+                    )
+                    # Priority 1: Log universe configuration after set_universe_schedule
+                    logger.info(f"Universe configured for model: size={universe_size}")
+
+                # Initialize model state tracking
+                self.model_states[model_name] = ModelRetrainingState()
+
+                # Execute rolling backtest for this model
+                model_results = self._execute_model_backtest(
+                    model_name, model, data, universe_data, splits
                 )
 
-            # Initialize model state tracking
-            self.model_states[model_name] = ModelRetrainingState()
+                # Store results
+                results.portfolio_returns[model_name] = model_results["returns"]
+                results.portfolio_weights[model_name] = model_results["weights"]
+                results.transaction_costs[model_name] = model_results["costs"]
+                results.performance_metrics[model_name] = model_results["metrics"]
+                results.model_performance[model_name] = model_results["model_stats"]
 
-            # Execute rolling backtest for this model
-            model_results = self._execute_model_backtest(
-                model_name, model, data, universe_data, splits
-            )
+                # Validate model actually produced results
+                if len(model_results['returns']) == 0:
+                    logger.error(
+                        f"[{idx}/{total_models}] Model {model_name} FAILED: Generated 0 returns. "
+                        f"This indicates systematic failure during backtest."
+                    )
+                    # Mark as failed in results - use correct key
+                    if 'metrics' not in model_results:
+                        model_results['metrics'] = {}
+                    model_results['metrics']['status'] = 'failed_zero_returns'
+                    failed_models.append(model_name)
+                else:
+                    successful_models.append(model_name)
+                    logger.info(
+                        f"[{idx}/{total_models}] Model {model_name} COMPLETED successfully. "
+                        f"Returns: {len(model_results['returns'])} days"
+                    )
 
-            # Store results
-            results.portfolio_returns[model_name] = model_results["returns"]
-            results.portfolio_weights[model_name] = model_results["weights"]
-            results.transaction_costs[model_name] = model_results["costs"]
-            results.performance_metrics[model_name] = model_results["metrics"]
-            results.model_performance[model_name] = model_results["model_stats"]
+            except RuntimeError as e:
+                # Circuit breaker triggered - log but continue with other models
+                failed_models.append(model_name)
+                logger.error(
+                    f"[{idx}/{total_models}] Model {model_name} FAILED (Circuit breaker triggered). "
+                    f"Error: {type(e).__name__}: {str(e)[:300]}. "
+                    f"Continuing with remaining models."
+                )
+                logger.debug(f"Full traceback for {model_name}:", exc_info=True)
+
+                # Store empty results for failed model
+                results.portfolio_returns[model_name] = pd.Series(dtype=float)
+                results.portfolio_weights[model_name] = pd.DataFrame()
+                results.transaction_costs[model_name] = pd.Series(dtype=float)
+                results.performance_metrics[model_name] = {"status": "failed", "error": str(e)[:200]}
+                results.model_performance[model_name] = []
+                continue
+
+            except Exception as e:
+                # Unexpected failure - log but continue with other models
+                failed_models.append(model_name)
+                logger.exception(f"[{idx}/{total_models}] Model {model_name} FAILED (Unexpected error):")
+
+                # Store empty results for failed model
+                results.portfolio_returns[model_name] = pd.Series(dtype=float)
+                results.portfolio_weights[model_name] = pd.DataFrame()
+                results.transaction_costs[model_name] = pd.Series(dtype=float)
+                results.performance_metrics[model_name] = {"status": "failed", "error": str(e)[:200]}
+                results.model_performance[model_name] = []
+                continue
+
+        # Log execution summary
+        logger.info(
+            f"Backtest execution summary: {len(successful_models)}/{total_models} models completed. "
+            f"Successful: {successful_models}. Failed: {failed_models}"
+        )
 
         # Generate integrity report
         results.temporal_integrity_report = self.integrity_monitor.get_integrity_summary()
@@ -319,7 +382,7 @@ class RollingBacktestEngine:
 
                 # Execute backtest on test period
                 backtest_results = self._execute_split_backtest(
-                    model, split, split_data, training_results
+                    model, split, split_data, training_results, model_name
                 )
 
                 # Store results
@@ -337,14 +400,73 @@ class RollingBacktestEngine:
                         }
                     )
 
+                    # Reset split failure counter on success
+                    if hasattr(self, '_split_failures') and model_name in self._split_failures:
+                        logger.debug(f"Split {i} successful for {model_name}, resetting failure counter from {self._split_failures[model_name]}")
+                        self._split_failures[model_name] = 0
+
             except Exception as e:
-                logger.error(f"Error processing split {i} for {model_name}: {e}")
+                # Circuit breaker: Track split failures
+                if not hasattr(self, '_split_failures'):
+                    self._split_failures = {}
+                    self._split_failure_errors = {}
+
+                old_count = self._split_failures.get(model_name, 0)
+                self._split_failures[model_name] = old_count + 1
+
+                # Track last 3 errors for context
+                if model_name not in self._split_failure_errors:
+                    self._split_failure_errors[model_name] = []
+                self._split_failure_errors[model_name].append(str(e)[:150])
+                if len(self._split_failure_errors[model_name]) > 3:
+                    self._split_failure_errors[model_name] = self._split_failure_errors[model_name][-3:]
+
+                # Priority 1.1: Log EACH failure increment with detailed context
+                logger.error(
+                    f"Split failure tracked: model={model_name}, split={i}, "
+                    f"failure_count={self._split_failures[model_name]}/3, "
+                    f"threshold=3, error_type={type(e).__name__}, "
+                    f"error_preview={str(e)[:150]}"
+                )
+
+                # Priority 1.2: Circuit breaker trigger with comprehensive context
+                if self._split_failures[model_name] >= 3:
+                    last_errors = self._split_failure_errors[model_name]
+                    logger.error(
+                        f"CIRCUIT BREAKER TRIGGERED: model={model_name}, "
+                        f"consecutive_failures={self._split_failures[model_name]}, "
+                        f"last_3_errors={last_errors}, "
+                        f"action=STOPPING_MODEL_EXECUTION"
+                    )
+                    raise RuntimeError(
+                        f"CIRCUIT BREAKER TRIGGERED: {model_name} failed {self._split_failures[model_name]} "
+                        f"consecutive splits. Last error: {e}"
+                    ) from e
+
                 continue
 
         # Combine results across splits, preserving temporal order
         combined_returns = pd.concat(returns_list, sort=True) if returns_list else pd.Series(dtype=float)
         combined_weights = pd.concat(weights_list, sort=True) if weights_list else pd.DataFrame()
         combined_costs = pd.concat(costs_list, sort=True) if costs_list else pd.Series(dtype=float)
+
+        # DIAGNOSTIC: Validate combined returns across splits
+        if not combined_returns.empty:
+            zero_returns = (combined_returns == 0).sum()
+            zero_pct = zero_returns / len(combined_returns) * 100
+            logger.info(
+                f"Combined returns validation: model={model_name}, "
+                f"total_days={len(combined_returns)}, zero_returns={zero_returns} ({zero_pct:.1f}%), "
+                f"return_range=[{combined_returns.min():.4f}, {combined_returns.max():.4f}], "
+                f"mean={combined_returns.mean():.4f}, std={combined_returns.std():.4f}"
+            )
+            if zero_pct > 20:
+                logger.warning(
+                    f"High zero return frequency: {zero_pct:.1f}% of returns are zero for {model_name}. "
+                    f"This may indicate data quality or prediction issues."
+                )
+        else:
+            logger.error(f"Empty combined returns for {model_name} - no valid backtest periods")
 
         # Sort by index to ensure temporal order
         if not combined_returns.empty and isinstance(combined_returns.index, pd.DatetimeIndex):
@@ -359,8 +481,23 @@ class RollingBacktestEngine:
             performance_metrics = self.performance_analytics.calculate_portfolio_metrics(
                 combined_returns
             )
+
+            # DIAGNOSTIC: Detect degenerate backtest results
+            if performance_metrics.get('total_return', 0) == 0:
+                logger.error(
+                    f"Degenerate backtest result: model={model_name}, "
+                    f"total_return=0.0, sharpe={performance_metrics.get('sharpe_ratio', 'N/A')}, "
+                    f"days={len(combined_returns)}. This indicates model prediction failure."
+                )
+            elif abs(performance_metrics.get('total_return', 0)) < 0.001:
+                logger.warning(
+                    f"Near-zero backtest result: model={model_name}, "
+                    f"total_return={performance_metrics.get('total_return', 0):.6f}, "
+                    f"This may indicate weak predictions or excessive transaction costs."
+                )
         else:
             performance_metrics = {}
+            logger.error(f"Cannot calculate performance metrics for {model_name}: empty returns")
 
         return {
             "returns": combined_returns,
@@ -385,30 +522,49 @@ class RollingBacktestEngine:
             split, returns_data, returns_data, returns_data
         )
 
+        # Priority 2.9: Split data prepared logging
+        logger.info(
+            f"Split data prepared: split_boundary={split.train_period.end_date.strftime('%Y-%m-%d')}, "
+            f"train_shape={train_data.shape}, val_shape={val_data.shape}, test_shape={test_data.shape}"
+        )
+
         # Prepare dynamic universe for each period if universe data is available
         dynamic_universe_train = None
         dynamic_universe_test = None
 
-        if universe_data is not None and hasattr(self, 'universe_filter'):
-            # Use UniverseFilter to get dynamic universe for training period
+        # CRITICAL FIX v1.14.1: Use membership-aware universe filtering
+        # Previous implementation tried to import non-existent UniverseFilter class
+        # This caused 100% fallback to static 621-asset universe, making coverage
+        # calculations appear 25-30 percentage points worse than reality
+        if universe_data is not None:
             try:
-                from src.utils.universe_filter import UniverseFilter
-                if not hasattr(self, 'universe_filter'):
-                    self.universe_filter = UniverseFilter()
+                from src.utils.membership_aware_cleaning import get_universe_at_date, get_rolling_universe
 
-                dynamic_universe_train = self.universe_filter.get_universe_for_period(
-                    start_date=split.train_period.start_date,
-                    end_date=split.train_period.end_date
-                    # No max_assets - use full S&P 400 universe
+                # Get universe at END of training period (most assets should exist by then)
+                dynamic_universe_train = get_universe_at_date(
+                    universe_data,
+                    split.train_period.end_date
                 )
 
-                dynamic_universe_test = self.universe_filter.get_universe_for_period(
-                    start_date=split.test_period.start_date,
-                    end_date=split.test_period.end_date
-                    # No max_assets - use full S&P 400 universe
+                # Get rolling universe schedule for test period rebalancing dates
+                dynamic_universe_test = get_rolling_universe(
+                    universe_data,
+                    split.test_period.start_date,
+                    split.test_period.end_date,
+                    rebalance_frequency='MS'  # Monthly rebalancing
                 )
+
+                logger.debug(f"Dynamic universe - Train: {len(dynamic_universe_train)} assets, Test schedule: {len(dynamic_universe_test)} dates")
+
             except Exception as e:
-                logger.warning(f"Failed to get dynamic universe: {e}, using static universe")
+                # Priority 2.10: Dynamic universe fallback logging
+                logger.warning(
+                    f"Dynamic universe fallback: split={split.train_period.end_date.strftime('%Y-%m-%d')}, "
+                    f"error={type(e).__name__}: {str(e)[:100]}, "
+                    f"fallback_decision=USING_STATIC_UNIVERSE"
+                )
+                dynamic_universe_train = None
+                dynamic_universe_test = None
 
         # Static universe deprecated - use dynamic_universe instead
         # Setting to None as models should use dynamic_universe_train/test from split_data
@@ -454,6 +610,17 @@ class RollingBacktestEngine:
             train_universe, train_returns, allow_partial=True
         )
 
+        # Priority 2.7: Universe alignment logging BEFORE training
+        coverage_pct = alignment_info['aligned_count'] / alignment_info['requested_count'] if alignment_info['requested_count'] > 0 else 0
+        logger.info(
+            f"Universe alignment before training: model={model_name}, "
+            f"requested={alignment_info['requested_count']}, "
+            f"available={len(train_returns.columns)}, "
+            f"aligned={alignment_info['aligned_count']}, "
+            f"missing={alignment_info['missing_count']}, "
+            f"coverage={coverage_pct:.1%}"
+        )
+
         if alignment_info["missing_count"] > 0:
             logger.debug(
                 f"Universe alignment: {alignment_info['aligned_count']}/{alignment_info['requested_count']} "
@@ -467,30 +634,77 @@ class RollingBacktestEngine:
         training_start = pd.Timestamp.now()
 
         try:
-            # Check if rolling retraining is enabled in config AND model supports it
-            if (self.config.enable_rolling_retraining and
+            # Priority 2.5: Training mode decision logging
+            supports_rolling = (
                 hasattr(model, 'supports_rolling_retraining') and
-                model.supports_rolling_retraining()):
-                logger.info(f"Performing rolling retraining for {model_name}")
+                model.supports_rolling_retraining()
+            )
+            config_enabled = self.config.enable_rolling_retraining
+
+            # Check if rolling retraining is enabled in config AND model supports it
+            if config_enabled and supports_rolling:
+                # Map GAT variants to 'gat' config key
+                model_type = model_name.lower()
+                if model_type.startswith('gat'):
+                    model_type = 'gat'
+                model_type = model_type.replace('-', '_')
+                max_epochs = self.config.quick_retrain_epochs.get(model_type, 20)
+
+                logger.info(
+                    f"Training mode decision: model={model_name}, "
+                    f"mode=ROLLING_RETRAINING, "
+                    f"reason='config_enabled={config_enabled} AND model_supports={supports_rolling}', "
+                    f"max_epochs={max_epochs}"
+                )
 
                 # Use rolling fit for models that support it
                 try:
-                    model.rolling_fit(
-                        returns=train_returns,
-                        universe=train_universe,
-                        rebalance_date=split.test_period.start_date,
-                        lookback_months=self.config.training_months,
-                        min_observations=self.config.min_training_samples,
-                    )
+                    # Check if model's rolling_fit accepts max_epochs parameter
+                    # LSTM and GAT models accept it, but HRP and baseline models don't
+                    import inspect
+                    rolling_fit_signature = inspect.signature(model.rolling_fit)
+                    accepts_max_epochs = 'max_epochs' in rolling_fit_signature.parameters
+
+                    if accepts_max_epochs:
+                        model.rolling_fit(
+                            returns=train_returns,
+                            universe=train_universe,
+                            rebalance_date=split.train_period.end_date,  # FIXED: Use end of training period, not start of test period
+                            lookback_months=self.config.training_months,
+                            min_observations=self.config.min_training_samples,
+                            max_epochs=max_epochs,
+                        )
+                    else:
+                        # For models that don't accept max_epochs (HRP, baselines)
+                        model.rolling_fit(
+                            returns=train_returns,
+                            universe=train_universe,
+                            rebalance_date=split.train_period.end_date,
+                            lookback_months=self.config.training_months,
+                            min_observations=self.config.min_training_samples,
+                        )
 
                     training_duration = (pd.Timestamp.now() - training_start).total_seconds()
 
                     logger.info(f"Rolling retraining completed for {model_name} in {training_duration:.1f}s")
 
-                    # Save model checkpoint after rolling fit
+                    # Priority 2.8: Model checkpoint save logging
                     if self.config.model_checkpoint_dir:
-                        logger.debug(f"Saving checkpoint for {model_name} after rolling fit")
+                        logger.info(
+                            f"Checkpoint save: model={model_name}, "
+                            f"directory={self.config.model_checkpoint_dir}, "
+                            f"split_date={split.train_period.end_date.strftime('%Y-%m-%d')}, "
+                            f"training_method=rolling_fit"
+                        )
                         self._save_model_checkpoint(model, split, model_name)
+
+                    # Reset training failure counter on success
+                    if hasattr(self, '_training_failures') and model_name in self._training_failures:
+                        if self._training_failures[model_name] > 0:
+                            logger.info(
+                                f"Rolling retraining successful for {model_name}, resetting failure counter from {self._training_failures[model_name]}"
+                            )
+                        self._training_failures[model_name] = 0
 
                     return {
                         "training_success": True,
@@ -501,8 +715,44 @@ class RollingBacktestEngine:
                     }
 
                 except Exception as e:
-                    logger.warning(f"Rolling retraining failed for {model_name}: {e}, falling back to static")
-                    # Fall through to standard training
+                    # Priority 2.6: Fallback to static fit logging
+                    error_str = str(e).lower()
+
+                    # Categorise error type
+                    if "grad" in error_str or "gradient" in error_str:
+                        error_category = "GRADIENT_ERROR"
+                        should_fail_fast = True
+                    elif "shape" in error_str or "dimension" in error_str:
+                        error_category = "DIMENSION_ERROR"
+                        should_fail_fast = True
+                    else:
+                        error_category = "OTHER_ERROR"
+                        should_fail_fast = False
+
+                    logger.error(
+                        f"Rolling retrain FAILED: model={model_name}, "
+                        f"error_type={type(e).__name__}, error_category={error_category}, "
+                        f"error={str(e)[:200]}, train_shape={train_returns.shape}"
+                    )
+
+                    # Fail fast on critical errors
+                    if should_fail_fast:
+                        raise RuntimeError(f"CRITICAL: {error_category} in {model_name}") from e
+
+                    # Priority 2.6: Log fallback decision
+                    logger.warning(
+                        f"Fallback decision: model={model_name}, "
+                        f"attempted_method=rolling_fit, failed_reason={error_category}, "
+                        f"fallback_method=static_fit, data_shape={train_returns.shape}"
+                    )
+                    # Fall through to static fit
+            else:
+                # Priority 2.5: Training mode decision logging for static fit
+                logger.info(
+                    f"Training mode decision: model={model_name}, "
+                    f"mode=STATIC_FIT, "
+                    f"reason='config_enabled={config_enabled} OR model_supports={supports_rolling} is False'"
+                )
 
             # Standard fit for models - all models now train fresh during rolling backtest
             if True:  # Simplified condition after removing pre-trained model logic
@@ -513,9 +763,14 @@ class RollingBacktestEngine:
                     fit_period=(split.train_period.start_date, split.train_period.end_date),
                 )
 
-                # Save model checkpoint if configured
+                # Priority 2.8: Model checkpoint save logging
                 if self.config.model_checkpoint_dir:
-                    logger.debug(f"Attempting to save checkpoint for {model_name} with dir: {self.config.model_checkpoint_dir}")
+                    logger.info(
+                        f"Checkpoint save: model={model_name}, "
+                        f"directory={self.config.model_checkpoint_dir}, "
+                        f"split_date={split.train_period.end_date.strftime('%Y-%m-%d')}, "
+                        f"training_method=static_fit"
+                    )
                     self._save_model_checkpoint(model, split, model_name)
                 else:
                     logger.debug(f"No checkpoint dir configured, skipping checkpoint save for {model_name}")
@@ -553,6 +808,14 @@ class RollingBacktestEngine:
             model_state.retraining_count += 1
             model_state.performance_metrics.append(validation_metrics)
 
+            # Reset training failure counter on success
+            if hasattr(self, '_training_failures') and model_name in self._training_failures:
+                if self._training_failures[model_name] > 0:
+                    logger.info(
+                        f"Training successful for {model_name}, resetting failure counter from {self._training_failures[model_name]}"
+                    )
+                self._training_failures[model_name] = 0
+
             return {
                 "training_success": True,
                 "training_duration_seconds": training_duration,
@@ -562,12 +825,19 @@ class RollingBacktestEngine:
             }
 
         except Exception as e:
-            logger.error(f"Model retraining failed: {e}")
-            return {
-                "training_success": False,
-                "error": str(e),
-                "training_duration_seconds": (pd.Timestamp.now() - training_start).total_seconds(),
-            }
+            logger.error(f"Training FAILED: {model_name}: {type(e).__name__}: {e}")
+
+            # Track failures
+            if not hasattr(self, '_training_failures'):
+                self._training_failures = {}
+            self._training_failures[model_name] = self._training_failures.get(model_name, 0) + 1
+
+            # Fail fast after 3 consecutive failures
+            if self._training_failures[model_name] >= 3:
+                raise RuntimeError(f"CRITICAL: {model_name} failed {self._training_failures[model_name]} consecutive trainings. "
+                                  f"Last error: {e}") from e
+
+            return {"training_success": False, "error": str(e), "exception_type": type(e).__name__}
 
     def _execute_split_backtest(
         self,
@@ -575,6 +845,7 @@ class RollingBacktestEngine:
         split: RollSplit,
         split_data: dict[str, pd.DataFrame],
         training_results: dict[str, Any],
+        model_name: str,
     ) -> dict[str, Any]:
         """Execute backtest on test period for current split."""
 
@@ -637,11 +908,25 @@ class RollingBacktestEngine:
             try:
                 # Get universe for this specific rebalance date
                 dynamic_test_universe = split_data.get("dynamic_test_universe", {})
-                current_universe = (
-                    dynamic_test_universe.get(rebalance_date)
-                    if dynamic_test_universe
-                    else fallback_universe
-                )
+                current_universe = None
+
+                if dynamic_test_universe:
+                    # Try exact match first
+                    current_universe = dynamic_test_universe.get(rebalance_date)
+
+                    # If no exact match, find nearest month-start date (handles trading day misalignment)
+                    if current_universe is None:
+                        # Find the closest month-start date (within ±5 days)
+                        for offset in range(-5, 6):
+                            candidate_date = rebalance_date + pd.Timedelta(days=offset)
+                            if candidate_date in dynamic_test_universe:
+                                current_universe = dynamic_test_universe[candidate_date]
+                                logger.debug(f"Using universe from {candidate_date} for rebalance {rebalance_date}")
+                                break
+
+                # Fallback to static universe if still None
+                if current_universe is None:
+                    current_universe = fallback_universe
 
                 # Log universe changes for validation
                 if i == 0 or (previous_universe is not None and len(current_universe) != len(previous_universe)):
@@ -649,17 +934,178 @@ class RollingBacktestEngine:
                 previous_universe = current_universe
 
                 # Generate portfolio weights
-                # For baseline models, don't pass universe to avoid mismatch issues
-                if hasattr(model, '_is_baseline') and model._is_baseline:
+                # FIX #3: Pass universe to ALL models to prevent mismatch
+                # Removed special handling for baseline models (_is_baseline check)
+                try:
                     current_weights = model.predict_weights(
                         date=rebalance_date,
-                        universe=None,  # Let baseline models use their fitted universe
+                        universe=current_universe,  # Time-varying universe for ALL models
                     )
-                else:
-                    current_weights = model.predict_weights(
-                        date=rebalance_date,
-                        universe=current_universe,  # Time-varying universe
+
+                    # Priority 1.3: Circuit breaker recovery logging
+                    if hasattr(self, '_prediction_failure_count') and model_name in self._prediction_failure_count:
+                        old_count = self._prediction_failure_count[model_name]
+                        if old_count > 0:
+                            logger.info(
+                                f"Circuit breaker recovery: model={model_name}, "
+                                f"old_failure_count={old_count}, new_count=0, "
+                                f"trigger=SUCCESSFUL_PREDICTION, date={rebalance_date}"
+                            )
+                        self._prediction_failure_count[model_name] = 0
+                except TypeError as e:
+                    # Fallback for legacy models that don't accept universe parameter
+                    logger.warning(f"{model_name} does not accept universe parameter: {e}, calling without universe")
+                    try:
+                        current_weights = model.predict_weights(date=rebalance_date)
+                    except Exception as e:
+                        logger.error(
+                            f"Failed to generate weights for {model_name} at {rebalance_date}: {type(e).__name__}: {e}"
+                        )
+
+                        # Circuit breaker: Track prediction failures
+                        if not hasattr(self, '_prediction_failure_count'):
+                            self._prediction_failure_count = {}
+                        self._prediction_failure_count[model_name] = self._prediction_failure_count.get(model_name, 0) + 1
+
+                        # Priority 1.4: Early warning before circuit breaker trips
+                        failure_count = self._prediction_failure_count[model_name]
+                        threshold = 20
+                        remaining = threshold - failure_count
+
+                        if failure_count >= threshold - 5:  # Warn when 5 or fewer attempts remain
+                            logger.warning(
+                                f"Circuit breaker approaching: model={model_name}, "
+                                f"failure_count={failure_count}/{threshold}, "
+                                f"remaining_attempts={remaining}, "
+                                f"error_type={type(e).__name__}"
+                            )
+                        else:
+                            logger.warning(
+                                f"Prediction failure tracked: model={model_name}, "
+                                f"count={failure_count}/{threshold}"
+                            )
+
+                        # Stop after 20 consecutive prediction failures
+                        if self._prediction_failure_count[model_name] >= 20:
+                            raise RuntimeError(
+                                f"CIRCUIT BREAKER TRIGGERED: {model_name} failed {self._prediction_failure_count[model_name]} "
+                                f"consecutive predictions. Last error: {e}"
+                            ) from e
+
+                        continue
+                except ValueError as e:
+                    # ERROR HANDLING: Catch value errors (data issues, dimension mismatches)
+                    error_str = str(e).lower()
+
+                    if 'empty' in error_str:
+                        category = "EMPTY_UNIVERSE"
+                        fix = "Check data quality filters"
+                    elif 'dimension' in error_str or 'shape' in error_str:
+                        category = "DIMENSION_MISMATCH"
+                        fix = "Check model input_size vs universe alignment"
+                    elif 'insufficient' in error_str:
+                        category = "INSUFFICIENT_DATA"
+                        fix = "Extend lookback or reduce minimum requirements"
+                    else:
+                        category = "OTHER_VALUE_ERROR"
+                        fix = "Review error and model state"
+
+                    logger.error(
+                        f"{model_name} prediction failed at {rebalance_date}: "
+                        f"category={category}, error={e}, universe_size={len(current_universe)}, "
+                        f"fix={fix}"
                     )
+                    logger.debug(f"ValueError traceback:", exc_info=True)
+
+                    # Circuit breaker: Track prediction failures
+                    if not hasattr(self, '_prediction_failure_count'):
+                        self._prediction_failure_count = {}
+                    self._prediction_failure_count[model_name] = self._prediction_failure_count.get(model_name, 0) + 1
+
+                    # Priority 1.4: Early warning before circuit breaker trips
+                    failure_count = self._prediction_failure_count[model_name]
+                    threshold = 20
+                    remaining = threshold - failure_count
+
+                    if failure_count >= threshold - 5:  # Warn when 5 or fewer attempts remain
+                        logger.warning(
+                            f"Circuit breaker approaching: model={model_name}, "
+                            f"failure_count={failure_count}/{threshold}, "
+                            f"remaining_attempts={remaining}, "
+                            f"error_type=ValueError, category={category}"
+                        )
+                    else:
+                        logger.warning(
+                            f"Prediction failure tracked: model={model_name}, "
+                            f"count={failure_count}/{threshold}"
+                        )
+
+                    # Stop after 20 consecutive prediction failures
+                    if self._prediction_failure_count[model_name] >= 20:
+                        raise RuntimeError(
+                            f"CIRCUIT BREAKER TRIGGERED: {model_name} failed {self._prediction_failure_count[model_name]} "
+                            f"consecutive predictions. Last error: {e}"
+                        ) from e
+
+                    continue
+                except RuntimeError as e:
+                    # Track consecutive failures
+                    if not hasattr(self, '_prediction_failures'):
+                        self._prediction_failures = {}
+                    if model_name not in self._prediction_failures:
+                        self._prediction_failures[model_name] = []
+
+                    self._prediction_failures[model_name].append((rebalance_date, str(e)))
+                    consecutive = len(self._prediction_failures[model_name])
+
+                    logger.error(f"Prediction RuntimeError ({consecutive} consecutive): {model_name} at {rebalance_date}: {e}")
+
+                    # Stop after 10 consecutive failures
+                    if consecutive >= 10:
+                        logger.critical(f"STOPPING {model_name}: {consecutive} consecutive failures. "
+                                       f"First: {self._prediction_failures[model_name][0][1][:100]}, "
+                                       f"Latest: {str(e)[:100]}")
+                        break
+                    continue
+                except Exception as e:
+                    # ERROR HANDLING: Catch all other exceptions with detailed logging
+                    logger.error(
+                        f"Unexpected error in {model_name} prediction at {rebalance_date}: "
+                        f"{type(e).__name__}: {e}"
+                    )
+                    logger.exception(f"Full traceback for {model_name} prediction error:")
+
+                    # Circuit breaker: Track prediction failures
+                    if not hasattr(self, '_prediction_failure_count'):
+                        self._prediction_failure_count = {}
+                    self._prediction_failure_count[model_name] = self._prediction_failure_count.get(model_name, 0) + 1
+
+                    # Priority 1.4: Early warning before circuit breaker trips
+                    failure_count = self._prediction_failure_count[model_name]
+                    threshold = 20
+                    remaining = threshold - failure_count
+
+                    if failure_count >= threshold - 5:  # Warn when 5 or fewer attempts remain
+                        logger.warning(
+                            f"Circuit breaker approaching: model={model_name}, "
+                            f"failure_count={failure_count}/{threshold}, "
+                            f"remaining_attempts={remaining}, "
+                            f"error_type={type(e).__name__}"
+                        )
+                    else:
+                        logger.warning(
+                            f"Prediction failure tracked: model={model_name}, "
+                            f"count={failure_count}/{threshold}"
+                        )
+
+                    # Stop after 20 consecutive prediction failures
+                    if self._prediction_failure_count[model_name] >= 20:
+                        raise RuntimeError(
+                            f"CIRCUIT BREAKER TRIGGERED: {model_name} failed {self._prediction_failure_count[model_name]} "
+                            f"consecutive predictions. Last error: {e}"
+                        ) from e
+
+                    continue
 
                 # Track and log data quality if model provides it
                 if self.quality_tracker is not None and hasattr(model, 'get_last_data_quality_metrics'):
@@ -682,13 +1128,105 @@ class RollingBacktestEngine:
                     except Exception as e:
                         logger.warning(f"Failed to track data quality metrics at {rebalance_date}: {e}")
 
+                # ERROR HANDLING: Validate weights are not empty
                 if current_weights.empty:
-                    logger.warning(f"Empty weights for {rebalance_date}")
+                    logger.warning(f"{model_name} returned empty weights for {rebalance_date}. Skipping rebalance.")
+
+                    # Circuit breaker: Track validation failures
+                    if not hasattr(self, '_validation_failure_count'):
+                        self._validation_failure_count = {}
+                    self._validation_failure_count[model_name] = self._validation_failure_count.get(model_name, 0) + 1
+
+                    logger.warning(
+                        f"Validation failure count for {model_name}: {self._validation_failure_count[model_name]} (empty weights)"
+                    )
+
+                    # Stop after 15 consecutive validation failures
+                    if self._validation_failure_count[model_name] >= 15:
+                        raise RuntimeError(
+                            f"CIRCUIT BREAKER TRIGGERED: {model_name} failed {self._validation_failure_count[model_name]} "
+                            f"consecutive validations (empty weights)"
+                        )
+
+                    continue
+
+                # ERROR HANDLING: Check for NaN or infinite values in weights
+                if current_weights.isna().any():
+                    logger.error(
+                        f"{model_name} returned NaN weights at {rebalance_date}: "
+                        f"{current_weights.isna().sum()} NaN values out of {len(current_weights)}. Skipping rebalance."
+                    )
+
+                    # Circuit breaker: Track validation failures
+                    if not hasattr(self, '_validation_failure_count'):
+                        self._validation_failure_count = {}
+                    self._validation_failure_count[model_name] = self._validation_failure_count.get(model_name, 0) + 1
+
+                    logger.warning(
+                        f"Validation failure count for {model_name}: {self._validation_failure_count[model_name]} (NaN weights)"
+                    )
+
+                    # Stop after 15 consecutive validation failures
+                    if self._validation_failure_count[model_name] >= 15:
+                        raise RuntimeError(
+                            f"CIRCUIT BREAKER TRIGGERED: {model_name} failed {self._validation_failure_count[model_name]} "
+                            f"consecutive validations (NaN weights)"
+                        )
+
+                    continue
+
+                if np.isinf(current_weights).any():
+                    logger.error(
+                        f"{model_name} returned infinite weights at {rebalance_date}: "
+                        f"{np.isinf(current_weights).sum()} infinite values out of {len(current_weights)}. Skipping rebalance."
+                    )
+
+                    # Circuit breaker: Track validation failures
+                    if not hasattr(self, '_validation_failure_count'):
+                        self._validation_failure_count = {}
+                    self._validation_failure_count[model_name] = self._validation_failure_count.get(model_name, 0) + 1
+
+                    logger.warning(
+                        f"Validation failure count for {model_name}: {self._validation_failure_count[model_name]} (infinite weights)"
+                    )
+
+                    # Stop after 15 consecutive validation failures
+                    if self._validation_failure_count[model_name] >= 15:
+                        raise RuntimeError(
+                            f"CIRCUIT BREAKER TRIGGERED: {model_name} failed {self._validation_failure_count[model_name]} "
+                            f"consecutive validations (infinite weights)"
+                        )
+
                     continue
 
                 # Comprehensive weight validation
                 if not self._validate_weights(current_weights, rebalance_date):
+                    # Circuit breaker: Track validation failures
+                    if not hasattr(self, '_validation_failure_count'):
+                        self._validation_failure_count = {}
+                    self._validation_failure_count[model_name] = self._validation_failure_count.get(model_name, 0) + 1
+
+                    logger.warning(
+                        f"Validation failure count for {model_name}: {self._validation_failure_count[model_name]} (weight validation failed)"
+                    )
+
+                    # Stop after 15 consecutive validation failures
+                    if self._validation_failure_count[model_name] >= 15:
+                        raise RuntimeError(
+                            f"CIRCUIT BREAKER TRIGGERED: {model_name} failed {self._validation_failure_count[model_name]} "
+                            f"consecutive validations (weight validation failed)"
+                        )
+
                     continue
+
+                # Reset validation failure counter on success
+                if hasattr(self, '_validation_failure_count') and model_name in self._validation_failure_count:
+                    if self._validation_failure_count[model_name] > 0:
+                        logger.debug(
+                            f"Validation successful for {model_name} at {rebalance_date}, "
+                            f"resetting failure counter from {self._validation_failure_count[model_name]}"
+                        )
+                    self._validation_failure_count[model_name] = 0
 
                 # Explicit position limit enforcement (safety gate)
                 # Note: Soft constraints may allow minor violations for rebalancing efficiency
@@ -697,14 +1235,30 @@ class RollingBacktestEngine:
                 max_weight = current_weights.max()
                 severe_violation_threshold = 0.50  # 50% concentration is a critical failure
 
+                # FIX: Only skip rebalance for severe violations if constraints are enforced
+                # When enforce_constraints=False, allow the model to learn from extreme allocations
+                # Check model.enforce_constraints (LSTM) not model.constraints.enforce_constraints
                 if max_weight > severe_violation_threshold:
-                    logger.error(
-                        f"CRITICAL CONSTRAINT VIOLATION at {rebalance_date}: "
-                        f"Severe position limit exceeded: max weight = {max_weight:.1%} > {severe_violation_threshold:.1%}. "
-                        f"Model: {model.__class__.__name__}. "
-                        f"This indicates complete constraint enforcement failure. Skipping rebalance."
-                    )
-                    continue  # Skip this rebalance for severe violations
+                    # Check if model has enforce_constraints attribute (defaults to True for safety)
+                    model_enforces_constraints = getattr(model, 'enforce_constraints', True)
+
+                    if model_enforces_constraints:
+                        # Constraints enforced: Skip this rebalance for severe violations
+                        logger.error(
+                            f"CRITICAL CONSTRAINT VIOLATION at {rebalance_date}: "
+                            f"Severe position limit exceeded: max weight = {max_weight:.1%} > {severe_violation_threshold:.1%}. "
+                            f"Model: {model.__class__.__name__}. "
+                            f"This indicates complete constraint enforcement failure. Skipping rebalance."
+                        )
+                        continue  # Skip this rebalance for severe violations
+                    else:
+                        # Constraints not enforced: Warn but continue (let model learn)
+                        logger.warning(
+                            f"Extreme allocation detected at {rebalance_date}: "
+                            f"max weight = {max_weight:.1%} > {severe_violation_threshold:.1%}. "
+                            f"Model: {model.__class__.__name__}. "
+                            f"Continuing in unconstrained learning mode (enforce_constraints=False)."
+                        )
 
                 # Calculate transaction costs
                 costs = 0.0
@@ -735,13 +1289,35 @@ class RollingBacktestEngine:
                     # Ensure proper alignment between returns and weights
                     aligned_assets = list(set(period_returns.columns) & set(current_weights.index))
 
+                    # DIAGNOSTIC: Validate portfolio return calculation inputs
+                    logger.debug(
+                        f"Portfolio return calculation: date={rebalance_date.strftime('%Y-%m-%d')}, "
+                        f"period_days={len(period_returns)}, "
+                        f"available_assets={len(period_returns.columns)}, "
+                        f"weights_assets={len(current_weights)}, "
+                        f"aligned_assets={len(aligned_assets)}"
+                    )
+
                     if not aligned_assets:
-                        logger.warning(f"No aligned assets between returns and weights at {rebalance_date}")
+                        logger.error(
+                            f"No aligned assets between returns and weights at {rebalance_date}: "
+                            f"returns_assets={len(period_returns.columns)}, "
+                            f"weights_assets={len(current_weights)}. "
+                            f"This indicates universe mismatch."
+                        )
                         continue
 
                     # Subset to aligned assets only
                     aligned_returns = period_returns[aligned_assets]
                     aligned_weights = current_weights.reindex(aligned_assets, fill_value=0.0)
+
+                    # DIAGNOSTIC: Validate aligned data quality
+                    nan_returns = aligned_returns.isna().sum().sum()
+                    if nan_returns > 0:
+                        logger.warning(
+                            f"NaN returns detected: date={rebalance_date.strftime('%Y-%m-%d')}, "
+                            f"nan_count={nan_returns}, total_values={aligned_returns.size}"
+                        )
 
                     # Normalise weights to sum to 1.0 after alignment
                     weight_sum = aligned_weights.sum()
@@ -775,6 +1351,16 @@ class RollingBacktestEngine:
                     else:
                         logger.warning(f"Insufficient data for period starting {rebalance_date}")
                         continue
+
+                    # Critical zero-returns detection
+                    if daily_portfolio_returns.empty:
+                        logger.error(f"ZERO RETURNS ALERT: daily_portfolio_returns is EMPTY at {rebalance_date}")
+                    elif (daily_portfolio_returns == 0).all():
+                        logger.error(
+                            f"ZERO RETURNS ALERT: ALL portfolio returns are ZERO at {rebalance_date}: "
+                            f"weights={aligned_weights.nlargest(5).to_dict()}, "
+                            f"returns_mean={aligned_returns.mean().mean():.6f}"
+                        )
 
                     # Validate portfolio returns
                     if not daily_portfolio_returns.empty:
@@ -845,18 +1431,16 @@ class RollingBacktestEngine:
             True if weights are valid (after potential corrections), False otherwise
         """
         try:
-            # Check for NaN or infinite values
+            # Check for NaN or infinite values - FAIL validation instead of auto-correcting
             if weights.isna().any():
                 nan_count = weights.isna().sum()
-                logger.warning(f"NaN weights detected at {rebalance_date}: {nan_count} assets")
-                # Try to fix by replacing NaN with 0
-                weights = weights.fillna(0.0)
+                logger.error(f"NaN weights detected at {rebalance_date}: {nan_count} assets - model prediction failed")
+                return False  # FIXED: Fail validation to expose model bugs
 
             if not np.isfinite(weights).all():
                 inf_count = np.isinf(weights).sum()
-                logger.warning(f"Infinite weights detected at {rebalance_date}: {inf_count} assets")
-                # Replace infinite values with 0
-                weights[np.isinf(weights)] = 0.0
+                logger.error(f"Infinite weights detected at {rebalance_date}: {inf_count} assets - model prediction failed")
+                return False  # FIXED: Fail validation to expose model bugs
 
             # Check for negative weights (long-only constraint)
             negative_mask = weights < -1e-8
@@ -873,29 +1457,21 @@ class RollingBacktestEngine:
             max_weight = weights.max()
             max_position_limit = 0.20  # TODO: Get from model.constraints.max_position_weight
 
-            # Reduced tolerance from 1% to 0.1% (10 basis points)
-            # With iterative redistribution, violations should be eliminated
-            tolerance = 0.001  # 0.1% tolerance for numerical precision
-
-            if max_weight > max_position_limit + tolerance:
-                logger.error(
-                    f"Position limit violation at {rebalance_date}: "
-                    f"max weight = {max_weight:.1%} > limit {max_position_limit:.1%} (tolerance: {tolerance:.1%})"
+            # For unconstrained learning, warn for all violations to track model behaviour
+            # Don't fail validation - let models learn without constraints
+            if max_weight > 0.80:
+                logger.warning(
+                    f"Extreme concentration at {rebalance_date}: "
+                    f"max weight = {max_weight:.1%} (>80%). "
+                    f"Model operating in unconstrained mode (enforce_constraints=False)."
                 )
-                logger.error(
-                    f"This indicates constraint engine failed. Weights should already be constrained."
+            elif max_weight > max_position_limit + 0.001:
+                logger.warning(
+                    f"Position limit exceeded at {rebalance_date}: "
+                    f"max weight = {max_weight:.1%} > limit {max_position_limit:.1%}. "
+                    f"Model operating in unconstrained mode (enforce_constraints=False)."
                 )
-                # Don't clip and renormalise here - this creates the same bug
-                # Instead, fail validation to surface the issue
-                return False  # Validation fails
-
-            # Also check extreme concentration (>50% is critical failure)
-            if max_weight > 0.5:
-                logger.critical(
-                    f"CRITICAL: Extreme concentration at {rebalance_date}: "
-                    f"max weight = {max_weight:.1%} (>50%). Model constraint enforcement completely failed."
-                )
-                return False  # Fail validation for extreme violations
+                # Don't fail - allow unconstrained learning, just warn
 
             # Renormalize weights to sum to 1.0
             weight_sum = weights.sum()

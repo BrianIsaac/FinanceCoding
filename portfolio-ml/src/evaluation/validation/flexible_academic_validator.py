@@ -103,6 +103,60 @@ class FlexibleAcademicValidator:
         self.standards = AcademicStandardsConfig.load(academic_standards)
         self.validation_history: list[AcademicValidationResult] = []
 
+    def validate_sample_size_only(
+        self,
+        n_samples: int,
+        universe_size: int,
+    ) -> tuple[bool, float, int]:
+        """Validate sample size without full data quality checks.
+
+        This method is used by rolling validation when only timestamp counts
+        are available, avoiding misleading data quality metrics.
+
+        Args:
+            n_samples: Number of timestamp samples available
+            universe_size: Size of the asset universe
+
+        Returns:
+            Tuple of (can_proceed, sample_score, threshold):
+            - can_proceed: Whether minimum sample requirements are met
+            - sample_score: Normalised sample adequacy score (0-1)
+            - threshold: Calculated minimum threshold for this universe size
+        """
+        # Calculate appropriate threshold for universe size
+        threshold = self._calculate_threshold_for_universe(universe_size)
+
+        # Assess sample size adequacy
+        sample_score = self.assess_sample_size(n_samples, threshold)
+
+        # Check if minimum requirements are met
+        can_proceed = n_samples >= self.standards.minimum_samples
+
+        return can_proceed, sample_score, threshold
+
+    def _calculate_threshold_for_universe(self, universe_size: int) -> int:
+        """Calculate appropriate threshold based on universe size.
+
+        Args:
+            universe_size: Size of the asset universe
+
+        Returns:
+            Adaptive threshold for minimum samples
+        """
+        # Use similar logic to calculate_adaptive_threshold but simplified
+        if universe_size < 50:
+            # Small universe requires fewer samples
+            base_threshold = self.standards.low_confidence_samples
+        elif universe_size > 200:
+            # Large universe benefits from more samples
+            base_threshold = self.standards.high_confidence_samples
+        else:
+            # Standard case
+            base_threshold = self.standards.moderate_confidence_samples
+
+        # Apply minimum constraint
+        return max(base_threshold, self.standards.minimum_samples)
+
     def validate_with_confidence(
         self,
         data: pd.DataFrame,

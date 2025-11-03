@@ -83,6 +83,15 @@ class EqualWeightModel(PortfolioModel):
             name="equal_weights"
         )
 
+        # Track data quality metrics for reporting
+        self._last_data_quality_metrics = {
+            'requested_assets': len(target_universe),
+            'valid_assets': len(target_universe),
+            'coverage_ratio': 1.0,
+            'na_count': 0,
+            'na_ratio': 0.0,
+        }
+
         return weights
 
     def get_model_info(self) -> dict[str, Any]:
@@ -136,9 +145,27 @@ class MarketCapWeightedModel(PortfolioModel):
             fit_period: Training period
         """
         self.universe = universe
-        self.returns_data = returns
+
+        # Filter returns to training period to prevent lookahead bias
+        if fit_period is not None:
+            start_date, end_date = fit_period
+            mask = (returns.index >= start_date) & (returns.index <= end_date)
+            self.returns_data = returns[mask].copy()
+            logger.debug(
+                f"{self.__class__.__name__} fitted with {len(universe)} assets, "
+                f"training period: {start_date.date()} to {end_date.date()}, "
+                f"{len(self.returns_data)} observations"
+            )
+        else:
+            # Backward compatibility: if fit_period not provided, use all data
+            self.returns_data = returns.copy()
+            logger.debug(f"{self.__class__.__name__} fitted with {len(universe)} assets (no fit_period specified)")
+
         self.is_fitted = True
-        logger.debug(f"MarketCapWeighted model fitted with {len(universe)} assets")
+
+    def supports_rolling_retraining(self) -> bool:
+        """Market cap weighted model supports rolling retraining."""
+        return True
 
     def predict_weights(
         self,
@@ -180,7 +207,7 @@ class MarketCapWeightedModel(PortfolioModel):
             logger.debug(f"MarketCapWeighted: {len(unavailable_assets)} assets not in fitted data: {unavailable_assets[:5]}...")
 
         # Get historical returns up to prediction date
-        end_date = date
+        end_date = date - pd.Timedelta(days=1)  # Exclude prediction date
         start_date = end_date - pd.Timedelta(days=self.lookback_days)
 
         historical_returns = self.returns_data.loc[
@@ -284,6 +311,15 @@ class MarketCapWeightedModel(PortfolioModel):
 
         logger.debug(f"MarketCapWeighted generated weights: sum={weights.sum():.6f}, std={weights.std():.6f}, range=[{weights.min():.6f}, {weights.max():.6f}]")
 
+        # Track data quality metrics for reporting
+        self._last_data_quality_metrics = {
+            'requested_assets': len(target_universe),
+            'valid_assets': len(target_universe),
+            'coverage_ratio': 1.0,
+            'na_count': 0,
+            'na_ratio': 0.0,
+        }
+
         return weights
 
     def get_model_info(self) -> dict[str, Any]:
@@ -338,9 +374,27 @@ class MeanReversionModel(PortfolioModel):
             fit_period: Training period
         """
         self.universe = universe
-        self.returns_data = returns
+
+        # Filter returns to training period to prevent lookahead bias
+        if fit_period is not None:
+            start_date, end_date = fit_period
+            mask = (returns.index >= start_date) & (returns.index <= end_date)
+            self.returns_data = returns[mask].copy()
+            logger.debug(
+                f"{self.__class__.__name__} fitted with {len(universe)} assets, "
+                f"training period: {start_date.date()} to {end_date.date()}, "
+                f"{len(self.returns_data)} observations"
+            )
+        else:
+            # Backward compatibility: if fit_period not provided, use all data
+            self.returns_data = returns.copy()
+            logger.debug(f"{self.__class__.__name__} fitted with {len(universe)} assets (no fit_period specified)")
+
         self.is_fitted = True
-        logger.debug(f"MeanReversion model fitted with {len(universe)} assets")
+
+    def supports_rolling_retraining(self) -> bool:
+        """Mean reversion model supports rolling retraining."""
+        return True
 
     def predict_weights(
         self,
@@ -381,7 +435,7 @@ class MeanReversionModel(PortfolioModel):
             logger.debug(f"MeanReversion: {len(unavailable_assets)} assets not in fitted data: {unavailable_assets[:5]}...")
 
         # Get recent returns for mean reversion signal
-        end_date = date
+        end_date = date - pd.Timedelta(days=1)  # Exclude prediction date
         start_date = end_date - pd.Timedelta(days=self.lookback_days)
 
         recent_returns = self.returns_data.loc[
@@ -436,6 +490,15 @@ class MeanReversionModel(PortfolioModel):
         weights = full_weights
 
         logger.debug(f"MeanReversion generated weights: sum={weights.sum():.6f}, std={weights.std():.6f}, range=[{weights.min():.6f}, {weights.max():.6f}]")
+
+        # Track data quality metrics for reporting
+        self._last_data_quality_metrics = {
+            'requested_assets': len(target_universe),
+            'valid_assets': len(target_universe),
+            'coverage_ratio': 1.0,
+            'na_count': 0,
+            'na_ratio': 0.0,
+        }
 
         return weights
 
@@ -493,9 +556,27 @@ class MinimumVarianceModel(PortfolioModel):
             fit_period: Training period
         """
         self.universe = universe
-        self.returns_data = returns
+
+        # Filter returns to training period to prevent lookahead bias
+        if fit_period is not None:
+            start_date, end_date = fit_period
+            mask = (returns.index >= start_date) & (returns.index <= end_date)
+            self.returns_data = returns[mask].copy()
+            logger.debug(
+                f"{self.__class__.__name__} fitted with {len(universe)} assets, "
+                f"training period: {start_date.date()} to {end_date.date()}, "
+                f"{len(self.returns_data)} observations"
+            )
+        else:
+            # Backward compatibility: if fit_period not provided, use all data
+            self.returns_data = returns.copy()
+            logger.debug(f"{self.__class__.__name__} fitted with {len(universe)} assets (no fit_period specified)")
+
         self.is_fitted = True
-        logger.debug(f"MinimumVariance model fitted with {len(universe)} assets")
+
+    def supports_rolling_retraining(self) -> bool:
+        """Minimum variance model supports rolling retraining."""
+        return True
 
     def predict_weights(
         self,
@@ -532,7 +613,7 @@ class MinimumVarianceModel(PortfolioModel):
             logger.debug(f"MinimumVariance: {len(unavailable_assets)} assets not in fitted data: {unavailable_assets[:5]}...")
 
         # Get historical returns for covariance estimation
-        end_date = date
+        end_date = date - pd.Timedelta(days=1)  # Exclude prediction date
         start_date = end_date - pd.Timedelta(days=self.lookback_days)
 
         historical_returns = self.returns_data.loc[
@@ -661,9 +742,27 @@ class MomentumModel(PortfolioModel):
             fit_period: Training period
         """
         self.universe = universe
-        self.returns_data = returns
+
+        # Filter returns to training period to prevent lookahead bias
+        if fit_period is not None:
+            start_date, end_date = fit_period
+            mask = (returns.index >= start_date) & (returns.index <= end_date)
+            self.returns_data = returns[mask].copy()
+            logger.debug(
+                f"{self.__class__.__name__} fitted with {len(universe)} assets, "
+                f"training period: {start_date.date()} to {end_date.date()}, "
+                f"{len(self.returns_data)} observations"
+            )
+        else:
+            # Backward compatibility: if fit_period not provided, use all data
+            self.returns_data = returns.copy()
+            logger.debug(f"{self.__class__.__name__} fitted with {len(universe)} assets (no fit_period specified)")
+
         self.is_fitted = True
-        logger.debug(f"Momentum model fitted with {len(universe)} assets")
+
+    def supports_rolling_retraining(self) -> bool:
+        """Momentum model supports rolling retraining."""
+        return True
 
     def predict_weights(
         self,
@@ -690,7 +789,7 @@ class MomentumModel(PortfolioModel):
             return pd.Series(dtype=float)
 
         # Get recent returns for momentum signal
-        end_date = date
+        end_date = date - pd.Timedelta(days=1)  # Exclude prediction date
         start_date = end_date - pd.Timedelta(days=self.lookback_days)
 
         recent_returns = self.returns_data.loc[

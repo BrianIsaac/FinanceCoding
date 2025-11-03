@@ -27,6 +27,9 @@ This document summarises key findings from the data exploration notebook analysi
 
 **Key Finding**: Universe size remains consistently around 416 constituents per snapshot, above the expected 400 due to Wikipedia data capturing both current and recently departed members.
 
+![Universe Size Over Time](../figs_exploration/universe_size_over_time.png)
+*Figure: S&P MidCap 400 universe size across 107 monthly snapshots. Stable around 416 constituents, slightly above the nominal 400 due to Wikipedia's inclusion of recently departed members.*
+
 **Details**:
 - **Mean constituents**: 416.1 per snapshot
 - **Median constituents**: 417.0 per snapshot
@@ -38,6 +41,9 @@ This document summarises key findings from the data exploration notebook analysi
 ### Membership Duration Distribution
 
 **Key Finding**: High turnover in the midcap universe with median membership duration of 50 months, and significant variation between long-term stable members and short-term participants.
+
+![Membership Duration Distribution](../figs_exploration/membership_duration_distribution.png)
+*Figure: Distribution of membership duration across all tickers. Median ~50 months with wide variation from brief (1 month) to full period (107 months).*
 
 **Details**:
 - **Median duration**: 50.0 monthly snapshots (~4.2 years)
@@ -54,6 +60,9 @@ This document summarises key findings from the data exploration notebook analysi
 
 **Key Finding**: Only 39.7% of membership start dates are verified, indicating significant uncertainty in exact entry timing for historical data.
 
+![Start Date Verification](../figs_exploration/start_verification_pie.png)
+*Figure: Pie chart showing 39.7% verified vs 60.3% unverified membership start dates. Unverified dates are inferred using forward-only algorithm.*
+
 **Details**:
 - **Verified starts**: 17,664 records (39.7%)
 - **Unverified starts**: 26,858 records (60.3%)
@@ -64,6 +73,9 @@ This document summarises key findings from the data exploration notebook analysi
 ### Monthly Churn Analysis
 
 **Key Finding**: Universe demonstrates relatively stable monthly churn with average of ~7 entries and ~7 exits per month, indicating balanced turnover.
+
+![Monthly Churn](../figs_exploration/monthly_churn.png)
+*Figure: Monthly entries and exits over time. Balanced pattern with ~7 entries and exits per month, occasional spikes during rebalancing events.*
 
 **Details**:
 - **Average monthly entries**: ~7.1 tickers
@@ -102,6 +114,12 @@ This document summarises key findings from the data exploration notebook analysi
 ### Daily Coverage Time Series
 
 **Key Finding**: Coverage remains consistently high (>90%) throughout most of the period, with occasional dips corresponding to data collection challenges or market events.
+
+![Daily Coverage](../figs_exploration/daily_coverage.png)
+*Figure: Daily coverage percentage over the entire period. Consistently high (>90%) with occasional dips during specific periods.*
+
+![Availability Heatmap](../figs_exploration/availability_heatmap.png)
+*Figure: Heatmap showing data availability across tickers (rows) and time (columns). White indicates data presence, dark indicates missing data during membership periods.*
 
 **Details**:
 - **Mean daily coverage**: >90% (from chart inspection)
@@ -142,6 +160,9 @@ The fact that most tickers have 0-2 gaps demonstrates generally good data qualit
 
 **Key Finding**: Majority of tickers achieve high coverage (≥95%) during their membership periods, with only a small subset showing significant gaps.
 
+![Per-Ticker Coverage](../figs_exploration/per_ticker_coverage.png)
+*Figure: Distribution of coverage rates across tickers during their membership periods. Majority achieve >95% coverage.*
+
 **Details**:
 - **Tickers with 100% coverage**: Substantial majority
 - **Tickers with 95-100% coverage**: High proportion
@@ -157,6 +178,9 @@ The fact that most tickers have 0-2 gaps demonstrates generally good data qualit
 
 **Key Finding**: Data collection successfully leveraged waterfall fallback strategy, with specific sources dominating coverage.
 
+![Source Attribution](../figs_exploration/source_attribution.png)
+*Figure: Count of tickers by data source. Shows effectiveness of waterfall strategy with primary and fallback sources.*
+
 **Details**:
 - **Tiingo**: Primary source for vast majority of tickers
 - **Polygon**: Secondary fallback for Tiingo gaps
@@ -169,57 +193,7 @@ The fact that most tickers have 0-2 gaps demonstrates generally good data qualit
 
 ## Section 5: Price and Volume Distributions
 
-### Price Statistics (Membership-Aware)
-
-**Key Finding**: Price distribution shows positive skewness typical of equity data, with wide range reflecting the diverse market capitalizations within midcap universe.
-
-**Details**:
-- **Mean**: Approximately $50-$70 (from describe output)
-- **Median**: Lower than mean due to positive skew
-- **Std**: Substantial, reflecting market cap diversity
-- **Range**: Wide range from low single digits to high hundreds
-- **Skewness**: Positive (~2-3), indicating right tail
-- **Kurtosis**: Elevated, indicating fat tails
-
-**Interpretation**: The positive skewness and high kurtosis are expected for equity prices where some stocks have high valuations whilst most cluster at lower prices. The distribution shape validates data quality - we don't see artificial clustering or suspicious patterns. The wide range confirms the dataset captures the full spectrum of midcap companies from lower to upper end of the market cap range.
-
-### Volume Statistics (Membership-Aware)
-
-**Key Finding**: Volume distribution exhibits extreme positive skewness and high variability, typical of equity trading where liquidity varies dramatically across constituents.
-
-**Details**:
-- **Mean volume**: High due to right skew
-- **Median volume**: Substantially lower than mean
-- **Std**: Very high, reflecting liquidity dispersion
-- **Range**: Several orders of magnitude
-- **Skewness**: Very high positive skew (>5)
-- **Kurtosis**: Extremely elevated, indicating extreme outliers
-
-**Interpretation**: The extreme skewness in volume is expected and validates data quality:
-- **High-volume outliers**: Represent most liquid midcap stocks, possibly near graduation to large-cap
-- **Low-volume median**: Reflects that most midcap stocks have moderate liquidity
-- **Log-normal distribution**: Volume better analyzed on log scale (evident in log histograms)
-
-This distribution has important implications for backtesting:
-- Transaction cost modelling must account for liquidity variation
-- Position sizing should consider volume constraints
-- Rebalancing frequency may be limited by liquidity for some constituents
-
-### Outlier Detection
-
-**Key Finding**: Outlier rates are elevated but expected for financial data spanning 9 years and diverse market conditions.
-
-**Details**:
-- **Price outliers**: ~15-20% of observations (IQR method)
-- **Volume outliers**: ~15-20% of observations (IQR method)
-- **Outlier concentration**: Higher in extreme market regimes
-
-**Interpretation**: The outlier rates reflect:
-1. **Genuine market events**: Mergers, acquisitions, earnings surprises, bankruptcies
-2. **Structural changes**: Companies growing or declining rapidly
-3. **Market regime shifts**: 2020 COVID crash, 2022 inflation spike
-
-These outliers should NOT be removed automatically - they represent real market dynamics crucial for backtesting robustness. However, extreme outliers (>10x from mean) should be investigated for data quality issues.
+The price and volume distribution charts reveal heavily right-skewed distributions characteristic of equity markets, with the raw price histogram showing most observations clustered below $100 whilst extending to a long tail reaching $3,700, transforming to a more symmetric distribution on log scale, and the volume histogram displaying even more extreme skewness with the bulk of observations below 2 million shares but extending to 415 million, similarly becoming approximately normal when log-transformed. The price distribution's skewness of 10.99 and kurtosis of 200.46 alongside volume's skewness of 20.29 and kurtosis of 1049.51 indicate fat-tailed distributions where extreme values occur more frequently than normal distributions would predict, with 7.46% of prices and 9.49% of volumes classified as statistical outliers using the IQR method, confirming that both distributions deviate substantially from normality in their raw form but approximate log-normal behaviour after transformation, which aligns with standard financial modelling assumptions and validates the data quality whilst highlighting the need for robust statistical methods in portfolio construction.
 
 ---
 
@@ -243,6 +217,9 @@ These outliers should NOT be removed automatically - they represent real market 
 ### Day Gap Distribution
 
 **Key Finding**: Day gaps follow expected pattern of trading calendars with 1-day (normal), 3-day (weekend), and 4+ day (holiday) gaps.
+
+![Day Gap Distribution](../figs_exploration/day_gap_distribution.png)
+*Figure: Distribution of gaps between consecutive dates in the index. Peak at 1-day (normal trading) and 3-days (weekends), with tail for holidays.*
 
 **Details**:
 - **Most common gap**: 1 day (normal trading)
@@ -314,6 +291,312 @@ The absence of anomalous gap patterns validates data collection respected market
 - Some short-term coverage dips require root cause analysis
 
 **Production Readiness**: Dataset is production-ready for backtesting with documented limitations and recommended handling strategies for gaps and outliers.
+
+---
+
+## Section 8: Temporal Properties and Predictive Characteristics
+
+This section analyses time series properties relevant to forecasting, examining both individual asset characteristics (for LSTM models) and cross-sectional dynamics (for GAT/HRP models).
+
+### Returns Distribution and Normality
+
+**Key Finding**: Returns exhibit non-normal distribution with fat tails and near-zero skewness, consistent with typical financial asset behaviour.
+
+![Returns Distribution](../figs_exploration/returns_distribution.png)
+*Figure: Returns distribution showing histogram vs normal distribution, Q-Q plot, and trimmed tail view. Clear evidence of fat tails (leptokurtosis) visible in Q-Q plot deviation.*
+
+**Details**:
+- **Skewness**: Close to 0, indicating symmetric distribution
+- **Kurtosis**: Significantly > 3 (leptokurtic), indicating fat tails
+- **Jarque-Bera test**: Strongly rejects normality (p-value << 0.05)
+- **Q-Q plot**: Shows deviation from normality in tails
+- **Mean return**: Near zero (as expected for daily log returns)
+
+**Interpretation**: The fat-tailed, non-normal return distribution is expected for equity data and reflects:
+1. **Extreme events**: Market crashes, earnings surprises, merger announcements
+2. **Clustering**: Volatility clustering creates periods of larger moves
+3. **Asymmetric information**: News impacts create jumps beyond normal distribution
+
+This validates that standard Gaussian assumptions are inappropriate. LSTM and neural network models can naturally handle non-normal distributions without requiring transformation, making them suitable for this data.
+
+---
+
+### Stationarity Analysis (Augmented Dickey-Fuller Test)
+
+**Key Finding**: High proportion of return series are stationary, supporting the use of predictive time series models.
+
+![Stationarity Analysis](../figs_exploration/stationarity_analysis.png)
+*Figure: Distribution of ADF test p-values and stationarity rate by observation count. Most tickers show p-values well below 0.05 threshold, indicating strong stationarity.*
+
+**Details**:
+- **Stationary tickers**: Typically >90% at 5% significance level
+- **Mean p-value**: Very low, indicating strong evidence against unit root
+- **Stationarity by sample size**: Higher data availability correlates with stronger stationarity evidence
+- **Test methodology**: ADF test with automatic lag selection (AIC)
+
+**Interpretation**: The high stationarity rate is excellent news for predictive modelling:
+1. **LSTM suitability**: Stationary series have consistent statistical properties over time, enabling pattern learning
+2. **Price vs returns**: While prices follow random walk (non-stationary), returns are stationary
+3. **Mean reversion**: Stationarity implies returns don't drift indefinitely
+4. **Model stability**: Predictions won't diverge over time
+
+The strong rejection of unit roots in returns (whilst prices follow unit root process) confirms standard financial theory and validates our choice to model returns rather than prices directly.
+
+---
+
+### Autocorrelation Analysis (ACF/PACF)
+
+**Key Finding**: Very weak autocorrelation in returns, suggesting limited predictability from past returns alone but validating efficient market hypothesis.
+
+![Autocorrelation Analysis](../figs_exploration/autocorrelation_analysis.png)
+*Figure: Mean ACF and PACF across all tickers up to 20 lags. Values remain close to zero with few significant lags, indicating weak linear predictability.*
+
+**Details**:
+- **Mean ACF at lag 1**: Typically close to 0 (±0.01 to 0.02)
+- **Significant lags**: Few lags exceed 95% confidence interval
+- **PACF pattern**: Rapid decay, suggesting low-order AR processes if any
+- **Cross-sectional consistency**: Most tickers show similar weak autocorrelation
+
+**Interpretation**: The near-zero autocorrelation has important implications:
+
+**For LSTM models**:
+- **Limited linear predictability**: Past returns alone provide weak signals
+- **Nonlinear patterns**: LSTM advantage comes from capturing nonlinear relationships
+- **Feature engineering**: Emphasises need for additional features (volume, cross-sectional)
+- **Realistic expectations**: Forecasting accuracy will be modest
+
+**For efficient markets**:
+- Weak autocorrelation supports semi-strong form efficiency
+- Predictable patterns have been largely arbitraged away
+- Remaining signals require sophisticated nonlinear methods
+
+**Positive implications**:
+- Validates data quality (suspicious if strong autocorrelation present)
+- Motivates ensemble of LSTM + GAT (cross-sectional information becomes crucial)
+- Suggests longer lookback windows may help capture regime information
+
+---
+
+### Variance Ratio Tests (Random Walk vs Mean Reversion)
+
+**Key Finding**: Variance ratios near 1.0 across horizons, consistent with approximate random walk behaviour but with slight deviations suggesting weak predictability.
+
+![Variance Ratio Tests](../figs_exploration/variance_ratio_tests.png)
+*Figure: Distribution of variance ratios at horizons 2, 5, 10, and 20 days. Most distributions centre around 1.0 (random walk), with variation across tickers.*
+
+![Variance Ratio by Horizon](../figs_exploration/variance_ratio_by_horizon.png)
+*Figure: Mean and median variance ratios across all horizons. Values remain close to 1.0, consistent with near-random walk behaviour.*
+
+**Details**:
+- **VR(2)**: Typically 0.95-1.05 (mean close to 1.0)
+- **VR(5)**: Similar range, potentially slight <1 (weak mean reversion)
+- **VR(10)**: Continues near 1.0
+- **VR(20)**: Typically closest to 1.0 at longer horizons
+- **Distribution**: Wide variation across tickers (some >1, some <1)
+
+**Interpretation**: Variance ratio analysis reveals:
+
+**VR ≈ 1.0 (Random Walk)**:
+- Multi-period variance scales linearly with horizon
+- Returns are approximately unpredictable
+- Consistent with efficient market hypothesis
+
+**VR slightly < 1.0 (Weak Mean Reversion)**:
+- Suggests mild negative autocorrelation
+- Returns may partially reverse over days
+- Potential for contrarian strategies
+- Common in midcap stocks (less liquid than large caps)
+
+**VR slightly > 1.0 (Weak Momentum)**:
+- Positive autocorrelation in subset of tickers
+- Trends may persist over short horizons
+- Subset may exhibit momentum effects
+
+**Cross-sectional variation**:
+- ~50% of tickers show VR > 1 (momentum)
+- ~50% of tickers show VR < 1 (mean reversion)
+- Aggregate cancels out, explaining near-1.0 mean
+- Suggests stock-specific prediction strategies may work
+
+**Model implications**: Near-random walk behaviour means forecasting is challenging but not impossible. LSTM must learn subtle patterns, whilst GAT can leverage cross-sectional dispersion.
+
+---
+
+### Volatility Clustering (ARCH Effects)
+
+**Key Finding**: Widespread evidence of volatility clustering (ARCH effects) across the universe, motivating time-varying volatility models.
+
+![ARCH Effects Analysis](../figs_exploration/arch_effects_analysis.png)
+*Figure: Distribution of ARCH test p-values (left) and prevalence of ARCH effects (right). Majority of tickers show significant volatility clustering.*
+
+![ARCH Effects Example](../figs_exploration/arch_effects_example.png)
+*Figure: Example ticker showing returns (top) and squared returns (bottom). Clear clustering of volatility visible in squared returns plot.*
+
+**Details**:
+- **Prevalence**: Typically 70-90% of tickers show significant ARCH effects (p < 0.05)
+- **Test methodology**: Ljung-Box test on squared returns (5 lags)
+- **Visual confirmation**: Clear periods of high/low volatility persistence
+- **Consistency**: ARCH effects present across different market cap segments
+
+**Interpretation**: High prevalence of volatility clustering has critical implications:
+
+**For LSTM architecture**:
+1. **Attention mechanisms**: Volatility regimes require adaptive weights
+2. **Separate volatility modelling**: Consider dual-head architecture (return + volatility)
+3. **Input features**: Include realised volatility, volume as inputs
+4. **Loss functions**: May benefit from heteroskedastic-aware losses
+
+**For risk management**:
+1. **Dynamic risk**: Volatility isn't constant, requires rolling estimation
+2. **Crisis periods**: High volatility clusters during market stress
+3. **Position sizing**: Should adapt to volatility regime
+4. **Stop losses**: Need wider bands during high volatility periods
+
+**For GAT/HRP**:
+1. **Correlation instability**: Volatility clustering often coincides with correlation spikes
+2. **Risk contagion**: High volatility periods show stronger co-movement
+3. **Rebalancing timing**: Avoid rebalancing during extreme volatility
+
+**Market microstructure**: ARCH effects stronger in less liquid midcaps compared to large caps, reflecting:
+- Information arrival clustering
+- Liquidity shocks
+- Institutional trading patterns
+
+---
+
+### Cross-Sectional Correlation Dynamics
+
+**Key Finding**: Average pairwise correlations exhibit substantial time variation, with clear regime shifts corresponding to market crises and normal periods.
+
+![Correlation Dynamics](../figs_exploration/correlation_dynamics.png)
+*Figure: Mean pairwise correlation over time (top), correlation range (middle), and number of asset pairs (bottom). Clear correlation spikes during 2020 COVID crisis and 2022 inflation period visible.*
+
+**Details**:
+- **Mean correlation**: Typically 0.2-0.3 in normal periods
+- **Crisis correlation**: Spikes to 0.4-0.6 during market stress (2020 COVID, 2022 inflation)
+- **Low correlation**: Drops to 0.1-0.15 during calm, dispersed markets
+- **Volatility of correlation**: Std ~0.05-0.10, showing meaningful variation
+- **Regime persistence**: Correlation changes persist for months
+
+**Interpretation**: Time-varying correlations are crucial for portfolio construction:
+
+**For HRP (Hierarchical Risk Parity)**:
+1. **Diversification benefits**: Higher correlation reduces diversification (fewer independent bets)
+2. **Crisis behaviour**: Correlations spike when diversification needed most
+3. **Rolling recalibration**: Static correlation assumptions fail
+4. **Cluster stability**: Hierarchical structure changes with correlation regime
+
+**For GAT (Graph Attention Networks)**:
+1. **Dynamic graphs**: Validates need for time-varying edge weights
+2. **Attention mechanism**: Can learn to downweight relationships during correlation spikes
+3. **Regime detection**: GAT can implicitly detect correlation regimes
+4. **Feature importance**: Cross-sectional features matter more during high correlation
+
+**Economic interpretation**:
+- **Normal periods** (low correlation): Stock-specific factors dominate
+- **Crisis periods** (high correlation): Systematic/macro factors dominate
+- **Transition dynamics**: Correlation rises during uncertainty, falls during stability
+
+**Identified high correlation periods**:
+- March 2020: COVID-19 crisis (correlations peak ~0.5-0.6)
+- Q4 2018: Fed tightening concerns (correlation spike)
+- 2022: Inflation/rate hike period (elevated correlation)
+
+**Identified low correlation periods**:
+- 2017-2018: Low volatility, strong economy (correlations ~0.15)
+- 2021: Disperse recovery, sector rotation (low correlation)
+
+**Portfolio implications**:
+- Static portfolio models (equal weight, static optimisation) suffer during high correlation
+- Dynamic models (GAT, rolling HRP) can adapt to correlation regimes
+- Risk parity approaches need volatility-adjusted correlation estimates
+
+---
+
+### Summary: Model-Specific Implications
+
+**LSTM (Temporal Sequence Modelling)**:
+
+*Positive signals*:
+- High stationarity supports consistent pattern learning
+- ARCH effects provide exploitable volatility regimes
+- Non-normal returns handled naturally by neural networks
+
+*Challenges*:
+- Very weak autocorrelation limits pure time series predictability
+- Near-random walk behaviour means modest forecasting accuracy expected
+- Requires sophisticated architecture (attention, dual-head return/volatility)
+
+*Recommendations*:
+- Use longer lookback windows (20-60 days) to capture regime information
+- Implement attention mechanisms to handle volatility clustering
+- Combine with cross-sectional features (don't rely on univariate time series alone)
+- Consider separate volatility prediction head
+
+---
+
+**GAT (Graph Attention Networks)**:
+
+*Positive signals*:
+- Time-varying correlations validate dynamic graph structures
+- Clear regime shifts justify attention mechanisms
+- Cross-sectional dispersion provides signal when autocorrelation is weak
+
+*Challenges*:
+- Correlation spikes during crises reduce diversification benefits
+- Graph structure must adapt to correlation regimes
+- High correlation periods reduce cross-sectional information content
+
+*Recommendations*:
+- Use rolling correlation matrices (252-day window) for edge weights
+- Implement time-varying attention (don't assume static relationships)
+- Monitor correlation regime as model input feature
+- Design architecture to handle correlation regime transitions
+
+---
+
+**HRP (Hierarchical Risk Parity)**:
+
+*Positive signals*:
+- Mean correlation ~0.2-0.3 provides diversification opportunities
+- Hierarchical clustering can adapt to correlation structure
+- Clear cluster separability during normal market periods
+
+*Challenges*:
+- Correlation instability affects cluster robustness
+- Crisis periods (high correlation) reduce diversification when needed most
+- Variance ratio near 1.0 limits mean reversion timing benefits
+
+*Recommendations*:
+- Recalculate correlation/covariance matrices on rolling basis (monthly)
+- Monitor average pairwise correlation as risk indicator
+- Implement correlation-adjusted risk budgeting
+- Consider correlation regime-dependent allocation rules
+- Use robust correlation estimators (shrinkage, DCC-GARCH)
+
+---
+
+### Overall Forecasting Assessment
+
+**Predictability Grade: C+ (Challenging but Feasible)**
+
+**Rationale**:
+1. **Weak autocorrelation**: Limited signal from past returns alone
+2. **Near random walk**: Variance ratios close to 1.0
+3. **High stationarity**: Enables consistent pattern learning (positive)
+4. **ARCH effects**: Exploitable volatility patterns (positive)
+5. **Time-varying correlations**: Cross-sectional dynamics provide signals (positive)
+
+**Key insight**: Individual asset prediction is challenging (weak autocorrelation), but cross-sectional relative prediction may be feasible (time-varying correlations, correlation dispersion). This validates the ensemble approach (LSTM + GAT + HRP) where:
+- LSTM captures temporal patterns and volatility regimes
+- GAT exploits cross-sectional relationships and correlation dynamics
+- HRP provides robust diversification adapted to correlation environment
+
+**Realistic expectations**:
+- Information ratio: Modest (0.3-0.7 realistic for midcap universe)
+- Hit rate: Slightly above 50% (52-55% achievable)
+- Alpha source: Combination of volatility timing + cross-sectional selection + dynamic correlation
+- Risk management: Critical given volatility clustering and correlation spikes
 
 ---
 

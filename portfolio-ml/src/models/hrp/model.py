@@ -189,14 +189,20 @@ class HRPModel(PortfolioModel):
         # Use unified NA handling pipeline
         from ...data.na_handling import (
             prepare_rolling_window_data,
-            cross_sectional_mean_impute,
+            simple_temporal_fill,
             calculate_data_quality_metrics,
+        )
+
+        logger.info(
+            f"HRP model NA handling: coverage_threshold=0.80, variance_threshold=1e-8, "
+            f"n_assets_before_filter={len(available_assets)}, "
+            f"fit_period={fit_period[0].date()} to {fit_period[1].date()}"
         )
 
         prepared_returns, masks = prepare_rolling_window_data(
             returns_window=fitted_returns,
             universe=available_assets,
-            coverage_threshold=0.80,  # HRP requires high quality data
+            coverage_threshold=0.80,  # Standardised: 80% coverage threshold (industry standard, ensures fair model comparison)
             variance_threshold=1e-8,
             return_masks=True,
         )
@@ -205,22 +211,8 @@ class HRPModel(PortfolioModel):
         if masks['valid'].sum() < min_assets:
             raise ValueError(f"Too few assets with sufficient data: {masks['valid'].sum()}")
 
-        # HRP requires complete data - use cross-sectional mean imputation
-        final_returns = prepared_returns
-
-        # Create membership mask if universe_df is available
-        if hasattr(self, 'universe_df') and self.universe_df is not None:
-            from ...utils.membership_aware_cleaning import create_membership_mask
-            membership_mask = create_membership_mask(final_returns, self.universe_df)
-            final_returns = cross_sectional_mean_impute(
-                final_returns,
-                membership_mask=membership_mask,
-            )
-        else:
-            final_returns = cross_sectional_mean_impute(final_returns)
-
-        # Final fallback to zero for any remaining NAs
-        final_returns = final_returns.fillna(0.0)
+        # HRP requires complete data - use simple temporal fill (training: allow bfill)
+        final_returns = simple_temporal_fill(prepared_returns, allow_bfill=True)
 
         non_zero_variance_assets = masks['valid'][masks['valid']].index.tolist()
 
@@ -234,6 +226,7 @@ class HRPModel(PortfolioModel):
             prepared_returns,
             available_assets,
             masks,
+            date=end_date,  # Pass date for membership-aware verification
         )
 
         # Calculate covariance matrix with shrinkage for large universes
@@ -350,32 +343,18 @@ class HRPModel(PortfolioModel):
         filtered_returns = period_returns[available_assets]
 
         # Use unified NA handling pipeline
-        from ...data.na_handling import prepare_rolling_window_data, cross_sectional_mean_impute
+        from ...data.na_handling import prepare_rolling_window_data, simple_temporal_fill
 
         prepared_returns, masks = prepare_rolling_window_data(
             returns_window=filtered_returns,
             universe=available_assets,
-            coverage_threshold=0.80,  # HRP requires high quality data
+            coverage_threshold=0.80,  # Standardised: 80% coverage threshold (industry standard, ensures fair model comparison)
             variance_threshold=1e-8,
             return_masks=True,
         )
 
-        # HRP requires complete data - use cross-sectional mean imputation
-        cleaned_returns = prepared_returns
-
-        # Create membership mask if universe_df is available
-        if hasattr(self, 'universe_df') and self.universe_df is not None:
-            from ...utils.membership_aware_cleaning import create_membership_mask
-            membership_mask = create_membership_mask(cleaned_returns, self.universe_df)
-            cleaned_returns = cross_sectional_mean_impute(
-                cleaned_returns,
-                membership_mask=membership_mask,
-            )
-        else:
-            cleaned_returns = cross_sectional_mean_impute(cleaned_returns)
-
-        # Final fallback to zero for any remaining NAs (should be minimal after CS mean)
-        cleaned_returns = cleaned_returns.fillna(0.0)
+        # HRP requires complete data - use simple temporal fill (training: allow bfill)
+        cleaned_returns = simple_temporal_fill(prepared_returns, allow_bfill=True)
 
         # Extract valid assets from mask
         non_zero_variance_assets = masks['valid'][masks['valid']].index.tolist()
@@ -390,6 +369,7 @@ class HRPModel(PortfolioModel):
             prepared_returns,
             available_assets,
             masks,
+            date=end_date,  # Pass date for membership-aware verification
         )
 
         return cleaned_returns[non_zero_variance_assets]
@@ -419,6 +399,14 @@ class HRPModel(PortfolioModel):
         # For HRP, we can work with any subset of assets that have sufficient data
         available_assets = [asset for asset in universe if asset in self._fitted_universe]
 
+        logger.info(
+            f"Asset alignment at {date.date() if date else 'unknown'}: "
+            f"requested_universe={len(universe)}, "
+            f"fitted_universe={len(self._fitted_universe) if self._fitted_universe else 0}, "
+            f"available_after_alignment={len(available_assets)}, "
+            f"alignment_ratio={len(available_assets)/len(universe):.1%}"
+        )
+
         # For dynamic membership, we should be more flexible
         if len(available_assets) == 0:
             # Try to find any overlap with the current universe
@@ -428,6 +416,12 @@ class HRPModel(PortfolioModel):
 
             if len(available_assets) == 0:
                 # As last resort, use equal weights for current universe
+                logger.error(
+                    f"CRITICAL ASSET MISMATCH at {date.date() if date else 'unknown'}: "
+                    f"NO overlap between universe and fitted assets, "
+                    f"universe_sample={universe[:10]}, "
+                    f"fitted_sample={list(self._fitted_universe)[:10] if self._fitted_universe else []}"
+                )
                 logger.warning(f"No fitted assets in current universe {len(universe)} assets. Using equal weights.")
                 equal_weight = 1.0 / len(universe)
                 return pd.Series(equal_weight, index=universe)

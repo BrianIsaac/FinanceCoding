@@ -340,26 +340,21 @@ class RollingValidationEngine:
 
         # Check training data sufficiency using flexible validator if available
         if self.config.use_flexible_validation and self.flexible_validator:
-            # Create a dummy DataFrame for validation (we just need row count)
-            dummy_data = pd.DataFrame(index=train_data) if train_data else pd.DataFrame()
+            # Use sample size validation only (avoid misleading data quality metrics)
+            n_samples = len(train_data) if train_data else 0
+            universe_size = len(set(t.date() for t in data_timestamps)) if data_timestamps else 0
 
-            # Estimate universe from available data
-            universe_estimate = list(set(t.date() for t in data_timestamps)) if data_timestamps else []
-
-            validation_result = self.flexible_validator.validate_with_confidence(
-                data=dummy_data,
-                universe=universe_estimate[:100],  # Sample of universe
-                context={"split": split, "is_training": True}
-            )
-
-            if not validation_result.can_proceed:
-                results["sufficient_training_data"] = False
-                logger.warning(
-                    f"Flexible validation failed: confidence={validation_result.confidence:.2f}, "
-                    f"samples={len(train_data)}, threshold={validation_result.threshold}"
+            can_proceed, sample_score, threshold = \
+                self.flexible_validator.validate_sample_size_only(
+                    n_samples=n_samples,
+                    universe_size=max(100, universe_size)  # Estimate
                 )
-                if validation_result.academic_caveats:
-                    logger.info(f"Academic caveats: {', '.join(validation_result.academic_caveats[:2])}")
+
+            if not can_proceed:
+                results["sufficient_training_data"] = False
+                logger.info(
+                    f"Insufficient training samples: {n_samples} < threshold {threshold}"
+                )
         else:
             # Fallback to rigid validation
             if len(train_data) < self.config.min_training_samples:
@@ -923,19 +918,17 @@ class TemporalIntegrityMonitor:
             except ImportError:
                 # Try flexible validator if available
                 if self.config.use_flexible_validation and self.flexible_validator:
-                    # Create a proper dummy DataFrame with timestamps
-                    # train_data here is a list of timestamps, not a DataFrame
-                    dummy_data = pd.DataFrame(
-                        index=train_data,  # Use actual timestamps
-                        columns=[f"asset_{i}" for i in range(min(100, len(train_data) // 10))]
-                    )
-                    validation_result = self.flexible_validator.validate_with_confidence(
-                        data=dummy_data,
-                        universe=dummy_data.columns.tolist(),
-                        context={}
-                    )
+                    # Use sample size validation only
+                    can_proceed, sample_score, threshold = \
+                        self.flexible_validator.validate_sample_size_only(
+                            n_samples=len(train_data),
+                            universe_size=100  # Estimate
+                        )
 
-                    if not validation_result.can_proceed:
+                    if not can_proceed:
+                        logger.warning(
+                            f"Window validation failed: {len(train_data)} samples < {threshold} threshold"
+                        )
                         checks["sufficient_data"] = False
                 else:
                     # Fallback with more lenient threshold

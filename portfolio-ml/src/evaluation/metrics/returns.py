@@ -66,6 +66,20 @@ class PerformanceAnalytics:
 
         # Annualized metrics (assuming daily returns)
         trading_days = 252
+        num_observations = len(clean_returns)
+
+        # CRITICAL: Warn about unreliable annualization for short periods
+        if num_observations < 252:
+            import logging
+            logger = logging.getLogger(__name__)
+            se_sharpe = np.sqrt((1 + 0.5) / num_observations) if num_observations > 0 else np.inf
+            logger.warning(
+                f"Short sample period ({num_observations} days < 252). "
+                f"Annualized metrics are statistically unreliable. "
+                f"Sharpe ratio standard error ≈ {se_sharpe:.2f}. "
+                f"Consider extending backtest period or reporting non-annualized metrics."
+            )
+
         annualized_return = mean_return * trading_days
         annualized_volatility = volatility * np.sqrt(trading_days)
 
