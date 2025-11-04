@@ -39,9 +39,9 @@ logging = [
 ]
 graph = [
   "networkx>=3.2.1",
-  "torch>=2.7.0",
+  "torch",
   "torch-geometric>=2.6.1",
-  "torchvision>=0.22.0",
+  "torchvision",
 ]
 requests = [
     "lxml>=6.0.0",
@@ -55,18 +55,19 @@ access = [
     "python-docx>=1.2.0",
 ]
 
-[tool.uv.sources]
-torch = [
-  { index = "pytorch-cu128", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
-]
-torchvision = [
-  { index = "pytorch-cu128", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
-]
+# Temporarily disabled CUDA sources - using PyPI defaults
+# [tool.uv.sources]
+# torch = [
+#   { index = "pytorch-cpu", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+# ]
+# torchvision = [
+#   { index = "pytorch-cpu", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+# ]
 
-[[tool.uv.index]]
-name = "pytorch-cu128"
-url = "https://download.pytorch.org/whl/cu128"
-explicit = true
+# [[tool.uv.index]]
+# name = "pytorch-cpu"
+# url = "https://download.pytorch.org/whl/cpu"
+# explicit = true
 
 [tool.ruff]
 line-length = 100
